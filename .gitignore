@@ -1,0 +1,25 @@
+# Dependencies
+node_modules/
+
+# wxt build artifacts
+.wxt/
+.output/
+dist/
+web-ext-artifacts/
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# Editor / OS
+.DS_Store
+.vscode/
+.idea/
+*.log
+
+# Test output
+coverage/
+
+# Superpowers scratch state
+.superpowers/
