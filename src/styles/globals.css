@@ -1,0 +1,15 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html,
+body {
+  @apply bg-neutral-50 text-neutral-900 antialiased;
+}
+
+@media (prefers-color-scheme: dark) {
+  html,
+  body {
+    @apply bg-neutral-950 text-neutral-100;
+  }
+}

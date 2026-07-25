@@ -17,6 +17,7 @@
     "wxt": "^0.19.29"
   },
   "devDependencies": {
+    "@types/chrome": "^0.2.2",
     "@types/react": "^18.3.31",
     "@types/react-dom": "^18.3.7",
     "@vitest/coverage-v8": "^1.6.1",

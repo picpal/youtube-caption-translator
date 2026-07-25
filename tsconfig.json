@@ -1,0 +1,18 @@
+{
+  "extends": "./.wxt/tsconfig.json",
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "~/*": ["src/*"]
+    },
+    "types": ["chrome", "vitest/globals"]
+  },
+  "include": [
+    "entrypoints/**/*",
+    "src/**/*",
+    "wxt.config.ts",
+    "vitest.config.ts",
+    "tailwind.config.ts",
+    ".wxt/wxt.d.ts"
+  ]
+}
