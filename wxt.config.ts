@@ -14,6 +14,7 @@ export default defineConfig({
     ],
     action: {
       default_title: 'YouTube Play Assistant',
+      default_popup: 'popup.html',
     },
   },
 });
