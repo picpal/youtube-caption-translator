@@ -31,7 +31,7 @@ export function useApiKey() {
     refresh();
   }, [refresh]);
 
-  const save = useCallback(async (key: string) => {
+  const save = useCallback(async (key: string): Promise<boolean> => {
     setSaveState({ kind: 'saving' });
     const res = await sendMessage({ type: 'SAVE_API_KEY', payload: { key } });
     if (res.ok) {
@@ -39,8 +39,10 @@ export function useApiKey() {
       const savedAt = res.status.present ? res.status.savedAt : new Date().toISOString();
       setSaveState({ kind: 'success', savedAt });
       setTestState({ kind: 'idle' });
+      return true;
     } else {
       setSaveState({ kind: 'error', message: res.error });
+      return false;
     }
   }, []);
 

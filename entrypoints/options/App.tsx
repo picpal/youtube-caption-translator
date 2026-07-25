@@ -51,7 +51,10 @@ export function App() {
           />
           <div className="flex items-center gap-2">
             <Button
-              onClick={() => save(draft).then(() => setDraft(''))}
+              onClick={async () => {
+                const ok = await save(draft);
+                if (ok) setDraft('');
+              }}
               disabled={saveState.kind === 'saving' || draft.trim().length === 0}
             >
               {saveState.kind === 'saving' ? '저장 중…' : '저장'}
