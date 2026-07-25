@@ -4,10 +4,14 @@ interface Props extends InputHTMLAttributes<HTMLInputElement> {
   label?: string;
   helper?: string;
   revealable?: boolean;
+  /** Renders the error border/background from the design's "D · ERROR" state. */
+  invalid?: boolean;
 }
 
+// h 36 / r 7 · value is always monospace, letter-spacing .06em
+// (docs/design/api-key-settings.dc.html — COMPONENT RULES · Input)
 export const Input = forwardRef<HTMLInputElement, Props>(function Input(
-  { label, helper, revealable, type = 'text', className = '', id, ...rest },
+  { label, helper, revealable, invalid, type = 'text', className = '', id, ...rest },
   ref,
 ) {
   const [revealed, setRevealed] = useState(false);
@@ -18,7 +22,7 @@ export const Input = forwardRef<HTMLInputElement, Props>(function Input(
       {label && (
         <label
           htmlFor={id}
-          className="text-xs font-medium text-neutral-600 dark:text-neutral-400"
+          className="text-xs font-medium text-[#6c6f74] dark:text-[#9a9a9a]"
         >
           {label}
         </label>
@@ -28,21 +32,25 @@ export const Input = forwardRef<HTMLInputElement, Props>(function Input(
           ref={ref}
           id={id}
           type={effectiveType}
-          className={`w-full rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm text-neutral-900 placeholder-neutral-400 focus:border-neutral-500 focus:outline-none focus:ring-1 focus:ring-neutral-500 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-100 dark:placeholder-neutral-600 ${revealable ? 'pr-16' : ''} ${className}`}
+          className={`h-9 w-full rounded-[7px] border px-[11px] font-mono text-[12.5px] tracking-[0.06em] transition placeholder:font-sans placeholder:tracking-normal placeholder:text-[#b3b6bb] focus:outline-none dark:placeholder:text-[#5f5f5f] ${
+            invalid
+              ? 'border-[oklch(0.62_0.16_25)] bg-[oklch(0.99_0.01_25)] text-[#17181a] dark:border-[oklch(0.55_0.15_25)] dark:bg-[#170f10] dark:text-[#e4e4e4]'
+              : 'border-[#e0e0e2] bg-white text-[#17181a] focus:border-[#17181a] dark:border-[#333333] dark:bg-[#0f0f0f] dark:text-[#ededed] dark:focus:border-[#ededed]'
+          } ${revealable ? 'pr-14' : ''} ${className}`}
           {...rest}
         />
         {revealable && (
           <button
             type="button"
             onClick={() => setRevealed((v) => !v)}
-            className="absolute right-2 top-1/2 -translate-y-1/2 rounded px-2 py-1 text-xs text-neutral-600 hover:bg-neutral-100 dark:text-neutral-400 dark:hover:bg-neutral-800"
+            className="absolute right-1.5 top-1/2 -translate-y-1/2 rounded px-2 py-1 text-[11px] font-medium text-[#6c6f74] hover:bg-[#f2f2f3] dark:text-[#9a9a9a] dark:hover:bg-[#1e1e1e]"
           >
             {revealed ? '숨김' : '표시'}
           </button>
         )}
       </div>
       {helper && (
-        <p className="text-xs text-neutral-500 dark:text-neutral-500">{helper}</p>
+        <p className="text-xs text-[#8a8d92] dark:text-[#7a7a7a]">{helper}</p>
       )}
     </div>
   );
