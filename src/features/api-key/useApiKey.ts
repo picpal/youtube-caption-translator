@@ -31,6 +31,20 @@ export function useApiKey() {
     refresh();
   }, [refresh]);
 
+  useEffect(() => {
+    const listener = (
+      changes: { [key: string]: chrome.storage.StorageChange },
+      area: chrome.storage.AreaName,
+    ) => {
+      if (area !== 'local') return;
+      if ('geminiApiKey' in changes || 'geminiApiKeySavedAt' in changes) {
+        refresh();
+      }
+    };
+    chrome.storage.onChanged.addListener(listener);
+    return () => chrome.storage.onChanged.removeListener(listener);
+  }, [refresh]);
+
   const save = useCallback(async (key: string): Promise<boolean> => {
     setSaveState({ kind: 'saving' });
     const res = await sendMessage({ type: 'SAVE_API_KEY', payload: { key } });
