@@ -2,7 +2,8 @@ import { defineConfig } from 'wxt';
 
 export default defineConfig({
   modules: ['@wxt-dev/module-react'],
-  srcDir: '.',
+  srcDir: './src',
+  entrypointsDir: '../entrypoints',
   manifest: {
     name: 'YouTube Play Assistant',
     description: 'YouTube tech talks with Korean subtitles and transcript',
