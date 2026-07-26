@@ -103,6 +103,13 @@ export async function evalJson(cdp, sessionId, expression) {
   return result.value;
 }
 
+/** Build a Runtime.evaluate expression that sends a chrome.runtime message and reports ok/error without throwing. */
+export function sendMessageExpr(type, payload) {
+  const msg = payload === undefined ? { type } : { type, payload };
+  const literal = JSON.stringify(msg);
+  return `(async () => { try { return { __ok: true, value: await chrome.runtime.sendMessage(${literal}) }; } catch (e) { return { __ok: false, error: String(e) }; } })()`;
+}
+
 /** Poll an extension page target until chrome.runtime.sendMessage is available. */
 export async function waitForExtensionPageReady(cdp, sessionId, timeoutMs = 8000) {
   const start = Date.now();
@@ -138,4 +145,27 @@ export async function findExtensionServiceWorker(cdp, workerScriptName) {
       t.url.startsWith('chrome-extension://') &&
       t.url.endsWith(suffix),
   );
+}
+
+/** Poll findExtensionServiceWorker with a bounded retry loop. */
+export async function waitForExtensionServiceWorker(cdp, workerScriptName, timeoutMs = 10000, intervalMs = 300) {
+  const start = Date.now();
+  let sw = await findExtensionServiceWorker(cdp, workerScriptName);
+  while (!sw && Date.now() - start < timeoutMs) {
+    await new Promise((r) => setTimeout(r, intervalMs));
+    sw = await findExtensionServiceWorker(cdp, workerScriptName);
+  }
+  return sw ?? null;
+}
+
+/**
+ * Find every target currently open for a given `chrome-extension://<id>/<page>`
+ * URL, regardless of target type. Used to tell a docked side panel target
+ * apart from (or confirm it's indistinguishable from) a plain tab pointed at
+ * the same page.
+ */
+export async function findExtensionPageTargets(cdp, extensionId, pageName) {
+  const { targetInfos } = await cdp.send('Target.getTargets');
+  const url = `chrome-extension://${extensionId}/${pageName}`;
+  return targetInfos.filter((t) => t.url === url);
 }
