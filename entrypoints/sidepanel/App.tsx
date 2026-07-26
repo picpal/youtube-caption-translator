@@ -1,11 +1,45 @@
+import { useEffect, useState } from 'react';
 import { Button } from '~/components/Button';
 import { StatusBadge } from '~/components/StatusBadge';
 import { useApiKey } from '~/features/api-key/useApiKey';
 
+type TabKind = 'checking' | 'youtube' | 'other';
+
+// The panel's host_permissions only cover youtube.com, so `tab.url` reads as
+// undefined on any other origin — that's Chrome enforcing the permission
+// boundary, not a bug. isYoutubeWatchUrl treats an unreadable url the same as
+// a non-YouTube tab (falls through to `other`), which is the correct result
+// either way.
+function isYoutubeWatchUrl(url: string | undefined): boolean {
+  if (!url) return false;
+  try {
+    const parsed = new URL(url);
+    return (
+      /(^|\.)youtube\.com$/.test(parsed.hostname) && parsed.pathname === '/watch'
+    );
+  } catch {
+    return false;
+  }
+}
+
 export function App() {
   const { status } = useApiKey();
+  const [tabKind, setTabKind] = useState<TabKind>('checking');
+
   const loading = status === null;
   const present = status?.present === true;
+  const ready = present && tabKind === 'youtube';
+
+  useEffect(() => {
+    let cancelled = false;
+    chrome.tabs.query({ active: true, currentWindow: true }).then(([tab]) => {
+      if (cancelled) return;
+      setTabKind(isYoutubeWatchUrl(tab?.url) ? 'youtube' : 'other');
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   return (
     <div className="flex min-h-screen flex-col">
@@ -36,9 +70,15 @@ export function App() {
         </div>
       </header>
 
-      <div className="flex-1 overflow-auto p-6">
-        {loading ? <LoadingBody /> : present ? <ReadyBody /> : <OnboardingBody />}
-      </div>
+      {ready ? (
+        <div className="flex-1 overflow-auto">
+          <ReadyBody />
+        </div>
+      ) : (
+        <div className="flex-1 overflow-auto p-6">
+          {loading ? <LoadingBody /> : present ? <NonYoutubeBody /> : <OnboardingBody />}
+        </div>
+      )}
     </div>
   );
 }
@@ -49,11 +89,93 @@ function LoadingBody() {
   );
 }
 
+function NonYoutubeBody() {
+  return (
+    <div className="mx-auto flex max-w-sm flex-col items-center gap-3 pt-10 text-center">
+      <p className="text-sm leading-relaxed text-neutral-500 dark:text-neutral-400">
+        유튜브 영상 페이지로 이동해주세요
+      </p>
+    </div>
+  );
+}
+
+// Panel-native READY layout. Design source: docs/design/extension-popup.dc.html
+// (the "READY · LIGHT" block) — originally built for the 360px popup and
+// ported here 1:1 in structure, then re-spaced for the panel's ~400px width
+// and unconstrained height: 3.5-scale paddings/gaps become 4-scale, and the
+// 88x50 thumbnail becomes an exact-16:9 96x54 so it doesn't look stretched at
+// the wider column. The popup's own "패널 열기" button is dropped — the panel
+// is the destination now, not a link to one.
 function ReadyBody() {
   return (
-    <div className="rounded-lg border border-dashed border-neutral-300 p-6 text-sm text-neutral-600 dark:border-neutral-700 dark:text-neutral-400">
-      M1에서 영상 인식과 자막 생성 기능이 추가됩니다.
-    </div>
+    <>
+      <div className="flex gap-3 px-4 pb-3.5 pt-4">
+        <div className="h-[54px] w-24 flex-none rounded-[5px] bg-[repeating-linear-gradient(135deg,#eceef0_0_6px,#e3e6e9_6px_12px)] dark:bg-[repeating-linear-gradient(135deg,#2a2d31_0_6px,#23262a_6px_12px)]" />
+        <div className="flex min-w-0 flex-col gap-1">
+          <span className="text-[13px] font-semibold leading-snug text-neutral-500 dark:text-neutral-400">
+            영상 정보 로딩 중
+          </span>
+          <span className="text-[11px] text-neutral-400 dark:text-neutral-500">—</span>
+        </div>
+      </div>
+
+      <div className="mx-4 mb-4 flex items-center gap-1.5 rounded-md border border-neutral-200 bg-neutral-50 px-3 py-2 dark:border-neutral-800 dark:bg-neutral-900">
+        <span className="block h-1.5 w-1.5 flex-none rounded-full bg-neutral-400 dark:bg-neutral-600" />
+        <span className="font-mono text-[11px] text-neutral-500 dark:text-neutral-400">
+          자막 정보 확인 중
+        </span>
+      </div>
+
+      <div className="px-4">
+        <span className="text-[10.5px] font-semibold tracking-wide text-neutral-400 dark:text-neutral-500">
+          자막 표시
+        </span>
+        <div className="mt-2 flex overflow-hidden rounded-[7px] border border-neutral-200 dark:border-neutral-800">
+          <button
+            type="button"
+            className="flex-1 border-0 bg-neutral-100 py-2 text-[11.5px] font-semibold text-neutral-900 dark:bg-neutral-800 dark:text-neutral-100"
+          >
+            영한 동시
+          </button>
+          <button
+            type="button"
+            className="flex-1 border-0 border-l border-neutral-200 bg-white py-2 text-[11.5px] text-neutral-600 hover:bg-neutral-50 dark:border-neutral-800 dark:bg-neutral-950 dark:text-neutral-400 dark:hover:bg-neutral-900"
+          >
+            한국어
+          </button>
+          <button
+            type="button"
+            className="flex-1 border-0 border-l border-neutral-200 bg-white py-2 text-[11.5px] text-neutral-600 hover:bg-neutral-50 dark:border-neutral-800 dark:bg-neutral-950 dark:text-neutral-400 dark:hover:bg-neutral-900"
+          >
+            영어
+          </button>
+        </div>
+      </div>
+
+      <div className="p-4">
+        <Button disabled aria-disabled className="w-full">
+          AI 자막 생성
+        </Button>
+      </div>
+
+      <div className="flex flex-col gap-2 border-t border-neutral-200 px-4 py-3.5 dark:border-neutral-800">
+        <span className="text-[10.5px] font-semibold tracking-wide text-neutral-400 dark:text-neutral-500">
+          처리 단계
+        </span>
+        <div className="flex flex-wrap items-center gap-2 text-[11px] tabular-nums text-neutral-500 dark:text-neutral-400">
+          <span>1 Transcript 추출</span>
+          <span className="text-neutral-300 dark:text-neutral-700">→</span>
+          <span>2 용어 분석</span>
+          <span className="text-neutral-300 dark:text-neutral-700">→</span>
+          <span>3 한국어 번역</span>
+          <span className="text-neutral-300 dark:text-neutral-700">→</span>
+          <span>4 자막 적용</span>
+        </div>
+        <span className="text-[10.5px] text-neutral-400 dark:text-neutral-600">
+          약 40초 소요 · 처리 중에도 영상은 계속 재생됩니다
+        </span>
+      </div>
+    </>
   );
 }
 
