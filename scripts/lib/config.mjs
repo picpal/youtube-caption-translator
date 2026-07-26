@@ -15,7 +15,17 @@ export const CHROME_PATH =
 export const DEBUG_PORT = Number(process.env.CHROME_DEBUG_PORT || 9222);
 
 // Persistent, gitignored profile so a saved API key survives across runs.
-export const PROFILE_DIR = path.join(REPO_ROOT, '.chrome-dev-profile');
+// Overridable so the tooling can be exercised end-to-end against a fully
+// separate throwaway profile (e.g. to test API-key seeding) without ever
+// touching the real dev profile or its saved key.
+export const PROFILE_DIR = process.env.CHROME_PROFILE_DIR
+  ? path.resolve(process.env.CHROME_PROFILE_DIR)
+  : path.join(REPO_ROOT, '.chrome-dev-profile');
+
+// Optional repo-root file (gitignored, never committed) holding
+// `GEMINI_API_KEY=<value>` to seed the dev profile's storage on launch when
+// no key is present yet. See `.env.local.example`.
+export const ENV_LOCAL_PATH = path.join(REPO_ROOT, '.env.local');
 
 export const BUILD_DIR = path.join(REPO_ROOT, '.output', 'chrome-mv3');
 export const MANIFEST_PATH = path.join(BUILD_DIR, 'manifest.json');
@@ -27,6 +37,20 @@ export const CHROME_LOG_PATH = path.join(OUTPUT_DIR, 'chrome.log');
 // Obviously-fake key used by dev:chrome:check. Never a real credential.
 export const FAKE_API_KEY = 'AIzaFAKE_DEVCHECK_0000';
 export const FAKE_API_KEY_MASK = '••••0000'; // matches maskKey() in src/lib/storage.ts
+
+// Default landing page for `pnpm dev:chrome`: a real ~1hr English tech talk
+// (Andrej Karpathy, "[1hr Talk] Intro to Large Language Models") — exactly
+// the kind of content this product targets, so it's a stable standing
+// fixture rather than an arbitrary blank/placeholder page. Override with
+// the DEV_CHROME_YOUTUBE_URL env var or a CLI arg: `pnpm dev:chrome -- <url>`.
+export const DEFAULT_YOUTUBE_URL = 'https://www.youtube.com/watch?v=zjkBMFhNj_g';
+
+export function resolveYoutubeUrl(argv = process.argv) {
+  const cliArg = argv[2];
+  if (cliArg && /^https?:\/\//.test(cliArg)) return cliArg;
+  if (process.env.DEV_CHROME_YOUTUBE_URL) return process.env.DEV_CHROME_YOUTUBE_URL;
+  return DEFAULT_YOUTUBE_URL;
+}
 
 /**
  * Read the built manifest.json's declared background service worker script
