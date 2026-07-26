@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<meta name="design_doc_mode" content="canvas">
+<style>
+  body { margin:0; background:#f2f3f5; }
+  a { color: #17181a; }
+  a:hover { color: #000; }
+  .thumb { background: repeating-linear-gradient(135deg,#eceef0 0 6px,#e3e6e9 6px 12px); }
+  .thumbD { background: repeating-linear-gradient(135deg,#2a2d31 0 6px,#23262a 6px 12px); }
+</style>
+</helmet>
+
+<section style="font-family:-apple-system,'Apple SD Gothic Neo','Malgun Gothic','Helvetica Neue',Helvetica,sans-serif;padding:56px 64px;display:flex;flex-direction:column;gap:40px;color:#1c1f23">
+  <div style="display:flex;align-items:baseline;gap:14px">
+    <span id="1a" style="font-size:11px;font-weight:700;letter-spacing:.08em;padding:4px 8px;border:1px solid #d6d9dd;border-radius:5px;color:#5c6470">1A</span>
+    <h1 style="margin:0;font-size:20px;font-weight:650;letter-spacing:-.01em">툴바 팝업 — 영상 인식 중심</h1>
+    <span style="font-size:13px;color:#6b7280">360px · 상태 5종 · Light / Dark</span>
+  </div>
+
+  <div style="display:flex;flex-wrap:wrap;gap:32px">
+
+    <!-- READY / LIGHT -->
+    <div style="display:flex;flex-direction:column;gap:10px">
+      <span style="font-size:11px;font-weight:600;letter-spacing:.06em;color:#8a919c;font-family:ui-monospace,'SF Mono',Menlo,monospace">READY · LIGHT</span>
+      <div style="width:360px;background:#fff;border:1px solid #e4e6e9;border-radius:10px;box-shadow:0 10px 28px rgba(16,18,22,.10);overflow:hidden">
+        <div style="display:flex;align-items:center;gap:8px;padding:11px 14px;border-bottom:1px solid #edeef1">
+          <span style="width:14px;height:14px;border-radius:3px;background:#17181a;display:block"></span>
+          <span style="font-size:12px;font-weight:650;letter-spacing:-.005em">TalkTrack</span>
+          <span style="margin-left:auto;display:inline-flex;align-items:center;gap:5px;font-size:10.5px;font-weight:600;padding:3px 7px;border-radius:20px;background:#f0f0f0;color:#17181a;border:1px solid #dcdcdc">
+            <span style="width:5px;height:5px;border-radius:50%;background:#17181a;display:block"></span>Ready
+          </span>
+          <span title="설정" aria-label="설정" style="display:inline-flex;gap:2.5px;padding:6px;border-radius:5px;cursor:pointer" style-hover="background:#f2f3f5">
+            <span style="width:3px;height:3px;border-radius:50%;background:#8a919c;display:block"></span>
+            <span style="width:3px;height:3px;border-radius:50%;background:#8a919c;display:block"></span>
+            <span style="width:3px;height:3px;border-radius:50%;background:#8a919c;display:block"></span>
+          </span>
+        </div>
+
+        <div style="display:flex;gap:10px;padding:14px 14px 12px">
+          <div class="thumb" style="width:88px;height:50px;border-radius:5px;flex:none;display:flex;align-items:flex-end;justify-content:flex-end;padding:4px">
+            <span style="font-size:9px;font-family:ui-monospace,Menlo,monospace;background:rgba(16,18,22,.72);color:#fff;padding:1px 4px;border-radius:3px;font-variant-numeric:tabular-nums">58:12</span>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:3px;min-width:0">
+            <span style="font-size:13px;font-weight:600;line-height:1.35;text-wrap:pretty;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden">Build Agents That Run for Hours Without Losing the Plot</span>
+            <span style="font-size:11px;color:#6b7280">AI Engineer</span>
+          </div>
+        </div>
+
+        <div style="display:flex;align-items:center;gap:6px;margin:0 14px 14px;padding:7px 9px;background:#f7f8f9;border:1px solid #edeef1;border-radius:6px">
+          <span style="width:5px;height:5px;border-radius:50%;background:#17181a;display:block;flex:none"></span>
+          <span style="font-size:11px;font-family:ui-monospace,'SF Mono',Menlo,monospace;color:#4b5158">English captions available</span>
+        </div>
+
+        <div style="padding:0 14px">
+          <span style="font-size:10.5px;font-weight:600;letter-spacing:.05em;color:#8a919c">자막 표시</span>
+          <div style="display:flex;gap:0;margin-top:6px;border:1px solid #e0e2e6;border-radius:7px;overflow:hidden">
+            <button style="flex:1;font:inherit;font-size:11.5px;font-weight:600;padding:7px 0;border:0;background:#f0f0f0;color:#17181a;cursor:pointer">영한 동시</button>
+            <button style="flex:1;font:inherit;font-size:11.5px;padding:7px 0;border:0;border-left:1px solid #e0e2e6;background:#fff;color:#4b5158;cursor:pointer" style-hover="background:#f7f8f9">한국어</button>
+            <button style="flex:1;font:inherit;font-size:11.5px;padding:7px 0;border:0;border-left:1px solid #e0e2e6;background:#fff;color:#4b5158;cursor:pointer" style-hover="background:#f7f8f9">영어</button>
+          </div>
+        </div>
+
+        <div style="display:flex;flex-direction:column;gap:7px;padding:14px">
+          <button style="font:inherit;font-size:13px;font-weight:650;padding:10px 0;border:0;border-radius:7px;background:#17181a;color:#fff;cursor:pointer" style-hover="background:#000">AI 자막 생성</button>
+          <button style="font:inherit;font-size:12.5px;font-weight:550;padding:9px 0;border:1px solid #e0e2e6;border-radius:7px;background:#fff;color:#3a4046;cursor:pointer" style-hover="background:#f7f8f9">패널 열기</button>
+        </div>
+
+        <div style="border-top:1px solid #edeef1;padding:11px 14px;display:flex;flex-direction:column;gap:6px">
+          <span style="font-size:10.5px;font-weight:600;letter-spacing:.05em;color:#8a919c">처리 단계</span>
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:11px;color:#6b7280;font-variant-numeric:tabular-nums">
+            <span>1 Transcript 추출</span><span style="color:#c9ced4">→</span>
+            <span>2 용어 분석</span><span style="color:#c9ced4">→</span>
+            <span>3 한국어 번역</span><span style="color:#c9ced4">→</span>
+            <span>4 자막 적용</span>
+          </div>
+          <span style="font-size:10.5px;color:#9aa0a6">약 40초 소요 · 처리 중에도 영상은 계속 재생됩니다</span>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</section>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:1600,&quot;height&quot;:1100}}"></script>
+</body>
+</html>

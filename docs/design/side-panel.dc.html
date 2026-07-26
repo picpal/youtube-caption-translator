@@ -1,0 +1,762 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<meta name="design_doc_mode" content="canvas">
+<style>
+  body { margin:0; background:#f2f2f3; }
+  a { color:#17181a; }
+  a:hover { color:#000; }
+  .thumb { background: repeating-linear-gradient(135deg,#ececed 0 6px,#e3e3e5 6px 12px); }
+  .thumbD { background: repeating-linear-gradient(135deg,#2a2a2a 0 6px,#232323 6px 12px); }
+</style>
+</helmet>
+
+<section style="font-family:-apple-system,'Apple SD Gothic Neo','Malgun Gothic','Helvetica Neue',Helvetica,sans-serif;padding:56px 64px;display:flex;flex-direction:column;gap:40px;color:#17181a">
+  <div style="display:flex;align-items:baseline;gap:14px">
+    <span id="2a" style="font-size:11px;font-weight:700;letter-spacing:.08em;padding:4px 8px;border:1px solid #d8d8da;border-radius:5px;color:#5c6470">2A</span>
+    <h1 style="margin:0;font-size:20px;font-weight:650;letter-spacing:-.01em">사이드 패널 — 패널 열기 이후</h1>
+    <span style="font-size:13px;color:#6c6f74">720 / 520 / 420px · 모노톤</span>
+  </div>
+
+  <div style="display:flex;flex-wrap:wrap;gap:36px;align-items:flex-start">
+
+    <!-- 720 LIGHT: TRANSCRIPT + SUMMARY -->
+    <div style="display:flex;flex-direction:column;gap:10px">
+      <span style="font-size:11px;font-weight:600;letter-spacing:.06em;color:#8a8d92;font-family:ui-monospace,'SF Mono',Menlo,monospace">720px · TRANSCRIPT + SUMMARY · LIGHT</span>
+      <div style="width:720px;height:880px;background:#fff;border:1px solid #e4e4e6;border-radius:8px;box-shadow:0 12px 32px rgba(16,18,22,.10);display:flex;flex-direction:column;overflow:hidden">
+
+        <div style="display:flex;gap:10px;padding:12px 14px;border-bottom:1px solid #eeeeef;flex:none">
+          <div class="thumb" style="width:72px;height:41px;border-radius:4px;flex:none"></div>
+          <div style="display:flex;flex-direction:column;gap:3px;min-width:0;flex:1">
+            <span style="font-size:14px;font-weight:600;line-height:1.35;text-wrap:pretty">Build Agents That Run for Hours Without Losing the Plot</span>
+            <span style="font-size:11px;color:#6c6f74;font-variant-numeric:tabular-nums">AI Engineer · 58:12</span>
+          </div>
+          <div style="display:flex;align-items:flex-start;gap:6px;flex:none">
+            <span style="display:inline-flex;align-items:center;gap:5px;font-size:10.5px;font-weight:600;padding:4px 8px;border-radius:20px;background:#f2f2f3;border:1px solid #e4e4e6;color:#3d4045">
+              <span style="width:5px;height:5px;border-radius:50%;background:#17181a;display:block"></span>Completed
+            </span>
+            <span aria-label="설정" title="설정" style="display:inline-flex;gap:2.5px;align-items:center;height:24px;padding:0 6px;border-radius:5px;cursor:pointer" style-hover="background:#f2f2f3">
+              <span style="width:3px;height:3px;border-radius:50%;background:#8a8d92;display:block"></span>
+              <span style="width:3px;height:3px;border-radius:50%;background:#8a8d92;display:block"></span>
+              <span style="width:3px;height:3px;border-radius:50%;background:#8a8d92;display:block"></span>
+            </span>
+            <span aria-label="패널 닫기" title="패널 닫기" style="display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:5px;font-size:14px;color:#6c6f74;cursor:pointer" style-hover="background:#f2f2f3">×</span>
+          </div>
+        </div>
+
+        <div style="display:flex;flex:1;min-height:0">
+
+          <div style="width:60%;display:flex;flex-direction:column;min-width:0;border-right:1px solid #eeeeef">
+            <div style="padding:10px 12px;display:flex;flex-direction:column;gap:8px;border-bottom:1px solid #eeeeef;flex:none">
+              <div style="display:flex;gap:6px">
+                <div style="flex:1;display:flex;align-items:center;gap:7px;height:30px;padding:0 9px;border:1px solid #e0e0e2;border-radius:6px;background:#fff">
+                  <span style="width:9px;height:9px;border:1.5px solid #9a9da2;border-radius:50%;display:block;flex:none"></span>
+                  <span style="font-size:12px;color:#9a9da2">스크립트에서 검색</span>
+                </div>
+                <button style="font:inherit;font-size:11.5px;font-weight:600;padding:0 10px;height:30px;border:1px solid #e0e0e2;border-radius:6px;background:#fff;color:#3d4045;cursor:pointer" style-hover="background:#f7f7f8">북마크만</button>
+                <button style="font:inherit;font-size:11.5px;font-weight:600;padding:0 10px;height:30px;border:1px solid #e0e0e2;border-radius:6px;background:#f2f2f3;color:#17181a;cursor:pointer" title="표시 옵션">EN·KO</button>
+              </div>
+              <div style="display:flex;gap:5px;flex-wrap:wrap">
+                <span style="font-size:11px;padding:3px 8px;border-radius:20px;background:#f2f2f3;border:1px solid #e8e8ea;color:#3d4045;cursor:pointer">Agent</span>
+                <span style="font-size:11px;padding:3px 8px;border-radius:20px;background:#f2f2f3;border:1px solid #e8e8ea;color:#3d4045;cursor:pointer">Loop</span>
+                <span style="font-size:11px;padding:3px 8px;border-radius:20px;background:#f2f2f3;border:1px solid #e8e8ea;color:#3d4045;cursor:pointer">Memory</span>
+                <span style="font-size:11px;padding:3px 8px;border-radius:20px;background:#f2f2f3;border:1px solid #e8e8ea;color:#3d4045;cursor:pointer">Evaluation</span>
+                <span style="font-size:11px;padding:3px 8px;border-radius:20px;background:#f2f2f3;border:1px solid #e8e8ea;color:#3d4045;cursor:pointer">Context</span>
+                <span style="font-size:11px;padding:3px 8px;border-radius:20px;background:#f2f2f3;border:1px solid #e8e8ea;color:#3d4045;cursor:pointer">Checkpoint</span>
+              </div>
+            </div>
+
+            <div style="flex:1;overflow:hidden;display:flex;flex-direction:column">
+              <div style="display:flex;gap:10px;padding:12px 14px;border-bottom:1px solid #f4f4f5">
+                <span style="font-size:11px;font-family:ui-monospace,'SF Mono',Menlo,monospace;font-variant-numeric:tabular-nums;color:#6c6f74;width:42px;flex:none;cursor:pointer" title="해당 위치로 이동">06:20</span>
+                <div style="display:flex;flex-direction:column;gap:5px;min-width:0">
+                  <span style="font-size:12px;color:#6c6f74;line-height:1.5">Most agents fail not because the model is weak, but because the context drifts.</span>
+                  <span style="font-size:13.5px;line-height:1.6">대부분의 Agent는 모델이 약해서가 아니라 맥락이 흐트러져서 실패합니다.</span>
+                </div>
+                <span title="중요 구간 저장" aria-label="중요 구간 저장" style="margin-left:auto;flex:none;width:32px;height:32px;display:flex;align-items:center;justify-content:center;border-radius:5px;color:#c2c4c7;font-size:14px;cursor:pointer" style-hover="background:#f4f4f5;color:#17181a">☆</span>
+              </div>
+
+              <div style="display:flex;gap:10px;padding:12px 14px 12px 11px;border-bottom:1px solid #f4f4f5;background:#f7f7f8;border-left:3px solid #17181a">
+                <span style="font-size:11px;font-family:ui-monospace,'SF Mono',Menlo,monospace;font-variant-numeric:tabular-nums;color:#17181a;font-weight:600;width:42px;flex:none">07:02</span>
+                <div style="display:flex;flex-direction:column;gap:5px;min-width:0">
+                  <span style="font-size:12px;color:#6c6f74;line-height:1.5">We don't prompt Claude directly anymore.</span>
+                  <span style="font-size:13.5px;line-height:1.6;font-weight:500">이제는 Claude에게 직접 프롬프트를 작성하지 않습니다.</span>
+                  <span style="font-size:10px;font-family:ui-monospace,Menlo,monospace;color:#8a8d92;letter-spacing:.04em">재생 중</span>
+                </div>
+                <span aria-label="중요 구간 저장" style="margin-left:auto;flex:none;width:32px;height:32px;display:flex;align-items:center;justify-content:center;border-radius:5px;color:#17181a;font-size:14px;cursor:pointer">★</span>
+              </div>
+
+              <div style="display:flex;gap:10px;padding:12px 14px;border-bottom:1px solid #f4f4f5">
+                <span style="font-size:11px;font-family:ui-monospace,'SF Mono',Menlo,monospace;font-variant-numeric:tabular-nums;color:#6c6f74;width:42px;flex:none">07:41</span>
+                <div style="display:flex;flex-direction:column;gap:5px;min-width:0">
+                  <span style="font-size:12px;color:#6c6f74;line-height:1.5">Every long-running task keeps a checkpoint file it can rehydrate from.</span>
+                  <span style="font-size:13.5px;line-height:1.6">장시간 실행되는 작업은 모두 복구 가능한 Checkpoint 파일을 유지합니다.</span>
+                </div>
+                <span aria-label="중요 구간 저장" style="margin-left:auto;flex:none;width:32px;height:32px;display:flex;align-items:center;justify-content:center;border-radius:5px;color:#c2c4c7;font-size:14px;cursor:pointer" style-hover="background:#f4f4f5;color:#17181a">☆</span>
+              </div>
+
+              <div style="display:flex;gap:10px;padding:12px 14px;border-bottom:1px solid #f4f4f5">
+                <span style="font-size:11px;font-family:ui-monospace,'SF Mono',Menlo,monospace;font-variant-numeric:tabular-nums;color:#6c6f74;width:42px;flex:none">08:15</span>
+                <div style="display:flex;flex-direction:column;gap:5px;min-width:0">
+                  <span style="font-size:12px;color:#6c6f74;line-height:1.5">Memory is not a vector store. It is a decision log.</span>
+                  <span style="font-size:13.5px;line-height:1.6">Memory는 벡터 저장소가 아니라 의사결정 기록입니다.</span>
+                </div>
+                <span aria-label="중요 구간 저장" style="margin-left:auto;flex:none;width:32px;height:32px;display:flex;align-items:center;justify-content:center;border-radius:5px;color:#17181a;font-size:14px;cursor:pointer">★</span>
+              </div>
+
+              <div style="display:flex;gap:10px;padding:12px 14px;border-bottom:1px solid #f4f4f5">
+                <span style="font-size:11px;font-family:ui-monospace,'SF Mono',Menlo,monospace;font-variant-numeric:tabular-nums;color:#6c6f74;width:42px;flex:none">09:04</span>
+                <div style="display:flex;flex-direction:column;gap:5px;min-width:0">
+                  <span style="font-size:12px;color:#6c6f74;line-height:1.5">The evaluation loop runs on the same traces you ship.</span>
+                  <span style="font-size:13.5px;line-height:1.6">Evaluation Loop는 실제로 배포한 trace를 그대로 사용합니다.</span>
+                  <span style="font-size:11px;font-family:ui-monospace,Menlo,monospace;background:#f2f2f3;border:1px solid #e8e8ea;border-radius:4px;padding:5px 7px;color:#3d4045;width:fit-content">eval run --from-prod-traces</span>
+                </div>
+                <span aria-label="중요 구간 저장" style="margin-left:auto;flex:none;width:32px;height:32px;display:flex;align-items:center;justify-content:center;border-radius:5px;color:#c2c4c7;font-size:14px;cursor:pointer" style-hover="background:#f4f4f5;color:#17181a">☆</span>
+              </div>
+
+              <div style="display:flex;gap:10px;padding:12px 14px;border-bottom:1px solid #f4f4f5">
+                <span style="font-size:11px;font-family:ui-monospace,'SF Mono',Menlo,monospace;font-variant-numeric:tabular-nums;color:#6c6f74;width:42px;flex:none">09:52</span>
+                <div style="display:flex;flex-direction:column;gap:5px;min-width:0">
+                  <span style="font-size:12px;color:#6c6f74;line-height:1.5">If the agent can't explain its plan, the plan is wrong.</span>
+                  <span style="font-size:13.5px;line-height:1.6">Agent가 자신의 계획을 설명하지 못한다면 그 계획은 잘못된 것입니다.</span>
+                </div>
+                <span aria-label="중요 구간 저장" style="margin-left:auto;flex:none;width:32px;height:32px;display:flex;align-items:center;justify-content:center;border-radius:5px;color:#c2c4c7;font-size:14px;cursor:pointer" style-hover="background:#f4f4f5;color:#17181a">☆</span>
+              </div>
+
+              <div style="display:flex;gap:10px;padding:12px 14px;opacity:.55">
+                <span style="font-size:11px;font-family:ui-monospace,'SF Mono',Menlo,monospace;font-variant-numeric:tabular-nums;color:#6c6f74;width:42px;flex:none">10:30</span>
+                <div style="display:flex;flex-direction:column;gap:5px;min-width:0">
+                  <span style="font-size:12px;color:#6c6f74;line-height:1.5">Let's look at what happens after twelve hours of runtime.</span>
+                  <span style="font-size:13.5px;line-height:1.6">12시간 동안 실행한 뒤 어떤 일이 일어나는지 살펴보겠습니다.</span>
+                </div>
+              </div>
+            </div>
+
+            <div style="flex:none;padding:8px 12px;border-top:1px solid #eeeeef;display:flex;align-items:center;gap:8px">
+              <button style="font:inherit;font-size:11px;font-weight:600;padding:5px 9px;border:1px solid #e0e0e2;border-radius:20px;background:#fff;color:#3d4045;cursor:pointer" style-hover="background:#f7f7f8">현재 위치로 이동</button>
+              <span style="font-size:10.5px;color:#9a9da2;font-variant-numeric:tabular-nums">자동 추적 켜짐 · 1,284 세그먼트</span>
+            </div>
+          </div>
+
+          <div style="width:40%;display:flex;flex-direction:column;min-width:0;background:#fdfdfd">
+            <div style="padding:11px 14px;border-bottom:1px solid #eeeeef;display:flex;align-items:center;gap:8px;flex:none">
+              <span style="font-size:12px;font-weight:650;letter-spacing:-.005em">Summary</span>
+              <span style="font-size:10px;font-family:ui-monospace,Menlo,monospace;color:#9a9da2">원문 근거 연결됨</span>
+            </div>
+            <div style="flex:1;overflow:hidden;display:flex;flex-direction:column;gap:18px;padding:14px">
+              <div style="display:flex;flex-direction:column;gap:6px">
+                <span style="font-size:11px;font-weight:650;letter-spacing:.04em;color:#8a8d92">이 영상이 다루는 문제</span>
+                <span style="font-size:12.5px;line-height:1.65;color:#2c2f33;text-wrap:pretty">장시간 실행되는 Agent가 목표와 맥락을 잃지 않도록 작업 상태, 메모리, 평가 루프를 어떻게 구성하는지 설명한다.</span>
+              </div>
+              <div style="display:flex;flex-direction:column;gap:7px">
+                <span style="font-size:11px;font-weight:650;letter-spacing:.04em;color:#8a8d92">핵심 주장</span>
+                <div style="display:flex;gap:8px"><span style="font-size:10px;font-family:ui-monospace,Menlo,monospace;color:#9a9da2;padding-top:3px">01</span><span style="font-size:12.5px;line-height:1.6;color:#2c2f33">실패 원인은 모델 성능이 아니라 맥락 이탈이다.</span></div>
+                <div style="display:flex;gap:8px"><span style="font-size:10px;font-family:ui-monospace,Menlo,monospace;color:#9a9da2;padding-top:3px">02</span><span style="font-size:12.5px;line-height:1.6;color:#2c2f33">작업 상태는 Checkpoint 파일로 외부에 고정한다.</span></div>
+                <div style="display:flex;gap:8px"><span style="font-size:10px;font-family:ui-monospace,Menlo,monospace;color:#9a9da2;padding-top:3px">03</span><span style="font-size:12.5px;line-height:1.6;color:#2c2f33">Memory는 검색 저장소가 아니라 의사결정 기록이다.</span></div>
+                <div style="display:flex;gap:8px"><span style="font-size:10px;font-family:ui-monospace,Menlo,monospace;color:#9a9da2;padding-top:3px">04</span><span style="font-size:12.5px;line-height:1.6;color:#2c2f33">평가는 배포된 실제 trace 위에서 반복한다.</span></div>
+              </div>
+              <div style="display:flex;flex-direction:column;gap:2px">
+                <span style="font-size:11px;font-weight:650;letter-spacing:.04em;color:#8a8d92;margin-bottom:5px">발표 흐름</span>
+                <div style="display:flex;gap:10px;padding:5px 0;border-bottom:1px solid #f4f4f5;cursor:pointer" style-hover="background:#f7f7f8">
+                  <span style="font-size:11px;font-family:ui-monospace,Menlo,monospace;font-variant-numeric:tabular-nums;color:#6c6f74;width:38px;flex:none">00:00</span>
+                  <span style="font-size:12.5px;color:#2c2f33">문제 정의</span>
+                </div>
+                <div style="display:flex;gap:10px;padding:5px 0;border-bottom:1px solid #f4f4f5;cursor:pointer" style-hover="background:#f7f7f8">
+                  <span style="font-size:11px;font-family:ui-monospace,Menlo,monospace;font-variant-numeric:tabular-nums;color:#17181a;font-weight:600;width:38px;flex:none">06:20</span>
+                  <span style="font-size:12.5px;color:#17181a;font-weight:500">장시간 Agent의 실패 원인</span>
+                </div>
+                <div style="display:flex;gap:10px;padding:5px 0;border-bottom:1px solid #f4f4f5;cursor:pointer" style-hover="background:#f7f7f8">
+                  <span style="font-size:11px;font-family:ui-monospace,Menlo,monospace;font-variant-numeric:tabular-nums;color:#6c6f74;width:38px;flex:none">17:10</span>
+                  <span style="font-size:12.5px;color:#2c2f33">작업 상태와 Checkpoint</span>
+                </div>
+                <div style="display:flex;gap:10px;padding:5px 0;border-bottom:1px solid #f4f4f5;cursor:pointer" style-hover="background:#f7f7f8">
+                  <span style="font-size:11px;font-family:ui-monospace,Menlo,monospace;font-variant-numeric:tabular-nums;color:#6c6f74;width:38px;flex:none">29:40</span>
+                  <span style="font-size:12.5px;color:#2c2f33">Memory와 Context 관리</span>
+                </div>
+                <div style="display:flex;gap:10px;padding:5px 0;border-bottom:1px solid #f4f4f5;cursor:pointer" style-hover="background:#f7f7f8">
+                  <span style="font-size:11px;font-family:ui-monospace,Menlo,monospace;font-variant-numeric:tabular-nums;color:#6c6f74;width:38px;flex:none">43:15</span>
+                  <span style="font-size:12.5px;color:#2c2f33">Evaluation Loop</span>
+                </div>
+                <div style="display:flex;gap:10px;padding:5px 0;cursor:pointer" style-hover="background:#f7f7f8">
+                  <span style="font-size:11px;font-family:ui-monospace,Menlo,monospace;font-variant-numeric:tabular-nums;color:#6c6f74;width:38px;flex:none">55:20</span>
+                  <span style="font-size:12.5px;color:#2c2f33">운영 적용 사례</span>
+                </div>
+              </div>
+              <div style="display:flex;flex-direction:column;gap:7px">
+                <span style="font-size:11px;font-weight:650;letter-spacing:.04em;color:#8a8d92">주요 키워드</span>
+                <div style="display:flex;gap:5px;flex-wrap:wrap">
+                  <span style="font-size:11px;padding:3px 8px;border-radius:4px;background:#f2f2f3;border:1px solid #e8e8ea;color:#3d4045">Agent Loop</span>
+                  <span style="font-size:11px;padding:3px 8px;border-radius:4px;background:#f2f2f3;border:1px solid #e8e8ea;color:#3d4045">Checkpoint</span>
+                  <span style="font-size:11px;padding:3px 8px;border-radius:4px;background:#f2f2f3;border:1px solid #e8e8ea;color:#3d4045">Memory</span>
+                  <span style="font-size:11px;padding:3px 8px;border-radius:4px;background:#f2f2f3;border:1px solid #e8e8ea;color:#3d4045">Context Window</span>
+                  <span style="font-size:11px;padding:3px 8px;border-radius:4px;background:#f2f2f3;border:1px solid #e8e8ea;color:#3d4045">Evaluation</span>
+                  <span style="font-size:11px;padding:3px 8px;border-radius:4px;background:#f2f2f3;border:1px solid #e8e8ea;color:#3d4045">Trace</span>
+                </div>
+              </div>
+              <div style="display:flex;flex-direction:column;gap:6px;padding-top:14px;border-top:1px solid #eeeeef">
+                <span style="font-size:11px;font-weight:650;letter-spacing:.04em;color:#8a8d92">결론</span>
+                <span style="font-size:12.5px;line-height:1.65;color:#2c2f33;text-wrap:pretty">Agent의 신뢰성은 프롬프트가 아니라 상태 관리와 평가 루프에서 나온다.</span>
+                <span style="font-size:10.5px;font-family:ui-monospace,Menlo,monospace;color:#9a9da2;font-variant-numeric:tabular-nums;cursor:pointer">근거 55:20 →</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div style="flex:none;display:flex;gap:8px;align-items:center;padding:10px 14px;border-top:1px solid #e4e4e6;background:#fff">
+          <button style="font:inherit;font-size:12.5px;font-weight:650;padding:9px 16px;border:0;border-radius:7px;background:#17181a;color:#fff;cursor:pointer" style-hover="background:#000">학습 노트 생성</button>
+          <button style="font:inherit;font-size:12.5px;font-weight:550;padding:9px 14px;border:1px solid #e0e0e2;border-radius:7px;background:#fff;color:#3d4045;cursor:pointer" style-hover="background:#f7f7f8">요약 내보내기</button>
+          <button aria-label="자막 설정" title="자막 설정" style="font:inherit;font-size:12px;font-weight:550;margin-left:auto;padding:9px 12px;border:1px solid #e0e0e2;border-radius:7px;background:#fff;color:#3d4045;cursor:pointer" style-hover="background:#f7f7f8">자막 설정</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 520 LIGHT: NOTE MODAL -->
+    <div style="display:flex;flex-direction:column;gap:10px">
+      <span style="font-size:11px;font-weight:600;letter-spacing:.06em;color:#8a8d92;font-family:ui-monospace,'SF Mono',Menlo,monospace">520px · 학습 노트 생성 · LIGHT</span>
+      <div style="width:520px;height:880px;background:#fff;border:1px solid #e4e4e6;border-radius:8px;box-shadow:0 12px 32px rgba(16,18,22,.10);position:relative;overflow:hidden;display:flex;flex-direction:column">
+        <div style="display:flex;gap:10px;padding:12px 14px;border-bottom:1px solid #eeeeef">
+          <div class="thumb" style="width:72px;height:41px;border-radius:4px;flex:none"></div>
+          <div style="display:flex;flex-direction:column;gap:3px;min-width:0">
+            <span style="font-size:14px;font-weight:600;line-height:1.35">Build Agents That Run for Hours Without Losing the Plot</span>
+            <span style="font-size:11px;color:#6c6f74;font-variant-numeric:tabular-nums">AI Engineer · 58:12</span>
+          </div>
+        </div>
+        <div style="flex:1;filter:blur(1px);opacity:.5;padding:14px;display:flex;flex-direction:column;gap:14px">
+          <div style="height:30px;border:1px solid #e0e0e2;border-radius:6px"></div>
+          <div style="display:flex;flex-direction:column;gap:12px">
+            <span style="height:9px;width:70%;background:#eeeeef;border-radius:3px;display:block"></span>
+            <span style="height:9px;width:88%;background:#f4f4f5;border-radius:3px;display:block"></span>
+            <span style="height:9px;width:52%;background:#eeeeef;border-radius:3px;display:block"></span>
+            <span style="height:9px;width:80%;background:#f4f4f5;border-radius:3px;display:block"></span>
+            <span style="height:9px;width:64%;background:#eeeeef;border-radius:3px;display:block"></span>
+            <span style="height:9px;width:74%;background:#f4f4f5;border-radius:3px;display:block"></span>
+          </div>
+        </div>
+        <div style="position:absolute;inset:0;background:rgba(23,24,26,.28);display:flex;align-items:flex-end"></div>
+        <div style="position:absolute;left:0;right:0;bottom:0;background:#fff;border-top:1px solid #e4e4e6;border-radius:10px 10px 0 0;box-shadow:0 -12px 32px rgba(16,18,22,.16);padding:16px;display:flex;flex-direction:column;gap:14px">
+          <div style="display:flex;align-items:center">
+            <span style="font-size:14px;font-weight:650">학습 노트 생성</span>
+            <span aria-label="닫기" style="margin-left:auto;font-size:15px;color:#6c6f74;cursor:pointer">×</span>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:5px">
+            <span style="font-size:11px;font-weight:600;color:#8a8d92">문서 제목</span>
+            <div style="height:32px;border:1px solid #e0e0e2;border-radius:6px;display:flex;align-items:center;padding:0 10px;font-size:12.5px">Agent 장시간 실행 — 발표 노트</div>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:7px">
+            <span style="font-size:11px;font-weight:600;color:#8a8d92">포함 항목</span>
+            <div style="display:flex;flex-wrap:wrap;gap:6px">
+              <span style="display:inline-flex;align-items:center;gap:6px;font-size:12px;padding:6px 10px;border:1px solid #17181a;border-radius:6px;background:#17181a;color:#fff">✓ 핵심 요약</span>
+              <span style="display:inline-flex;align-items:center;gap:6px;font-size:12px;padding:6px 10px;border:1px solid #17181a;border-radius:6px;background:#17181a;color:#fff">✓ 발표 흐름</span>
+              <span style="display:inline-flex;align-items:center;gap:6px;font-size:12px;padding:6px 10px;border:1px solid #17181a;border-radius:6px;background:#17181a;color:#fff">✓ 주요 키워드</span>
+              <span style="display:inline-flex;align-items:center;gap:6px;font-size:12px;padding:6px 10px;border:1px solid #17181a;border-radius:6px;background:#17181a;color:#fff">✓ 북마크 3</span>
+              <span style="display:inline-flex;align-items:center;gap:6px;font-size:12px;padding:6px 10px;border:1px solid #e0e0e2;border-radius:6px;background:#fff;color:#6c6f74">전체 Transcript</span>
+            </div>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:5px">
+            <span style="font-size:11px;font-weight:600;color:#8a8d92">Preview</span>
+            <div style="border:1px solid #eeeeef;background:#f7f7f8;border-radius:6px;padding:11px;font-family:ui-monospace,'SF Mono',Menlo,monospace;font-size:10.5px;line-height:1.75;color:#3d4045;height:104px;overflow:hidden">
+              # Agent 장시간 실행 — 발표 노트<br>
+              AI Engineer · 58:12 · 2026-07-25<br><br>
+              ## 핵심 요약<br>
+              - 실패 원인은 모델이 아니라 맥락 이탈<br>
+              - 작업 상태는 Checkpoint 파일로 고정<br><br>
+              ## 발표 흐름<br>
+              - 00:00 문제 정의
+            </div>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px">
+            <div style="display:flex;border:1px solid #e0e0e2;border-radius:6px;overflow:hidden">
+              <span style="font-size:11.5px;font-weight:600;padding:7px 11px;background:#f2f2f3;color:#17181a">Markdown</span>
+              <span style="font-size:11.5px;padding:7px 11px;border-left:1px solid #e0e0e2;color:#6c6f74">Notion</span>
+              <span style="font-size:11.5px;padding:7px 11px;border-left:1px solid #e0e0e2;color:#6c6f74">Obsidian</span>
+            </div>
+            <button style="font:inherit;font-size:12.5px;font-weight:550;margin-left:auto;padding:9px 14px;border:1px solid #e0e0e2;border-radius:7px;background:#fff;color:#3d4045;cursor:pointer">취소</button>
+            <button style="font:inherit;font-size:12.5px;font-weight:650;padding:9px 18px;border:0;border-radius:7px;background:#17181a;color:#fff;cursor:pointer">생성</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- DARK ROW -->
+  <div style="display:flex;flex-wrap:wrap;gap:36px;background:#0f0f0f;margin:0 -64px;padding:44px 64px;align-items:flex-start">
+
+    <!-- 720 DARK: SEARCH ACTIVE -->
+    <div style="display:flex;flex-direction:column;gap:10px">
+      <span style="font-size:11px;font-weight:600;letter-spacing:.06em;color:#7a7a7a;font-family:ui-monospace,'SF Mono',Menlo,monospace">720px · 검색 결과 · DARK</span>
+      <div style="width:720px;height:880px;background:#181818;border:1px solid #303030;border-radius:8px;box-shadow:0 12px 32px rgba(0,0,0,.5);display:flex;flex-direction:column;overflow:hidden;color:#e9e9e9">
+        <div style="display:flex;gap:10px;padding:12px 14px;border-bottom:1px solid #292929;flex:none">
+          <div class="thumbD" style="width:72px;height:41px;border-radius:4px;flex:none"></div>
+          <div style="display:flex;flex-direction:column;gap:3px;min-width:0;flex:1">
+            <span style="font-size:14px;font-weight:600;line-height:1.35">Build Agents That Run for Hours Without Losing the Plot</span>
+            <span style="font-size:11px;color:#9a9a9a;font-variant-numeric:tabular-nums">AI Engineer · 58:12</span>
+          </div>
+          <div style="display:flex;align-items:flex-start;gap:6px;flex:none">
+            <span style="display:inline-flex;align-items:center;gap:5px;font-size:10.5px;font-weight:600;padding:4px 8px;border-radius:20px;background:#212121;border:1px solid #303030;color:#c9c9c9">
+              <span style="width:5px;height:5px;border-radius:50%;background:#e9e9e9;display:block"></span>Completed
+            </span>
+            <span aria-label="설정" style="display:inline-flex;gap:2.5px;align-items:center;height:24px;padding:0 6px;border-radius:5px;cursor:pointer" style-hover="background:#232323">
+              <span style="width:3px;height:3px;border-radius:50%;background:#8a8a8a;display:block"></span>
+              <span style="width:3px;height:3px;border-radius:50%;background:#8a8a8a;display:block"></span>
+              <span style="width:3px;height:3px;border-radius:50%;background:#8a8a8a;display:block"></span>
+            </span>
+            <span aria-label="패널 닫기" style="display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:5px;font-size:14px;color:#9a9a9a;cursor:pointer" style-hover="background:#232323">×</span>
+          </div>
+        </div>
+
+        <div style="display:flex;flex:1;min-height:0">
+          <div style="width:60%;display:flex;flex-direction:column;min-width:0;border-right:1px solid #292929">
+            <div style="padding:10px 12px;display:flex;flex-direction:column;gap:8px;border-bottom:1px solid #292929;flex:none">
+              <div style="display:flex;gap:6px">
+                <div style="flex:1;display:flex;align-items:center;gap:7px;height:30px;padding:0 9px;border:1px solid #e9e9e9;border-radius:6px;background:#111">
+                  <span style="width:9px;height:9px;border:1.5px solid #9a9a9a;border-radius:50%;display:block;flex:none"></span>
+                  <span style="font-size:12px;color:#f0f0f0">Memory</span>
+                  <span style="margin-left:auto;font-size:10.5px;font-family:ui-monospace,Menlo,monospace;color:#9a9a9a;font-variant-numeric:tabular-nums">3 / 14</span>
+                  <span style="font-size:12px;color:#9a9a9a;cursor:pointer" title="이전 결과">↑</span>
+                  <span style="font-size:12px;color:#e9e9e9;cursor:pointer" title="다음 결과">↓</span>
+                  <span style="font-size:12px;color:#9a9a9a;cursor:pointer" title="검색 지우기">×</span>
+                </div>
+                <button style="font:inherit;font-size:11.5px;font-weight:600;padding:0 10px;height:30px;border:1px solid #383838;border-radius:6px;background:transparent;color:#c9c9c9;cursor:pointer" style-hover="background:#232323">북마크만</button>
+              </div>
+              <div style="display:flex;gap:5px;flex-wrap:wrap">
+                <span style="font-size:11px;padding:3px 8px;border-radius:20px;background:#e9e9e9;border:1px solid #e9e9e9;color:#111;font-weight:600;cursor:pointer">Memory</span>
+                <span style="font-size:11px;padding:3px 8px;border-radius:20px;background:#212121;border:1px solid #303030;color:#c9c9c9;cursor:pointer">Agent</span>
+                <span style="font-size:11px;padding:3px 8px;border-radius:20px;background:#212121;border:1px solid #303030;color:#c9c9c9;cursor:pointer">Loop</span>
+                <span style="font-size:11px;padding:3px 8px;border-radius:20px;background:#212121;border:1px solid #303030;color:#c9c9c9;cursor:pointer">Evaluation</span>
+                <span style="font-size:11px;padding:3px 8px;border-radius:20px;background:#212121;border:1px solid #303030;color:#c9c9c9;cursor:pointer">Context</span>
+              </div>
+            </div>
+
+            <div style="flex:1;display:flex;flex-direction:column;overflow:hidden">
+              <div style="padding:8px 14px;font-size:10.5px;font-family:ui-monospace,Menlo,monospace;color:#7a7a7a;border-bottom:1px solid #232323;font-variant-numeric:tabular-nums">검색 결과 14건 · 영어·한국어 통합</div>
+
+              <div style="display:flex;gap:10px;padding:12px 14px;border-bottom:1px solid #232323">
+                <span style="font-size:11px;font-family:ui-monospace,Menlo,monospace;font-variant-numeric:tabular-nums;color:#9a9a9a;width:42px;flex:none">08:15</span>
+                <div style="display:flex;flex-direction:column;gap:5px;min-width:0">
+                  <span style="font-size:12px;color:#9a9a9a;line-height:1.5"><span style="background:#3a3a3a;color:#fff;border-radius:2px;padding:0 2px">Memory</span> is not a vector store. It is a decision log.</span>
+                  <span style="font-size:13.5px;line-height:1.6"><span style="background:#3a3a3a;border-radius:2px;padding:0 2px">Memory</span>는 벡터 저장소가 아니라 의사결정 기록입니다.</span>
+                </div>
+                <span aria-label="중요 구간 저장" style="margin-left:auto;flex:none;width:32px;height:32px;display:flex;align-items:center;justify-content:center;border-radius:5px;color:#e9e9e9;font-size:14px;cursor:pointer">★</span>
+              </div>
+
+              <div style="display:flex;gap:10px;padding:12px 14px 12px 11px;border-bottom:1px solid #232323;background:#232323;border-left:3px solid #e9e9e9">
+                <span style="font-size:11px;font-family:ui-monospace,Menlo,monospace;font-variant-numeric:tabular-nums;color:#f0f0f0;font-weight:600;width:42px;flex:none">29:40</span>
+                <div style="display:flex;flex-direction:column;gap:5px;min-width:0">
+                  <span style="font-size:12px;color:#a5a5a5;line-height:1.5">The <span style="background:#e9e9e9;color:#111;border-radius:2px;padding:0 2px;font-weight:600">memory</span> layer should forget on purpose, not by accident.</span>
+                  <span style="font-size:13.5px;line-height:1.6;font-weight:500"><span style="background:#e9e9e9;color:#111;border-radius:2px;padding:0 2px;font-weight:600">Memory</span> 계층은 우연이 아니라 의도적으로 잊어야 합니다.</span>
+                  <span style="font-size:10px;font-family:ui-monospace,Menlo,monospace;color:#8a8a8a;letter-spacing:.04em">현재 결과 3 / 14</span>
+                </div>
+                <span aria-label="중요 구간 저장" style="margin-left:auto;flex:none;width:32px;height:32px;display:flex;align-items:center;justify-content:center;border-radius:5px;color:#6f6f6f;font-size:14px;cursor:pointer">☆</span>
+              </div>
+
+              <div style="display:flex;gap:10px;padding:12px 14px;border-bottom:1px solid #232323">
+                <span style="font-size:11px;font-family:ui-monospace,Menlo,monospace;font-variant-numeric:tabular-nums;color:#9a9a9a;width:42px;flex:none">31:08</span>
+                <div style="display:flex;flex-direction:column;gap:5px;min-width:0">
+                  <span style="font-size:12px;color:#9a9a9a;line-height:1.5">We split <span style="background:#3a3a3a;color:#fff;border-radius:2px;padding:0 2px">memory</span> into task state, world facts, and preferences.</span>
+                  <span style="font-size:13.5px;line-height:1.6"><span style="background:#3a3a3a;border-radius:2px;padding:0 2px">Memory</span>를 작업 상태, 사실 정보, 선호로 나눕니다.</span>
+                </div>
+                <span aria-label="중요 구간 저장" style="margin-left:auto;flex:none;width:32px;height:32px;display:flex;align-items:center;justify-content:center;border-radius:5px;color:#6f6f6f;font-size:14px;cursor:pointer">☆</span>
+              </div>
+
+              <div style="display:flex;gap:10px;padding:12px 14px;border-bottom:1px solid #232323">
+                <span style="font-size:11px;font-family:ui-monospace,Menlo,monospace;font-variant-numeric:tabular-nums;color:#9a9a9a;width:42px;flex:none">33:52</span>
+                <div style="display:flex;flex-direction:column;gap:5px;min-width:0">
+                  <span style="font-size:12px;color:#9a9a9a;line-height:1.5">Writing to <span style="background:#3a3a3a;color:#fff;border-radius:2px;padding:0 2px">memory</span> is a tool call the agent has to justify.</span>
+                  <span style="font-size:13.5px;line-height:1.6"><span style="background:#3a3a3a;border-radius:2px;padding:0 2px">Memory</span>에 쓰는 행위도 Agent가 근거를 밝혀야 하는 도구 호출입니다.</span>
+                </div>
+                <span aria-label="중요 구간 저장" style="margin-left:auto;flex:none;width:32px;height:32px;display:flex;align-items:center;justify-content:center;border-radius:5px;color:#6f6f6f;font-size:14px;cursor:pointer">☆</span>
+              </div>
+
+              <div style="display:flex;gap:10px;padding:12px 14px;opacity:.5">
+                <span style="font-size:11px;font-family:ui-monospace,Menlo,monospace;font-variant-numeric:tabular-nums;color:#9a9a9a;width:42px;flex:none">36:14</span>
+                <div style="display:flex;flex-direction:column;gap:5px;min-width:0">
+                  <span style="font-size:12px;color:#9a9a9a;line-height:1.5">Compaction is where most <span style="background:#3a3a3a;color:#fff;border-radius:2px;padding:0 2px">memory</span> designs break.</span>
+                  <span style="font-size:13.5px;line-height:1.6">대부분의 <span style="background:#3a3a3a;border-radius:2px;padding:0 2px">Memory</span> 설계는 압축 단계에서 무너집니다.</span>
+                </div>
+              </div>
+            </div>
+
+            <div style="flex:none;padding:8px 12px;border-top:1px solid #292929;display:flex;align-items:center;gap:8px">
+              <button style="font:inherit;font-size:11px;font-weight:600;padding:5px 9px;border:1px solid #383838;border-radius:20px;background:transparent;color:#c9c9c9;cursor:pointer" style-hover="background:#232323">현재 위치로 이동</button>
+              <span style="font-size:10.5px;color:#7a7a7a">검색 중에는 자동 추적이 멈춥니다</span>
+            </div>
+          </div>
+
+          <div style="width:40%;display:flex;flex-direction:column;min-width:0;background:#1c1c1c">
+            <div style="padding:11px 14px;border-bottom:1px solid #292929;display:flex;align-items:center;gap:8px;flex:none">
+              <span style="font-size:12px;font-weight:650">Summary</span>
+              <span style="font-size:10px;font-family:ui-monospace,Menlo,monospace;color:#7a7a7a">Memory 관련 3개 섹션</span>
+            </div>
+            <div style="flex:1;display:flex;flex-direction:column;gap:18px;padding:14px;overflow:hidden">
+              <div style="display:flex;flex-direction:column;gap:6px">
+                <span style="font-size:11px;font-weight:650;letter-spacing:.04em;color:#7a7a7a">이 영상이 다루는 문제</span>
+                <span style="font-size:12.5px;line-height:1.65;color:#d6d6d6;text-wrap:pretty">장시간 실행되는 Agent가 목표와 맥락을 잃지 않도록 작업 상태, 메모리, 평가 루프를 어떻게 구성하는지 설명한다.</span>
+              </div>
+              <div style="display:flex;flex-direction:column;gap:7px">
+                <span style="font-size:11px;font-weight:650;letter-spacing:.04em;color:#7a7a7a">핵심 주장</span>
+                <div style="display:flex;gap:8px"><span style="font-size:10px;font-family:ui-monospace,Menlo,monospace;color:#7a7a7a;padding-top:3px">01</span><span style="font-size:12.5px;line-height:1.6;color:#d6d6d6">실패 원인은 모델 성능이 아니라 맥락 이탈이다.</span></div>
+                <div style="display:flex;gap:8px"><span style="font-size:10px;font-family:ui-monospace,Menlo,monospace;color:#7a7a7a;padding-top:3px">02</span><span style="font-size:12.5px;line-height:1.6;color:#d6d6d6">작업 상태는 Checkpoint 파일로 외부에 고정한다.</span></div>
+                <div style="display:flex;gap:8px"><span style="font-size:10px;font-family:ui-monospace,Menlo,monospace;color:#7a7a7a;padding-top:3px">03</span><span style="font-size:12.5px;line-height:1.6;color:#f0f0f0"><span style="background:#3a3a3a;border-radius:2px;padding:0 2px">Memory</span>는 검색 저장소가 아니라 의사결정 기록이다.</span></div>
+                <div style="display:flex;gap:8px"><span style="font-size:10px;font-family:ui-monospace,Menlo,monospace;color:#7a7a7a;padding-top:3px">04</span><span style="font-size:12.5px;line-height:1.6;color:#d6d6d6">평가는 배포된 실제 trace 위에서 반복한다.</span></div>
+              </div>
+              <div style="display:flex;flex-direction:column;gap:2px">
+                <span style="font-size:11px;font-weight:650;letter-spacing:.04em;color:#7a7a7a;margin-bottom:5px">발표 흐름</span>
+                <div style="display:flex;gap:10px;padding:5px 0;border-bottom:1px solid #232323">
+                  <span style="font-size:11px;font-family:ui-monospace,Menlo,monospace;font-variant-numeric:tabular-nums;color:#9a9a9a;width:38px;flex:none">00:00</span><span style="font-size:12.5px;color:#d6d6d6">문제 정의</span>
+                </div>
+                <div style="display:flex;gap:10px;padding:5px 0;border-bottom:1px solid #232323">
+                  <span style="font-size:11px;font-family:ui-monospace,Menlo,monospace;font-variant-numeric:tabular-nums;color:#9a9a9a;width:38px;flex:none">06:20</span><span style="font-size:12.5px;color:#d6d6d6">장시간 Agent의 실패 원인</span>
+                </div>
+                <div style="display:flex;gap:10px;padding:5px 0;border-bottom:1px solid #232323">
+                  <span style="font-size:11px;font-family:ui-monospace,Menlo,monospace;font-variant-numeric:tabular-nums;color:#9a9a9a;width:38px;flex:none">17:10</span><span style="font-size:12.5px;color:#d6d6d6">작업 상태와 Checkpoint</span>
+                </div>
+                <div style="display:flex;gap:10px;padding:5px 0;border-bottom:1px solid #232323;background:#232323">
+                  <span style="font-size:11px;font-family:ui-monospace,Menlo,monospace;font-variant-numeric:tabular-nums;color:#f0f0f0;font-weight:600;width:38px;flex:none">29:40</span><span style="font-size:12.5px;color:#f0f0f0;font-weight:500"><span style="background:#3a3a3a;border-radius:2px;padding:0 2px">Memory</span>와 Context 관리</span>
+                </div>
+                <div style="display:flex;gap:10px;padding:5px 0;border-bottom:1px solid #232323">
+                  <span style="font-size:11px;font-family:ui-monospace,Menlo,monospace;font-variant-numeric:tabular-nums;color:#9a9a9a;width:38px;flex:none">43:15</span><span style="font-size:12.5px;color:#d6d6d6">Evaluation Loop</span>
+                </div>
+                <div style="display:flex;gap:10px;padding:5px 0">
+                  <span style="font-size:11px;font-family:ui-monospace,Menlo,monospace;font-variant-numeric:tabular-nums;color:#9a9a9a;width:38px;flex:none">55:20</span><span style="font-size:12.5px;color:#d6d6d6">운영 적용 사례</span>
+                </div>
+              </div>
+              <div style="display:flex;flex-direction:column;gap:7px">
+                <span style="font-size:11px;font-weight:650;letter-spacing:.04em;color:#7a7a7a">주요 키워드</span>
+                <div style="display:flex;gap:5px;flex-wrap:wrap">
+                  <span style="font-size:11px;padding:3px 8px;border-radius:4px;background:#212121;border:1px solid #303030;color:#c9c9c9">Agent Loop</span>
+                  <span style="font-size:11px;padding:3px 8px;border-radius:4px;background:#212121;border:1px solid #303030;color:#c9c9c9">Checkpoint</span>
+                  <span style="font-size:11px;padding:3px 8px;border-radius:4px;background:#e9e9e9;border:1px solid #e9e9e9;color:#111;font-weight:600">Memory</span>
+                  <span style="font-size:11px;padding:3px 8px;border-radius:4px;background:#212121;border:1px solid #303030;color:#c9c9c9">Context Window</span>
+                  <span style="font-size:11px;padding:3px 8px;border-radius:4px;background:#212121;border:1px solid #303030;color:#c9c9c9">Evaluation</span>
+                </div>
+              </div>
+              <div style="display:flex;flex-direction:column;gap:6px;padding-top:14px;border-top:1px solid #292929">
+                <span style="font-size:11px;font-weight:650;letter-spacing:.04em;color:#7a7a7a">결론</span>
+                <span style="font-size:12.5px;line-height:1.65;color:#d6d6d6;text-wrap:pretty">Agent의 신뢰성은 프롬프트가 아니라 상태 관리와 평가 루프에서 나온다.</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div style="flex:none;display:flex;gap:8px;align-items:center;padding:10px 14px;border-top:1px solid #303030;background:#181818">
+          <button style="font:inherit;font-size:12.5px;font-weight:650;padding:9px 16px;border:0;border-radius:7px;background:#ededed;color:#111;cursor:pointer" style-hover="background:#fff">학습 노트 생성</button>
+          <button style="font:inherit;font-size:12.5px;font-weight:550;padding:9px 14px;border:1px solid #383838;border-radius:7px;background:transparent;color:#d6d6d6;cursor:pointer" style-hover="background:#232323">요약 내보내기</button>
+          <button aria-label="자막 설정" style="font:inherit;font-size:12px;font-weight:550;margin-left:auto;padding:9px 12px;border:1px solid #383838;border-radius:7px;background:transparent;color:#d6d6d6;cursor:pointer" style-hover="background:#232323">자막 설정</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 420 DARK: NARROW TABS + BOOKMARKS -->
+    <div style="display:flex;flex-direction:column;gap:10px">
+      <span style="font-size:11px;font-weight:600;letter-spacing:.06em;color:#7a7a7a;font-family:ui-monospace,'SF Mono',Menlo,monospace">420px · 탭형 · 북마크만 보기 · DARK</span>
+      <div style="width:420px;height:880px;background:#181818;border:1px solid #303030;border-radius:8px;box-shadow:0 12px 32px rgba(0,0,0,.5);display:flex;flex-direction:column;overflow:hidden;color:#e9e9e9">
+        <div style="display:flex;align-items:center;gap:9px;padding:11px 13px;border-bottom:1px solid #292929;flex:none">
+          <div class="thumbD" style="width:52px;height:30px;border-radius:4px;flex:none"></div>
+          <div style="display:flex;flex-direction:column;gap:2px;min-width:0;flex:1">
+            <span style="font-size:12.5px;font-weight:600;line-height:1.3;display:-webkit-box;-webkit-line-clamp:1;-webkit-box-orient:vertical;overflow:hidden">Build Agents That Run for Hours…</span>
+            <span style="font-size:10.5px;color:#9a9a9a;font-variant-numeric:tabular-nums">AI Engineer · 58:12</span>
+          </div>
+          <span aria-label="패널 닫기" style="width:24px;height:24px;display:flex;align-items:center;justify-content:center;border-radius:5px;font-size:14px;color:#9a9a9a;cursor:pointer">×</span>
+        </div>
+
+        <div style="display:flex;flex:none;border-bottom:1px solid #292929">
+          <span style="flex:1;text-align:center;font-size:12px;padding:9px 0;color:#9a9a9a;cursor:pointer">Transcript</span>
+          <span style="flex:1;text-align:center;font-size:12px;padding:9px 0;color:#9a9a9a;cursor:pointer">Summary</span>
+          <span style="flex:1;text-align:center;font-size:12px;font-weight:650;padding:9px 0;color:#f0f0f0;border-bottom:2px solid #e9e9e9;cursor:pointer">북마크 3</span>
+        </div>
+
+        <div style="flex:1;display:flex;flex-direction:column">
+          <div style="display:flex;align-items:center;gap:8px;padding:9px 13px;border-bottom:1px solid #232323">
+            <span style="font-size:10.5px;font-family:ui-monospace,Menlo,monospace;color:#7a7a7a">시간 순</span>
+            <button disabled="{{ true }}" title="추후 지원" style="font:inherit;font-size:10.5px;margin-left:auto;padding:5px 9px;border:1px solid #2c2c2c;border-radius:20px;background:transparent;color:#5a5a5a;cursor:not-allowed">북마크만 연속 재생</button>
+          </div>
+
+          <div style="display:flex;gap:10px;padding:13px;border-bottom:1px solid #232323">
+            <span style="font-size:11px;font-family:ui-monospace,Menlo,monospace;font-variant-numeric:tabular-nums;color:#e9e9e9;width:42px;flex:none;cursor:pointer">07:02</span>
+            <div style="display:flex;flex-direction:column;gap:4px;min-width:0">
+              <span style="font-size:11.5px;color:#9a9a9a;line-height:1.45">We don't prompt Claude directly anymore.</span>
+              <span style="font-size:13px;line-height:1.55">이제는 Claude에게 직접 프롬프트를 작성하지 않습니다.</span>
+            </div>
+            <span aria-label="북마크 삭제" title="북마크 삭제" style="margin-left:auto;flex:none;width:32px;height:32px;display:flex;align-items:center;justify-content:center;border-radius:5px;color:#8a8a8a;font-size:13px;cursor:pointer" style-hover="background:#232323;color:#f0f0f0">×</span>
+          </div>
+
+          <div style="display:flex;gap:10px;padding:13px;border-bottom:1px solid #232323">
+            <span style="font-size:11px;font-family:ui-monospace,Menlo,monospace;font-variant-numeric:tabular-nums;color:#e9e9e9;width:42px;flex:none;cursor:pointer">08:15</span>
+            <div style="display:flex;flex-direction:column;gap:4px;min-width:0">
+              <span style="font-size:11.5px;color:#9a9a9a;line-height:1.45">Memory is not a vector store. It is a decision log.</span>
+              <span style="font-size:13px;line-height:1.55">Memory는 벡터 저장소가 아니라 의사결정 기록입니다.</span>
+            </div>
+            <span aria-label="북마크 삭제" style="margin-left:auto;flex:none;width:32px;height:32px;display:flex;align-items:center;justify-content:center;border-radius:5px;color:#8a8a8a;font-size:13px;cursor:pointer" style-hover="background:#232323;color:#f0f0f0">×</span>
+          </div>
+
+          <div style="display:flex;gap:10px;padding:13px;border-bottom:1px solid #232323">
+            <span style="font-size:11px;font-family:ui-monospace,Menlo,monospace;font-variant-numeric:tabular-nums;color:#e9e9e9;width:42px;flex:none;cursor:pointer">43:15</span>
+            <div style="display:flex;flex-direction:column;gap:4px;min-width:0">
+              <span style="font-size:11.5px;color:#9a9a9a;line-height:1.45">The evaluation loop runs on the same traces you ship.</span>
+              <span style="font-size:13px;line-height:1.55">Evaluation Loop는 실제로 배포한 trace를 그대로 사용합니다.</span>
+            </div>
+            <span aria-label="북마크 삭제" style="margin-left:auto;flex:none;width:32px;height:32px;display:flex;align-items:center;justify-content:center;border-radius:5px;color:#8a8a8a;font-size:13px;cursor:pointer" style-hover="background:#232323;color:#f0f0f0">×</span>
+          </div>
+
+          <div style="padding:24px 13px;display:flex;flex-direction:column;gap:6px;align-items:center;text-align:center;margin-top:12px">
+            <span style="font-size:14px;color:#4f4f4f">☆</span>
+            <span style="font-size:11.5px;color:#7a7a7a;line-height:1.6">중요한 구간의 별을 눌러 저장해보세요.<br>저장한 구간은 학습 노트에 함께 포함됩니다.</span>
+          </div>
+        </div>
+
+        <div style="flex:none;padding:12px 13px;border-top:1px solid #303030;display:flex;flex-direction:column;gap:7px">
+          <button style="font:inherit;font-size:12.5px;font-weight:650;padding:9px 0;border:0;border-radius:7px;background:#ededed;color:#111;cursor:pointer">학습 노트 생성</button>
+          <div style="display:flex;gap:7px">
+            <button style="flex:1;font:inherit;font-size:12px;font-weight:550;padding:8px 0;border:1px solid #383838;border-radius:7px;background:transparent;color:#d6d6d6;cursor:pointer">요약 내보내기</button>
+            <button style="flex:1;font:inherit;font-size:12px;font-weight:550;padding:8px 0;border:1px solid #383838;border-radius:7px;background:transparent;color:#d6d6d6;cursor:pointer">자막 설정</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- SUBTITLE SETTINGS -->
+    <div style="display:flex;flex-direction:column;gap:10px">
+      <span style="font-size:11px;font-weight:600;letter-spacing:.06em;color:#7a7a7a;font-family:ui-monospace,'SF Mono',Menlo,monospace">자막 설정 · DARK</span>
+      <div style="width:300px;background:#1c1c1c;border:1px solid #303030;border-radius:8px;box-shadow:0 12px 32px rgba(0,0,0,.5);overflow:hidden;color:#e9e9e9">
+        <div style="display:flex;align-items:center;padding:11px 13px;border-bottom:1px solid #292929">
+          <span style="font-size:12px;font-weight:650">자막 설정</span>
+          <span style="margin-left:auto;width:30px;height:17px;border-radius:20px;background:#ededed;display:flex;align-items:center;justify-content:flex-end;padding:2px" aria-label="자막 켜기">
+            <span style="width:13px;height:13px;border-radius:50%;background:#111;display:block"></span>
+          </span>
+        </div>
+        <div style="padding:13px;display:flex;flex-direction:column;gap:14px">
+          <div style="display:flex;flex-direction:column;gap:6px">
+            <span style="font-size:10.5px;font-weight:600;letter-spacing:.04em;color:#7a7a7a">표시 언어</span>
+            <div style="display:flex;border:1px solid #383838;border-radius:6px;overflow:hidden">
+              <span style="flex:1;text-align:center;font-size:11.5px;font-weight:600;padding:7px 0;background:#ededed;color:#111">영한 동시</span>
+              <span style="flex:1;text-align:center;font-size:11.5px;padding:7px 0;border-left:1px solid #383838;color:#c9c9c9">한국어만</span>
+              <span style="flex:1;text-align:center;font-size:11.5px;padding:7px 0;border-left:1px solid #383838;color:#c9c9c9">영어만</span>
+            </div>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:7px">
+            <div style="display:flex;font-size:10.5px;font-weight:600;letter-spacing:.04em;color:#7a7a7a"><span>글자 크기</span><span style="margin-left:auto;font-family:ui-monospace,Menlo,monospace;color:#c9c9c9;font-variant-numeric:tabular-nums">20px</span></div>
+            <div style="height:3px;background:#303030;border-radius:3px;display:flex;align-items:center">
+              <div style="width:55%;height:3px;background:#ededed;border-radius:3px"></div>
+              <span style="width:12px;height:12px;border-radius:50%;background:#ededed;display:block;margin-left:-6px"></span>
+            </div>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:7px">
+            <div style="display:flex;font-size:10.5px;font-weight:600;letter-spacing:.04em;color:#7a7a7a"><span>배경 투명도</span><span style="margin-left:auto;font-family:ui-monospace,Menlo,monospace;color:#c9c9c9;font-variant-numeric:tabular-nums">70%</span></div>
+            <div style="height:3px;background:#303030;border-radius:3px;display:flex;align-items:center">
+              <div style="width:70%;height:3px;background:#ededed;border-radius:3px"></div>
+              <span style="width:12px;height:12px;border-radius:50%;background:#ededed;display:block;margin-left:-6px"></span>
+            </div>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:6px">
+            <span style="font-size:10.5px;font-weight:600;letter-spacing:.04em;color:#7a7a7a">자막 위치</span>
+            <div style="display:flex;gap:6px">
+              <span style="flex:1;text-align:center;font-size:11.5px;padding:7px 0;border:1px solid #383838;border-radius:6px;color:#c9c9c9">상단</span>
+              <span style="flex:1;text-align:center;font-size:11.5px;padding:7px 0;border:1px solid #383838;border-radius:6px;color:#c9c9c9">중앙</span>
+              <span style="flex:1;text-align:center;font-size:11.5px;font-weight:600;padding:7px 0;border:1px solid #ededed;border-radius:6px;background:#ededed;color:#111">하단</span>
+            </div>
+          </div>
+          <div style="border:1px solid #292929;border-radius:6px;background:#111;padding:14px 10px;display:flex;flex-direction:column;gap:4px;align-items:center;text-align:center">
+            <span style="font-size:10.5px;color:#8a8a8a">Memory is not a vector store.</span>
+            <span style="font-size:12.5px;color:#f0f0f0">Memory는 벡터 저장소가 아닙니다.</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <div style="display:flex;flex-wrap:wrap;gap:36px;align-items:flex-start">
+
+    <!-- 520 LIGHT: PROCESSING PANEL -->
+    <div style="display:flex;flex-direction:column;gap:10px">
+      <span style="font-size:11px;font-weight:600;letter-spacing:.06em;color:#8a8d92;font-family:ui-monospace,'SF Mono',Menlo,monospace">520px · 처리 중 · LIGHT</span>
+      <div style="width:520px;height:820px;background:#fff;border:1px solid #e4e4e6;border-radius:8px;box-shadow:0 12px 32px rgba(16,18,22,.10);display:flex;flex-direction:column;overflow:hidden">
+        <div style="display:flex;gap:10px;padding:12px 14px;border-bottom:1px solid #eeeeef;flex:none">
+          <div class="thumb" style="width:72px;height:41px;border-radius:4px;flex:none"></div>
+          <div style="display:flex;flex-direction:column;gap:3px;min-width:0;flex:1">
+            <span style="font-size:14px;font-weight:600;line-height:1.35">Build Agents That Run for Hours Without Losing the Plot</span>
+            <span style="font-size:11px;color:#6c6f74;font-variant-numeric:tabular-nums">AI Engineer · 58:12</span>
+          </div>
+          <span style="flex:none;align-self:flex-start;display:inline-flex;align-items:center;gap:5px;font-size:10.5px;font-weight:600;padding:4px 8px;border-radius:20px;background:#f2f2f3;border:1px solid #e4e4e6;color:#3d4045">
+            <span style="width:5px;height:5px;border-radius:50%;background:#17181a;display:block"></span>Translating
+          </span>
+        </div>
+        <div style="height:2px;background:#eeeeef;flex:none"><div style="width:62%;height:2px;background:#17181a"></div></div>
+
+        <div style="padding:14px;display:flex;flex-direction:column;border-bottom:1px solid #eeeeef;flex:none;font-variant-numeric:tabular-nums">
+          <div style="display:flex;align-items:center;gap:9px;padding:6px 0;font-size:12.5px;color:#6c6f74">
+            <span style="width:17px;height:17px;border-radius:50%;background:#17181a;color:#fff;font-size:10px;display:flex;align-items:center;justify-content:center;flex:none">✓</span>
+            <span>Transcript 추출</span><span style="margin-left:auto;font-size:10.5px;color:#9a9da2">1,284 세그먼트</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:9px;padding:6px 0;font-size:12.5px;color:#6c6f74">
+            <span style="width:17px;height:17px;border-radius:50%;background:#17181a;color:#fff;font-size:10px;display:flex;align-items:center;justify-content:center;flex:none">✓</span>
+            <span>기술 용어 분석</span><span style="margin-left:auto;font-size:10.5px;color:#9a9da2">용어 37개</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:9px;padding:6px 0;font-size:12.5px;font-weight:600;color:#17181a">
+            <span style="width:17px;height:17px;border-radius:50%;border:2px solid #17181a;border-top-color:transparent;display:block;flex:none"></span>
+            <span>한국어 번역</span><span style="margin-left:auto;font-size:10.5px;font-weight:600">62% · 약 15초 남음</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:9px;padding:6px 0;font-size:12.5px;color:#b3b6bb">
+            <span style="width:17px;height:17px;border-radius:50%;border:1px solid #e0e0e2;font-size:10px;display:flex;align-items:center;justify-content:center;flex:none">4</span>
+            <span>자막 적용</span>
+          </div>
+        </div>
+
+        <div style="padding:9px 14px;font-size:10.5px;color:#6c6f74;border-bottom:1px solid #eeeeef;flex:none">처리 중에도 영상은 계속 재생할 수 있고, 완료된 구간부터 순차로 표시됩니다.</div>
+
+        <div style="flex:1;display:flex;flex-direction:column;overflow:hidden">
+          <div style="display:flex;gap:10px;padding:12px 14px;border-bottom:1px solid #f4f4f5">
+            <span style="font-size:11px;font-family:ui-monospace,Menlo,monospace;font-variant-numeric:tabular-nums;color:#6c6f74;width:42px;flex:none">06:20</span>
+            <div style="display:flex;flex-direction:column;gap:5px;min-width:0">
+              <span style="font-size:12px;color:#6c6f74;line-height:1.5">Most agents fail not because the model is weak, but because the context drifts.</span>
+              <span style="font-size:13.5px;line-height:1.6">대부분의 Agent는 모델이 약해서가 아니라 맥락이 흐트러져서 실패합니다.</span>
+            </div>
+          </div>
+          <div style="display:flex;gap:10px;padding:12px 14px;border-bottom:1px solid #f4f4f5">
+            <span style="font-size:11px;font-family:ui-monospace,Menlo,monospace;font-variant-numeric:tabular-nums;color:#6c6f74;width:42px;flex:none">07:02</span>
+            <div style="display:flex;flex-direction:column;gap:5px;min-width:0">
+              <span style="font-size:12px;color:#6c6f74;line-height:1.5">We don't prompt Claude directly anymore.</span>
+              <span style="font-size:13.5px;line-height:1.6">이제는 Claude에게 직접 프롬프트를 작성하지 않습니다.</span>
+            </div>
+          </div>
+          <div style="display:flex;gap:10px;padding:12px 14px;border-bottom:1px solid #f4f4f5">
+            <span style="font-size:11px;font-family:ui-monospace,Menlo,monospace;font-variant-numeric:tabular-nums;color:#9a9da2;width:42px;flex:none">07:41</span>
+            <div style="display:flex;flex-direction:column;gap:6px;min-width:0;flex:1">
+              <span style="font-size:12px;color:#9a9da2;line-height:1.5">Every long-running task keeps a checkpoint file it can rehydrate from.</span>
+              <span style="height:9px;width:88%;background:#eeeeef;border-radius:3px;display:block"></span>
+            </div>
+          </div>
+          <div style="display:flex;gap:10px;padding:12px 14px;border-bottom:1px solid #f4f4f5">
+            <span style="font-size:11px;font-family:ui-monospace,Menlo,monospace;font-variant-numeric:tabular-nums;color:#9a9da2;width:42px;flex:none">08:15</span>
+            <div style="display:flex;flex-direction:column;gap:6px;min-width:0;flex:1">
+              <span style="font-size:12px;color:#9a9da2;line-height:1.5">Memory is not a vector store. It is a decision log.</span>
+              <span style="height:9px;width:64%;background:#eeeeef;border-radius:3px;display:block"></span>
+            </div>
+          </div>
+          <div style="display:flex;gap:10px;padding:12px 14px;border-bottom:1px solid #f4f4f5">
+            <span style="font-size:11px;font-family:ui-monospace,Menlo,monospace;font-variant-numeric:tabular-nums;color:#c2c4c7;width:42px;flex:none">09:04</span>
+            <div style="display:flex;flex-direction:column;gap:6px;min-width:0;flex:1">
+              <span style="height:9px;width:76%;background:#f4f4f5;border-radius:3px;display:block"></span>
+              <span style="height:9px;width:52%;background:#f4f4f5;border-radius:3px;display:block"></span>
+            </div>
+          </div>
+          <div style="display:flex;gap:10px;padding:12px 14px">
+            <span style="font-size:11px;font-family:ui-monospace,Menlo,monospace;font-variant-numeric:tabular-nums;color:#c2c4c7;width:42px;flex:none">09:52</span>
+            <div style="display:flex;flex-direction:column;gap:6px;min-width:0;flex:1">
+              <span style="height:9px;width:58%;background:#f4f4f5;border-radius:3px;display:block"></span>
+              <span style="height:9px;width:40%;background:#f4f4f5;border-radius:3px;display:block"></span>
+            </div>
+          </div>
+        </div>
+
+        <div style="flex:none;display:flex;gap:8px;align-items:center;padding:10px 14px;border-top:1px solid #e4e4e6">
+          <button style="font:inherit;font-size:12.5px;font-weight:550;padding:9px 14px;border:1px solid #e0e0e2;border-radius:7px;background:#fff;color:#3d4045;cursor:pointer" style-hover="background:#f7f7f8">취소</button>
+          <span style="font-size:10.5px;color:#9a9da2;font-variant-numeric:tabular-nums">3 / 4 단계 · 812 / 1,284</span>
+          <button disabled="{{ true }}" style="font:inherit;font-size:12.5px;font-weight:650;margin-left:auto;padding:9px 16px;border:0;border-radius:7px;background:#f2f2f3;color:#b3b6bb;cursor:not-allowed">학습 노트 생성</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 520 LIGHT: ERROR / RETRY -->
+    <div style="display:flex;flex-direction:column;gap:10px">
+      <span style="font-size:11px;font-weight:600;letter-spacing:.06em;color:#8a8d92;font-family:ui-monospace,'SF Mono',Menlo,monospace">520px · 오류 및 재시도 · LIGHT</span>
+      <div style="width:520px;height:820px;background:#fff;border:1px solid #e4e4e6;border-radius:8px;box-shadow:0 12px 32px rgba(16,18,22,.10);display:flex;flex-direction:column;overflow:hidden">
+        <div style="display:flex;gap:10px;padding:12px 14px;border-bottom:1px solid #eeeeef;flex:none">
+          <div class="thumb" style="width:72px;height:41px;border-radius:4px;flex:none"></div>
+          <div style="display:flex;flex-direction:column;gap:3px;min-width:0;flex:1">
+            <span style="font-size:14px;font-weight:600;line-height:1.35">Build Agents That Run for Hours Without Losing the Plot</span>
+            <span style="font-size:11px;color:#6c6f74;font-variant-numeric:tabular-nums">AI Engineer · 58:12</span>
+          </div>
+          <span style="flex:none;align-self:flex-start;display:inline-flex;align-items:center;gap:5px;font-size:10.5px;font-weight:600;padding:4px 8px;border-radius:20px;background:#17181a;border:1px solid #17181a;color:#fff">
+            <span style="width:5px;height:5px;border-radius:50%;background:#fff;display:block"></span>Failed
+          </span>
+        </div>
+        <div style="height:2px;flex:none;background:repeating-linear-gradient(90deg,#17181a 0 4px,#eeeeef 4px 8px)"></div>
+
+        <div style="padding:14px;display:flex;flex-direction:column;gap:12px;border-bottom:1px solid #eeeeef;flex:none">
+          <div style="display:flex;gap:10px;padding:12px;border:1px solid #d8d8da;border-radius:7px;background:#f7f7f8">
+            <span style="width:18px;height:18px;border-radius:50%;background:#17181a;color:#fff;font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center;flex:none">!</span>
+            <div style="display:flex;flex-direction:column;gap:4px">
+              <span style="font-size:12.5px;font-weight:650">3단계 한국어 번역이 중단되었습니다</span>
+              <span style="font-size:11.5px;color:#6c6f74;line-height:1.6">번역 요청이 시간 초과되었습니다. 추출된 Transcript와 용어 분석 결과는 그대로 보관되어 있어, 번역 단계만 다시 실행하면 됩니다.</span>
+              <span style="font-size:10px;font-family:ui-monospace,Menlo,monospace;color:#9a9da2;margin-top:2px;font-variant-numeric:tabular-nums">ERR_TRANSLATE_TIMEOUT · 812 / 1,284 · 14:22:07</span>
+            </div>
+          </div>
+          <div style="display:flex;flex-direction:column;font-variant-numeric:tabular-nums">
+            <div style="display:flex;align-items:center;gap:9px;padding:5px 0;font-size:12.5px;color:#6c6f74">
+              <span style="width:17px;height:17px;border-radius:50%;background:#17181a;color:#fff;font-size:10px;display:flex;align-items:center;justify-content:center;flex:none">✓</span><span>Transcript 추출</span>
+            </div>
+            <div style="display:flex;align-items:center;gap:9px;padding:5px 0;font-size:12.5px;color:#6c6f74">
+              <span style="width:17px;height:17px;border-radius:50%;background:#17181a;color:#fff;font-size:10px;display:flex;align-items:center;justify-content:center;flex:none">✓</span><span>기술 용어 분석</span>
+            </div>
+            <div style="display:flex;align-items:center;gap:9px;padding:5px 0;font-size:12.5px;font-weight:650;color:#17181a">
+              <span style="width:17px;height:17px;border-radius:50%;border:2px solid #17181a;font-size:10px;font-weight:700;display:flex;align-items:center;justify-content:center;flex:none">!</span><span>한국어 번역</span>
+              <span style="margin-left:auto;font-size:10.5px;font-weight:600">63%에서 중단</span>
+            </div>
+            <div style="display:flex;align-items:center;gap:9px;padding:5px 0;font-size:12.5px;color:#b3b6bb">
+              <span style="width:17px;height:17px;border-radius:50%;border:1px solid #e0e0e2;font-size:10px;display:flex;align-items:center;justify-content:center;flex:none">4</span><span>자막 적용</span>
+            </div>
+          </div>
+          <div style="display:flex;gap:8px">
+            <button style="font:inherit;font-size:12.5px;font-weight:650;padding:9px 16px;border:0;border-radius:7px;background:#17181a;color:#fff;cursor:pointer" style-hover="background:#000">번역 다시 시도</button>
+            <button style="font:inherit;font-size:12.5px;font-weight:550;padding:9px 14px;border:1px solid #e0e0e2;border-radius:7px;background:#fff;color:#3d4045;cursor:pointer" style-hover="background:#f7f7f8">처음부터 다시</button>
+            <button style="font:inherit;font-size:12px;font-weight:550;margin-left:auto;padding:9px 12px;border:1px solid #e0e0e2;border-radius:7px;background:#fff;color:#6c6f74;cursor:pointer" style-hover="background:#f7f7f8">로그 보기</button>
+          </div>
+        </div>
+
+        <div style="padding:9px 14px;font-size:10.5px;font-family:ui-monospace,Menlo,monospace;color:#8a8d92;border-bottom:1px solid #eeeeef;flex:none;font-variant-numeric:tabular-nums">번역 완료 812 세그먼트 · 12:31 까지 표시 가능</div>
+
+        <div style="flex:1;display:flex;flex-direction:column;overflow:hidden">
+          <div style="display:flex;gap:10px;padding:12px 14px;border-bottom:1px solid #f4f4f5">
+            <span style="font-size:11px;font-family:ui-monospace,Menlo,monospace;font-variant-numeric:tabular-nums;color:#6c6f74;width:42px;flex:none">11:58</span>
+            <div style="display:flex;flex-direction:column;gap:5px;min-width:0">
+              <span style="font-size:12px;color:#6c6f74;line-height:1.5">Checkpoints are cheap. Re-running a six hour task is not.</span>
+              <span style="font-size:13.5px;line-height:1.6">Checkpoint는 저렴하지만 6시간짜리 작업을 다시 실행하는 것은 비쌉니다.</span>
+            </div>
+          </div>
+          <div style="display:flex;gap:10px;padding:12px 14px;border-bottom:1px solid #f4f4f5">
+            <span style="font-size:11px;font-family:ui-monospace,Menlo,monospace;font-variant-numeric:tabular-nums;color:#6c6f74;width:42px;flex:none">12:31</span>
+            <div style="display:flex;flex-direction:column;gap:5px;min-width:0">
+              <span style="font-size:12px;color:#6c6f74;line-height:1.5">We don't prompt Claude directly anymore.</span>
+              <span style="font-size:13.5px;line-height:1.6">이제는 Claude에게 직접 프롬프트를 작성하지 않습니다.</span>
+            </div>
+          </div>
+          <div style="display:flex;gap:10px;padding:12px 14px;border-bottom:1px solid #f4f4f5;background:#fafafb">
+            <span style="font-size:11px;font-family:ui-monospace,Menlo,monospace;font-variant-numeric:tabular-nums;color:#b3b6bb;width:42px;flex:none">13:04</span>
+            <div style="display:flex;flex-direction:column;gap:5px;min-width:0">
+              <span style="font-size:12px;color:#9a9da2;line-height:1.5">From here the model decides which tool to call next.</span>
+              <span style="font-size:11.5px;color:#9a9da2;line-height:1.6;font-style:italic">번역 대기 — 원문만 표시됩니다</span>
+            </div>
+          </div>
+          <div style="display:flex;gap:10px;padding:12px 14px;background:#fafafb">
+            <span style="font-size:11px;font-family:ui-monospace,Menlo,monospace;font-variant-numeric:tabular-nums;color:#b3b6bb;width:42px;flex:none">13:42</span>
+            <div style="display:flex;flex-direction:column;gap:5px;min-width:0">
+              <span style="font-size:12px;color:#9a9da2;line-height:1.5">The plan file is the only thing that survives a restart.</span>
+              <span style="font-size:11.5px;color:#9a9da2;line-height:1.6;font-style:italic">번역 대기 — 원문만 표시됩니다</span>
+            </div>
+          </div>
+        </div>
+
+        <div style="flex:none;display:flex;gap:8px;align-items:center;padding:10px 14px;border-top:1px solid #e4e4e6">
+          <span style="font-size:10.5px;color:#9a9da2;line-height:1.5">번역이 중단된 구간은 원문만 표시되고, 자막에는 적용되지 않습니다.</span>
+          <button style="font:inherit;font-size:12px;font-weight:550;margin-left:auto;padding:9px 12px;border:1px solid #e0e0e2;border-radius:7px;background:#fff;color:#3d4045;cursor:pointer;flex:none" style-hover="background:#f7f7f8">원문만 사용</button>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</section>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:1700,&quot;height&quot;:1200}}"></script>
+</body>
+</html>
+
