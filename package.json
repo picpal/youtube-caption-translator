@@ -10,7 +10,10 @@
     "zip": "wxt zip",
     "test": "vitest run",
     "test:watch": "vitest",
-    "preview": "vite --config preview/vite.config.ts"
+    "preview": "vite --config preview/vite.config.ts",
+    "dev:chrome": "node scripts/dev-chrome.mjs",
+    "dev:chrome:stop": "node scripts/dev-chrome-stop.mjs",
+    "dev:chrome:check": "node scripts/dev-chrome-check.mjs"
   },
   "dependencies": {
     "react": "^18.3.1",

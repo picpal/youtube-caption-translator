@@ -23,3 +23,7 @@ coverage/
 
 # Superpowers scratch state
 .superpowers/
+
+# dev:chrome tooling — persistent profile, screenshots, chrome log
+.chrome-dev-profile/
+.chrome-dev-output/
