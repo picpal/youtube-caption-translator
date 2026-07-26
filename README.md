@@ -47,9 +47,10 @@ built extension into real Chrome via `pnpm dev:chrome` (below) or a manual
 ### Real Chrome (`pnpm dev:chrome`) — manifest wiring, real messaging, real storage
 
 ```bash
-pnpm dev:chrome         # build if stale, launch Chrome, load the extension, print IDs/URLs
-pnpm dev:chrome:check   # verify a running instance end-to-end
-pnpm dev:chrome:stop    # stop the dev Chrome instance
+pnpm dev:chrome              # build if stale, launch Chrome, load the extension, print IDs/URLs
+pnpm dev:chrome:check        # verify a running instance end-to-end (SW wake + key status)
+pnpm dev:chrome:check:panel  # verify the REAL docked side panel (after you open it manually)
+pnpm dev:chrome:stop         # stop the dev Chrome instance
 ```
 
 This loads the actual built extension (`.output/chrome-mv3`) into a real,
@@ -73,15 +74,60 @@ zero new dependencies.
 - **Idempotent:** if something is already listening on the debug port,
   `pnpm dev:chrome` reuses it (and loads the extension into it if not
   already loaded) instead of spawning a second, conflicting Chrome.
-- **`pnpm dev:chrome:check`** asserts the background service worker target
-  exists, then drives `SAVE_API_KEY` → `GET_API_KEY_STATUS` →
-  `DELETE_API_KEY` through `chrome.runtime.sendMessage` on a real
-  `options.html` page target — exercising the actual messaging path,
-  `chrome.storage.local`, and `handle()` in `entrypoints/background.ts`. It
-  uses an obviously-fake key (`AIzaFAKE_DEVCHECK_0000`) and always attempts
-  the delete cleanup, even if an earlier assertion failed. It then
-  screenshots `options.html` and `sidepanel.html` to gitignored
-  `.chrome-dev-output/`.
+- **Landing page:** the first tab opens a real ~1hr English tech talk —
+  [Andrej Karpathy, "\[1hr Talk\] Intro to Large Language Models"](https://www.youtube.com/watch?v=zjkBMFhNj_g)
+  — the product's actual target content, not a blank page. Override it with
+  `DEV_CHROME_YOUTUBE_URL=<url> pnpm dev:chrome` or `pnpm dev:chrome -- <url>`.
+  A second tab opens `options.html` automatically; besides being visible,
+  opening any extension page also wakes the background service worker.
+- **API key seeding from `.env.local`:** copy `.env.local.example` to
+  `.env.local` and set `GEMINI_API_KEY=<your key>` (get one free at
+  <https://aistudio.google.com/apikey>). `pnpm dev:chrome` reads it and, only
+  if the dev profile's storage has **no** key yet, sends it through the
+  extension's real `SAVE_API_KEY` message (the genuine write path, not a
+  direct `chrome.storage.local` write). If a key is already saved, it is
+  always left byte-identical — nothing is ever overwritten. If `.env.local`
+  is missing or empty and no key is stored, `dev:chrome` says so and moves
+  on (not an error); you can still enter a key by hand in the Options page.
+  The key value itself is never printed, logged, or passed as a process
+  argument — only the extension's own masked form
+  (`GET_API_KEY_STATUS`/`SAVE_API_KEY`'s `maskedKey`) ever appears in
+  output. Tradeoff: `.env.local` holds the key in **plaintext on disk**,
+  protected only by `.gitignore` — if you'd rather not have that file at
+  all, skip it and use the Options page instead. This only ever seeds the
+  gitignored dev profile (`.chrome-dev-profile/`, or `CHROME_PROFILE_DIR` if
+  overridden) — it cannot reach and does not touch your real Chrome
+  profile.
+- **Toolbar pin:** on a fresh (non-reused) launch, the tooling seeds
+  `extensions.pinned_extensions` in `.chrome-dev-profile/Default/Preferences`
+  *before* Chrome starts, so the action button starts pinned instead of
+  hiding behind the generic puzzle-piece "Extensions" menu. This has to
+  happen pre-launch — Chrome overwrites `Preferences` with its in-memory
+  state on exit, so patching the file while Chrome is running doesn't stick.
+  If seeding fails for any reason, or the instance was reused instead of
+  freshly launched, `pnpm dev:chrome`'s banner prints a one-time manual
+  pin instruction (in Korean) instead of silently doing nothing.
+- **`pnpm dev:chrome:check`** first wakes the background service worker if
+  it has been evicted (MV3 evicts idle service workers after ~30s — it does
+  **not** assume one is already running) by deriving the extension id from
+  the build path and opening an `options.html` target, then polling for the
+  worker to reappear. It then checks `GET_API_KEY_STATUS` through
+  `chrome.runtime.sendMessage` — exercising the real messaging path,
+  `chrome.storage.local`, and `handle()` in `entrypoints/background.ts`.
+  **If a real key is already saved, the check stops there** and reports the
+  `SAVE_API_KEY`/`DELETE_API_KEY` round trip as skipped (printed in Korean)
+  — it will never overwrite or delete a real saved key. Only when no key is
+  present yet does it run the full `SAVE_API_KEY` (fake key,
+  `AIzaFAKE_DEVCHECK_0000`) → `GET_API_KEY_STATUS` → `DELETE_API_KEY` round
+  trip and clean up after itself. It then screenshots `options.html` and
+  `sidepanel.html` to gitignored `.chrome-dev-output/`.
+- **`pnpm dev:chrome:check:panel`** verifies the *actual docked* side panel
+  (see limitation below) once you've opened it manually: it looks for a
+  `sidepanel.html` target, asserts it rendered the READY branch (shows
+  "자막 표시", shows a disabled "AI 자막 생성" button, does **not** show the
+  non-YouTube message) — proving the panel is live against a real YouTube
+  watch tab — and screenshots it. If no panel target exists yet, it exits
+  with a Korean instruction to click the pinned toolbar icon first.
 - **`TEST_API_KEY` is deliberately never called** by `dev:chrome:check` — it
   hits the real Gemini endpoint and would either fail or burn real quota.
   Verify that path manually, once, with a real key.
@@ -94,10 +140,17 @@ zero new dependencies.
   Navigating a tab to `chrome-extension://<id>/sidepanel.html` renders the
   same React app (useful for screenshots/messaging checks), but it is a
   normal tab, not the actual docked, `chrome.sidePanel`-hosted panel. There
-  is currently no way to verify the docked panel via CDP automation; it
-  must be checked manually by clicking the extension's toolbar icon.
-- **Extension ID is stable** across runs for the same absolute build path
-  (verified by repeated runs) — but a fresh profile also loads Chrome's own
+  is currently no way to *open* the docked panel via CDP automation; it must
+  be opened manually by clicking the extension's toolbar icon. Once it's
+  open, `pnpm dev:chrome:check:panel` *can* verify it via CDP — see above,
+  and see `.superpowers/sdd/dev-chrome-tooling-report.md` for what its
+  `Target.getTargets()` `type` field actually reported on Chrome 150.
+- **Extension ID is stable** across runs for the same absolute build path,
+  and is fully deterministic: it's `sha256(absoluteBuildPath)`, first 32 hex
+  characters, each hex nibble mapped to a letter `a`-`p`. The tooling
+  computes this itself (`scripts/lib/extension-id.mjs`) instead of relying
+  on a live target, which is what makes waking-before-asserting and
+  pre-launch pin seeding possible. A fresh profile also loads Chrome's own
   built-in component extensions, each with their own `service_worker`
   target, so the tooling identifies *our* service worker by matching the
   script filename declared in `manifest.json`'s `background.service_worker`
@@ -106,5 +159,15 @@ zero new dependencies.
   `--user-data-dir`; never touches your real Chrome) or `Ctrl+C`-adjacent:
   since Chrome runs detached, closing the terminal does not stop it —
   always use the stop command.
-- Override the Chrome binary with `CHROME_PATH=...` or the debug port with
-  `CHROME_DEBUG_PORT=...` if the defaults don't fit your machine.
+- Override the Chrome binary with `CHROME_PATH=...`, the debug port with
+  `CHROME_DEBUG_PORT=...`, or the profile directory with
+  `CHROME_PROFILE_DIR=...` if the defaults don't fit your machine (the
+  profile override is also how this tooling was verified against a fully
+  separate throwaway profile without ever touching the real one).
+- **Missing extension icons:** the manifest has no `icons` entry, so even a
+  pinned toolbar button shows a generic default glyph rather than a
+  distinct icon. This doesn't block any of the above — the pin makes the
+  button reachable, and the button's tooltip (`action.default_title`) still
+  identifies it on hover — but it does make the extension harder to spot at
+  a glance among other pinned icons. Adding placeholder icon assets is a
+  product decision left for a separate task, not done here.

@@ -11,6 +11,14 @@ web-ext-artifacts/
 .env
 .env.*
 !.env.example
+!.env.local.example
+# NOTE on verifying this block: `git check-ignore -v <path>` exits 0 for ANY
+# matching pattern, negations included (see its own docs: "0 - One or more
+# of the provided paths is ignored" — that wording covers a negation match
+# too). A `!`-prefixed pattern in the -v output means the path is NOT
+# excluded, but the exit code alone does not show that. To verify a
+# negation actually re-includes a path, use `git status --ignored=matching`
+# (untracked+non-ignored is `??`, ignored is `!!`) or `git add -n <path>`.
 
 # Editor / OS
 .DS_Store
