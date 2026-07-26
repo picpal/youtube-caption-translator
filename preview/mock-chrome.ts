@@ -199,6 +199,48 @@ const mockChrome = {
 
 (window as unknown as { chrome: typeof mockChrome }).chrome = mockChrome;
 
+// Real MV3 side panel documents close themselves via `window.close()` (see
+// entrypoints/sidepanel/App.tsx's "패널 닫기" button), and that's the correct
+// production call — real Chrome honors it there. But in this harness every
+// surface is just a plain page opened by navigation, not `window.open()`
+// from script, so the browser silently no-ops `window.close()`: no error,
+// no visible change, nothing to click through in a local test pass.
+//
+// Overridden here (not per-surface) so *any* harness page that calls
+// `window.close()` — not just the side panel — gets an observable result.
+// Mirrors the `[mock] chrome.tabs.remove ...` logging convention above.
+//
+// Renders a "closed" placeholder in place of #root rather than navigating
+// away (contrast with chrome.tabs.remove's redirect to ./index.html): a
+// side panel closing is not the same action as an Options tab closing, and
+// swapping #root's content — instead of leaving the page — is what actually
+// demonstrates *closing* while keeping the DEV PREVIEW panel (appended
+// directly to document.body, untouched by this) usable to get back.
+window.close = () => {
+  console.log('[mock] window.close()', '-> rendering closed placeholder in #root');
+  renderClosedPlaceholder();
+};
+
+function renderClosedPlaceholder(): void {
+  const root = document.getElementById('root');
+  if (!root) return;
+  root.innerHTML = `
+    <div class="flex min-h-[280px] flex-col items-center justify-center gap-3 bg-white p-6 text-center dark:bg-neutral-950">
+      <p class="text-sm font-medium text-neutral-700 dark:text-neutral-300">패널이 닫혔습니다</p>
+      <button
+        type="button"
+        data-action="ypa-reopen"
+        class="rounded-md border border-neutral-300 px-3 py-1.5 text-xs font-medium text-neutral-700 hover:bg-neutral-100 dark:border-neutral-700 dark:text-neutral-200 dark:hover:bg-neutral-800"
+      >
+        다시 열기
+      </button>
+    </div>
+  `;
+  root.querySelector('[data-action="ypa-reopen"]')?.addEventListener('click', () => {
+    location.reload();
+  });
+}
+
 // Apply the persisted light/dark preference before the app renders (avoids a
 // flash of the wrong theme), then mount the harness-only dev panel.
 applyStoredTheme();
