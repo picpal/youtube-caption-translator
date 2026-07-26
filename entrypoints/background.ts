@@ -4,6 +4,10 @@ import { testGeminiKey } from '~/lib/gemini';
 import type { AppMessage, AppResponseMap } from '~/types/message';
 
 export default defineBackground(() => {
+  chrome.sidePanel
+    ?.setPanelBehavior?.({ openPanelOnActionClick: true })
+    .catch((err) => console.warn('sidePanel.setPanelBehavior failed', err));
+
   chrome.runtime.onMessage.addListener(
     (msg: AppMessage, _sender, sendResponse) => {
       handle(msg)
