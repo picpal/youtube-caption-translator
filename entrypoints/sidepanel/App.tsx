@@ -25,6 +25,14 @@ export function App() {
           >
             <GearIcon />
           </button>
+          <button
+            type="button"
+            onClick={() => window.close()}
+            aria-label="패널 닫기"
+            className="flex h-6 w-6 items-center justify-center rounded-[5px] text-sm text-neutral-600 hover:bg-neutral-100 dark:text-neutral-400 dark:hover:bg-neutral-800"
+          >
+            ×
+          </button>
         </div>
       </header>
 
