@@ -32,6 +32,25 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+// Very small subset of chrome's match-pattern semantics: only `*` as a
+// wildcard, everything else literal. Good enough for the one pattern this
+// app actually uses ('https://www.youtube.com/watch*').
+function matchesUrlPattern(url: string, pattern: string): boolean {
+  const escaped = pattern.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*');
+  return new RegExp(`^${escaped}$`).test(url);
+}
+
+function matchesAnyUrlPattern(url: string, patterns: string | string[]): boolean {
+  const list = Array.isArray(patterns) ? patterns : [patterns];
+  return list.some((pattern) => matchesUrlPattern(url, pattern));
+}
+
+// The tab hosting *this* preview page (options.html), distinct from the
+// switcher-driven "current tab" below (which stands in for whatever tab the
+// popup/side panel would be attached to, e.g. a YouTube tab). Options opens
+// in its own tab in the real extension, so it needs its own fake id.
+const FAKE_OPTIONS_TAB_ID = 2;
+
 function cannedResult(kind: TestResultKind): GeminiTestResult {
   switch (kind) {
     case 'ok':
@@ -111,25 +130,64 @@ const mockChrome = {
     },
   },
   tabs: {
-    query: async (_queryInfo?: unknown) => {
+    // `queryInfo.url` drives the entrypoints/options/App.tsx "YouTube 탭으로
+    // 돌아가기" show/hide logic: it should resolve against whatever the DEV
+    // PREVIEW panel's "현재 탭" switcher (state.ts's `tabKind`) is currently
+    // set to, so that switching the fake tab to a watch-page state is enough
+    // to exercise the real button-visibility logic with no other changes.
+    query: async (queryInfo?: { url?: string | string[]; active?: boolean; currentWindow?: boolean }) => {
       const { tabKind } = readMeta();
-      return [
-        {
-          id: 1,
-          index: 0,
-          windowId: 1,
-          active: true,
-          highlighted: true,
-          pinned: false,
-          incognito: false,
-          selected: true,
-          discarded: false,
-          autoDiscardable: true,
-          groupId: -1,
-          url: tabUrlFor(tabKind),
-          title: '[Preview] Fake Tab',
-        },
-      ];
+      const fakeCurrentTab = {
+        id: 1,
+        index: 0,
+        windowId: 1,
+        active: true,
+        highlighted: true,
+        pinned: false,
+        incognito: false,
+        selected: true,
+        discarded: false,
+        autoDiscardable: true,
+        groupId: -1,
+        url: tabUrlFor(tabKind),
+        title: '[Preview] Fake Tab',
+      };
+      if (queryInfo?.url != null) {
+        return matchesAnyUrlPattern(fakeCurrentTab.url, queryInfo.url) ? [fakeCurrentTab] : [];
+      }
+      return [fakeCurrentTab];
+    },
+    // Stands in for the Options tab itself (see FAKE_OPTIONS_TAB_ID above) —
+    // used by the "설정 닫기" button to find its own tab id to remove.
+    getCurrent: async () => ({
+      id: FAKE_OPTIONS_TAB_ID,
+      index: 0,
+      windowId: 1,
+      active: true,
+      highlighted: true,
+      pinned: false,
+      incognito: false,
+      selected: true,
+      discarded: false,
+      autoDiscardable: true,
+      groupId: -1,
+      url: window.location.href,
+      title: '[Preview] Options Tab',
+    }),
+    // A real browser tab can't be closed from inside itself here, so this
+    // mocks the *effect* users care about — "the Options tab is gone" — by
+    // sending them back to the harness launcher instead.
+    remove: async (tabId: number | number[]) => {
+      console.log('[mock] chrome.tabs.remove', tabId, '-> navigating to preview launcher (./index.html)');
+      window.location.href = './index.html';
+    },
+    update: async (tabId: number, updateProperties: Record<string, unknown>) => {
+      console.log('[mock] chrome.tabs.update', tabId, updateProperties, '-> would focus this tab');
+    },
+  },
+  windows: {
+    update: async (windowId: number, updateInfo: Record<string, unknown>) => {
+      console.log('[mock] chrome.windows.update', windowId, updateInfo, '-> would focus this window');
     },
   },
   sidePanel: {
