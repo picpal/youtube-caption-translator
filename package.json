@@ -9,7 +9,8 @@
     "build": "wxt build",
     "zip": "wxt zip",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "preview": "vite --config preview/vite.config.ts"
   },
   "dependencies": {
     "react": "^18.3.1",
@@ -20,6 +21,7 @@
     "@types/chrome": "^0.2.2",
     "@types/react": "^18.3.31",
     "@types/react-dom": "^18.3.7",
+    "@vitejs/plugin-react": "^5.2.0",
     "@vitest/coverage-v8": "^1.6.1",
     "@wxt-dev/module-react": "^1.2.2",
     "autoprefixer": "^10.5.4",
@@ -27,6 +29,7 @@
     "postcss": "^8.5.22",
     "tailwindcss": "^3.4.19",
     "typescript": "^5.9.3",
+    "vite": "^6.4.3",
     "vitest": "^1.6.1"
   }
 }

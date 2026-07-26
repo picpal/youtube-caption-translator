@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>YouTube Play Assistant — Local Preview</title>
+    <style>
+      :root { color-scheme: light dark; }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        background: #f2f2f3;
+        color: #17181a;
+      }
+      @media (prefers-color-scheme: dark) {
+        body { background: #0f0f0f; color: #ededed; }
+        .card { border-color: #292929 !important; background: #141414 !important; }
+        a { color: #ededed !important; }
+        code { background: #1e1e1e !important; border-color: #2c2c2c !important; color: #c9c9c9 !important; }
+      }
+      .card {
+        width: min(560px, 90vw);
+        border: 1px solid #e4e4e6;
+        border-radius: 10px;
+        background: white;
+        padding: 28px 32px;
+      }
+      h1 { font-size: 16px; margin: 0 0 8px; }
+      p { font-size: 13px; line-height: 1.6; opacity: 0.8; }
+      ul { list-style: none; margin: 20px 0 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+      a {
+        display: block;
+        padding: 10px 14px;
+        border: 1px solid #e0e0e2;
+        border-radius: 7px;
+        text-decoration: none;
+        color: #17181a;
+        font-size: 13px;
+        font-weight: 600;
+      }
+      code { font-size: 12px; background: #f2f2f3; border: 1px solid #e8e8ea; border-radius: 4px; padding: 1px 5px; }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <h1>YouTube Play Assistant — Local Preview</h1>
+      <p>
+        Serves the popup / options / sidepanel entrypoints in a plain browser
+        tab with a mock <code>chrome.*</code> object injected in front of the
+        real bundle — no unpacked extension load required. Each page has a
+        "DEV PREVIEW" panel (bottom-right) to switch API key / tab / test
+        result / theme state.
+      </p>
+      <ul>
+        <li><a href="./popup.html">Popup</a></li>
+        <li><a href="./options.html">Options</a></li>
+        <li><a href="./sidepanel.html">Side Panel</a></li>
+      </ul>
+    </div>
+  </body>
+</html>
