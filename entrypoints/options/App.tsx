@@ -209,9 +209,8 @@ export function App() {
 }
 
 // Rendered only once a key is registered — gives the user a clear "you're
-// done here" exit instead of being stranded on this tab (see
-// entrypoints/popup/App.tsx and entrypoints/sidepanel/App.tsx, both of which
-// reach this page via chrome.runtime.openOptionsPage() with no way back).
+// done here" exit instead of being stranded on this tab. The side panel reaches
+// this page via chrome.runtime.openOptionsPage() with no way back without this.
 function CompletionSection() {
   const [hasYoutubeTab, setHasYoutubeTab] = useState(false);
 
