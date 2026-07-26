@@ -142,7 +142,7 @@ function renderHtml(
         </div>
       </div>
       <div class="ypa-row">
-        <span class="ypa-label">현재 탭 <em>(새로고침)</em></span>
+        <span class="ypa-label">현재 탭 <em>(새로고침 필요)</em></span>
         <div class="ypa-group">${tabButtons}</div>
       </div>
       <div class="ypa-row">

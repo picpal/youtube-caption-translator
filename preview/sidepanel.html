@@ -4,9 +4,52 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>[Preview] Side Panel — YouTube Play Assistant</title>
+    <style>
+      /* Harness-only framing so the side panel reviews at its real ~400px
+         width instead of stretching full-width. Unlike popup/App.tsx,
+         entrypoints/sidepanel/App.tsx sets no width of its own (by design —
+         the real side panel is resizable host chrome), so without this the
+         preview would misleadingly show it filling the whole browser tab.
+         The constraint belongs here in the harness wrapper, not in the
+         product component. Production code is untouched.
+
+         Coexists with preview/dev-panel.ts's `html.dark body` /
+         `html:not(.dark) body` !important background overrides: those still
+         own the page backdrop color; this only adds a border/shadow around
+         #root, so there is nothing to fight over. */
+      html,
+      body {
+        margin: 0;
+      }
+      body {
+        min-height: 100vh;
+        display: flex;
+        justify-content: center;
+        padding: 40px 24px;
+        box-sizing: border-box;
+      }
+      .ypa-frame {
+        width: 400px;
+        box-sizing: border-box;
+        border-radius: 8px;
+        border: 1px solid rgba(115, 115, 115, 0.35);
+        box-shadow:
+          0 16px 40px rgba(0, 0, 0, 0.18),
+          0 2px 6px rgba(0, 0, 0, 0.1);
+        overflow: hidden;
+      }
+      html.dark .ypa-frame {
+        border-color: rgba(255, 255, 255, 0.14);
+        box-shadow:
+          0 16px 40px rgba(0, 0, 0, 0.6),
+          0 2px 6px rgba(0, 0, 0, 0.4);
+      }
+    </style>
   </head>
   <body>
-    <div id="root"></div>
+    <div class="ypa-frame">
+      <div id="root"></div>
+    </div>
     <script type="module" src="./sidepanel-entry.ts"></script>
   </body>
 </html>
