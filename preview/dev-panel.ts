@@ -1,14 +1,14 @@
 // Harness-only "DEV PREVIEW" state switcher.
 //
 // Rendered as a fixed-position overlay appended directly to `document.body`
-// on every preview page — never part of the popup/options/sidepanel React
-// trees, and styled distinctly (dark amber chrome) so it can never be
-// mistaken for real product UI.
+// on every preview page — never part of the options/sidepanel React trees,
+// and styled distinctly (dark amber chrome) so it can never be mistaken for
+// real product UI.
 //
 // Lets the developer flip mock state without touching production code:
 //   - API key present / absent      -> live update (fires storage.onChanged)
 //   - Current fake tab               -> reloads the page to re-run the
-//                                        popup's one-shot chrome.tabs.query
+//                                        side panel's one-shot chrome.tabs.query
 //   - Next TEST_API_KEY result       -> read fresh on the next test click
 //   - Light / dark theme             -> live update (toggles `.dark` on <html>)
 
@@ -69,7 +69,7 @@ export async function mountDevPanel(): Promise<void> {
   };
 
   // Keep the "API 키" indicator live if it changes from elsewhere (e.g. the
-  // real Options/Popup UI saving or deleting a key while the panel is open).
+  // real Options UI saving or deleting a key while the panel is open).
   addStorageListener(() => {
     void render();
   });
@@ -158,7 +158,6 @@ function renderHtml(
       </div>
       <div class="ypa-row ypa-nav">
         <a href="./index.html">런처</a>
-        <a href="./popup.html">Popup</a>
         <a href="./options.html">Options</a>
         <a href="./sidepanel.html">Sidepanel</a>
       </div>

@@ -1,9 +1,9 @@
 // Minimal `chrome.*` shim for the local preview harness.
 //
 // This file is imported (via the per-surface `*-entry.ts` files) *before*
-// the real entrypoint `main.tsx`, so that by the time popup/options/sidepanel
-// code touches `chrome.storage`, `chrome.runtime`, `chrome.tabs`, or
-// `chrome.sidePanel`, a working stand-in already exists on `window`.
+// the real entrypoint `main.tsx`, so that by the time options/sidepanel code
+// touches `chrome.storage`, `chrome.runtime`, or `chrome.tabs`, a working
+// stand-in already exists on `window`.
 //
 // Production code under entrypoints/ and src/ is completely unmodified and
 // unaware of this file — this is the only place in the repo that knows it
@@ -47,7 +47,7 @@ function matchesAnyUrlPattern(url: string, patterns: string | string[]): boolean
 
 // The tab hosting *this* preview page (options.html), distinct from the
 // switcher-driven "current tab" below (which stands in for whatever tab the
-// popup/side panel would be attached to, e.g. a YouTube tab). Options opens
+// side panel would be attached to, e.g. a YouTube tab). Options opens
 // in its own tab in the real extension, so it needs its own fake id.
 const FAKE_OPTIONS_TAB_ID = 2;
 
@@ -188,11 +188,6 @@ const mockChrome = {
   windows: {
     update: async (windowId: number, updateInfo: Record<string, unknown>) => {
       console.log('[mock] chrome.windows.update', windowId, updateInfo, '-> would focus this window');
-    },
-  },
-  sidePanel: {
-    open: async (_options?: unknown) => {
-      window.location.href = './sidepanel.html';
     },
   },
 };

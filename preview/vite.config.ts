@@ -6,7 +6,7 @@ import autoprefixer from 'autoprefixer';
 import tailwindPreviewConfig from './tailwind.preview.config';
 
 // Standalone Vite dev server for the local preview harness. It serves the
-// real popup/options/sidepanel entrypoints (imported unmodified from
+// real options/sidepanel entrypoints (imported unmodified from
 // ../entrypoints) with a mock `chrome` object injected in front of them —
 // see ./mock-chrome.ts. This config is entirely separate from wxt's own
 // build pipeline and does not affect `pnpm build` / `pnpm dev`.
