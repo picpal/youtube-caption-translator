@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Button } from '~/components/Button';
 import { Input } from '~/components/Input';
 import { StatusBadge } from '~/components/StatusBadge';
@@ -186,6 +186,13 @@ export function App() {
               무료 티어 정보 →
             </a>
           </section>
+
+          {isPresent && (
+            <>
+              <div className="my-1.5 h-px bg-[#eeeeef] dark:bg-[#262626]" />
+              <CompletionSection />
+            </>
+          )}
         </div>
 
         {/* footer chrome — version only; the design's GitHub / 변경 내역 links
@@ -198,6 +205,62 @@ export function App() {
         </div>
       </div>
     </div>
+  );
+}
+
+// Rendered only once a key is registered — gives the user a clear "you're
+// done here" exit instead of being stranded on this tab (see
+// entrypoints/popup/App.tsx and entrypoints/sidepanel/App.tsx, both of which
+// reach this page via chrome.runtime.openOptionsPage() with no way back).
+function CompletionSection() {
+  const [hasYoutubeTab, setHasYoutubeTab] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    chrome.tabs.query({ url: 'https://www.youtube.com/watch*' }).then((tabs) => {
+      if (!cancelled) setHasYoutubeTab(tabs.length > 0);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const closeThisTab = async () => {
+    const tab = await chrome.tabs.getCurrent();
+    if (tab?.id) await chrome.tabs.remove(tab.id);
+  };
+
+  const returnToYoutube = async () => {
+    const tabs = await chrome.tabs.query({ url: 'https://www.youtube.com/watch*' });
+    const target = tabs[0];
+    if (target?.id != null) {
+      await chrome.tabs.update(target.id, { active: true });
+      if (target.windowId != null) {
+        await chrome.windows.update(target.windowId, { focused: true });
+      }
+    }
+    await closeThisTab();
+  };
+
+  return (
+    <section className="flex flex-col gap-2.5 rounded-[7px] border border-[#e4e4e6] bg-[#f7f7f8] px-3.5 py-3 dark:border-[#2a2a2a] dark:bg-[#181818]">
+      <div className="flex flex-col gap-0.5">
+        <h2 className="text-sm font-semibold text-[#17181a] dark:text-[#ededed]">설정 완료</h2>
+        <p className="text-[12.5px] leading-relaxed text-[#6c6f74] dark:text-[#9a9a9a]">
+          키가 저장되었습니다. 이 탭은 계속 열어둘 필요 없습니다.
+        </p>
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
+        <Button size="sm" onClick={closeThisTab}>
+          설정 닫기
+        </Button>
+        {hasYoutubeTab && (
+          <Button variant="secondary" size="sm" onClick={returnToYoutube}>
+            YouTube 탭으로 돌아가기
+          </Button>
+        )}
+      </div>
+    </section>
   );
 }
 
