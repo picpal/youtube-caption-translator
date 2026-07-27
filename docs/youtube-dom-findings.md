@@ -204,19 +204,29 @@ The CC button exists whether or not captions exist. `display: block` / `offsetWi
 
 | Attribute | Fixture (asr only) | Manual+asr video | No captions | Discriminates? |
 |---|---|---|---|---|
-| `data-tooltip-title` | `"자막(c)"` | `"자막(c)"` | `"자막 사용 불가"` | ✅ **yes** (has/hasn't) |
+| `data-tooltip-title` | `"자막(c)"` | `"자막(c)"` | `"자막 사용 불가"` | ❌ **no — settled values discriminate, but it is transiently WRONG (Task 6)** |
 | `aria-label` | `"자막 사용 불가"` | `"자막 사용 불가"` | `"자막 사용 불가"` | ❌ **no — identical in all three** |
-| `aria-pressed` | `"true"` | `"true"` | `"false"` | ⚠️ see note below |
+| `aria-pressed` | `"true"` | `"true"` | `"false"` | ❌ **no — Task 6 ran the toggle test; it follows the user's CC preference** |
 | `class` | `ytp-subtitles-button ytp-button` | same | same | ❌ no |
-| `disabled` attribute | absent | *not measured* | *not measured* | ⚠️ unknown |
+| `disabled` attribute | absent | absent | absent | ❌ **no — Task 6 measured all three; never present** |
 | computed `display` / `offsetWidth` | `block` / `48` | *not measured* | `block` / `48` | ❌ no (n=2) |
 | `ytd-video-description-transcript-section-renderer` present | `true` | `true` | `false` | ✅ **yes** (has/hasn't), locale-independent |
 
 **The `aria-label` trap is real**: on this Korean-locale profile `aria-label` reads `"자막 사용 불가"` ("subtitles unavailable") even on a video that *does* have captions. Do not use `aria-label`.
 
-> ⚠️ **On `aria-pressed` — my "user preference" reading is an interpretation, not a measurement.** Across the only three samples taken it discriminates *perfectly* (`true` / `true` / `false`), so on the raw data it looks like a valid signal. I labelled it unusable because `aria-pressed` on a toggle button conventionally reports the toggle's current on/off state, which would make it track the user's caption preference rather than caption availability — but **I never ran the experiment that would settle this** (toggle CC off on a captioned video and re-read the attribute). If Task 6 wants to use `aria-pressed`, run that toggle test first; do not take this row's verdict on faith.
+> ⚠️ **`data-tooltip-title` is a trap too — downgraded by Task 6.** Its *settled* values do discriminate, which is why this table originally marked it ✅. But it is locale-dependent (everything here was observed under `ko-KR`) **and it is transiently wrong on a captioned video**. Sampled at 150ms resolution from navigation start on the manual-caption video:
+>
+> ```
+> +   947ms  {"transcript":false,"tooltip":"자막 사용 불가"}
+> +  1372ms  {"transcript":false,"tooltip":"자막(c)"}
+> +  1599ms  {"transcript":true, "tooltip":"자막(c)"}
+> ```
+>
+> For the first ~1.4s after load it reports "subtitles unavailable" on a video that has captions. An earlier Task 6 probe read exactly that state and briefly concluded the fixture video had no captions. Use the transcript section instead.
 
-> ⚠️ **The `disabled` row is now honest about its evidence.** `hasAttribute('disabled')` was evaluated **only on the fixture** (result: `false`). An earlier draft filled the other two columns with "absent" — those cells were never measured and have been replaced with *not measured*.
+> ✅ **RESOLVED by Task 6 — `aria-pressed` follows the toggle. Do not use it.** The original note here said the "user preference" reading was an interpretation and that the settling experiment had never been run. Task 6 ran it. Clicking the CC button on the manual-caption video flipped `aria-pressed` `"true"` -> `"false"`, the change survived a reload of that video, and it **leaked into a different captioned video**, at which point that video was indistinguishable from the caption-free one. The three-sample discrimination was a coincidence of this profile having CC switched on. Full log in task-6-report.md §2.
+
+> ✅ **RESOLVED by Task 6 — measured on all three videos, absent every time.** `hasAttribute('disabled')` is `false` on the asr-only fixture, the manual-caption video and the no-caption video alike; `aria-disabled` is `null` on all three. The button is a real `<button>` that is simply never disabled, so the attribute carries no information.
 
 There is no `<meta>` and no JSON-LD caption hint at all:
 ```
@@ -237,6 +247,10 @@ const sc = Array.from(document.querySelectorAll('script'))
 const m = sc.textContent.match(/var ytInitialPlayerResponse = (\{[\s\S]*?\});/);
 JSON.parse(m[1]);
 ```
+
+> ⚠️ **Do not ship that regex — Task 6 replaced it.** It is fine as a probe, and it worked on all six real scripts measured (34KB-671KB, each containing exactly one `};`). But it is non-greedy: it stops at the *first* `};`, and a player response embeds free text (`shortDescription`, caption track names), so one `};` inside a string silently truncates the JSON and the caption data is lost with no error.
+>
+> Two independent differential fuzzes over 20,000 generated player responses each put the string-aware brace-counting scan at **0 mismatches** and the regex at **3,501 (17.5%)** and **13,123 (65.6%)** respectively. The two rates differ because the failure rate is entirely a function of how often the generator plants a `};` in free text — treat the *rate* as meaningless and the *direction* as settled. `sliceBalancedObject` in `src/lib/video-meta.ts` is that scan; use it.
 
 Verified byte-identical in both worlds on the fixture:
 ```
@@ -274,21 +288,21 @@ ISO : {"href":".../watch?v=zjkBMFhNj_g&t=14s","ccTooltip":"자막(c)","transcrip
 
 Both `data-tooltip-title` and the transcript-section element **did** flip correctly across the SPA transition, in the ISOLATED world.
 
-> ⚠️ **This test was run in one direction only: no-captions → captions.** The reverse (captions → no-captions) was **never measured**. Specifically unknown:
-> - whether `data-tooltip-title` reverts from `"자막(c)"` back to `"자막 사용 불가"`,
-> - whether `ytd-video-description-transcript-section-renderer` is actually *unmounted* (`true` → `false`) or merely left in the DOM from the previous video.
+> ✅ **RESOLVED by Task 6 — both directions measured, and the feared failure is real but bounded.** `history.back()` out of a captioned video into the caption-free one (marker-verified same document): the tooltip reverts, and the transcript section **is** genuinely unmounted, `true` → `false` at +1015ms. So it is not left over permanently.
 >
-> The second one is the real risk: a stale-but-present transcript section would make a no-caption video report as captioned, and the failure would be **silent**. Task 6 must verify the reverse direction before shipping either signal.
+> But it lags `ytd-watch-flexy[video-id]` by ~150ms, and worse: during the transition YouTube mounts the NEW video's description panel **before** unmounting the previous one, so the document briefly describes two videos at once (measured synchronously in a `yt-page-data-updated` handler: 3 description containers, the fresh one holding no transcript section and the two stale ones holding one each). A single `querySelector` finds the stale one first. Live, that made the content script report captions on a caption-free video.
+>
+> The fix shipped in `captionsFromDom` is to compare the containers rather than query once: settled documents always agree, a mid-transition document does not, and disagreement returns `null` ("ask again later") instead of a verdict. Note the transient is one-directional — a positive leads and a negative lags — so the caption-free → captioned direction resolved correctly in 2/2 live samples.
 
 ### Verdict for `CaptionAvailability = 'available' | 'auto-only' | 'none' | 'unknown'`
 
 | Value | ISOLATED world alone | MAIN world |
 |---|---|---|
-| `'none'` | ⚠️ **partially** — `data-tooltip-title` and/or absence of the transcript section. Verified fresh in the has→hasn't direction only *(see the one-directional caveat above)* | ✅ `'captions' in playerResponse === false` |
+| `'none'` | ✅ **yes** — a mounted description subtree with no transcript section in it (both directions verified by Task 6). Never `data-tooltip-title`. | ✅ `'captions' in playerResponse === false` |
 | has-some-captions | ✅ yes — same signals, verified across an SPA transition | ✅ |
-| **`'available'` vs `'auto-only'`** | ❌ **no** — no DOM attribute differs between the manual-caption video and the asr-only fixture | ✅ `captionTracks[].kind !== 'asr'` |
+| **`'available'` vs `'auto-only'`** | ✅ **on a full load** — the inline `<script>` text carries `captionTracks[].kind` and is reachable from ISOLATED. ❌ **after an SPA navigation** — that script is stale and no DOM attribute differs. | ✅ `captionTracks[].kind !== 'asr'` |
 
-**ISOLATED does NOT suffice if `'available'` and `'auto-only'` must be told apart.** It suffices only if `'available' | 'auto-only'` may be collapsed into one bucket.
+**Superseded by Task 6.** ISOLATED *does* suffice on a full document load, via the inline-script escape hatch above — that is what shipped, and it is why Task 4's single-ISOLATED-world ruling stands even though its stated reason ("MAIN would be required for the split") was wrong. After an in-page navigation the split is genuinely unrecoverable, and those documents report `'unknown'`.
 
 Options, in order of preference:
 
@@ -459,8 +473,8 @@ The `.ytp-time-duration` VOD cell reads `"1:13"` because that sample was taken d
 - **A duration source that is simultaneously ISOLATED-reachable, SPA-safe, and ad-immune.** `video.duration` and `.ytp-time-duration` report the *pre-roll ad's* length while an ad plays — observed `.ytp-time-duration === "0:30"` and `"1:13"` at moments when an ad was running. **I did not measure the true runtime of those pages**, so the size of the error is unquantified. `meta[itemprop="duration"]` is ad-immune but stale after an SPA transition. I did not find or test a workaround (e.g. gating on `#movie_player` losing the `ad-showing` class, reading `.ytp-progress-bar[aria-valuemax]`, or reading `lengthSeconds` off `getPlayerResponse()`); Task 5/6 will need to solve this. I also did not verify how `.ytp-time-duration` formats videos over 24 h beyond seeing `"137:04:50:27"` on a live DVR window.
 - **Channel extraction across a transition between two *different* channels.** The one SPA transition measured (`zjkBMFhNj_g` → `7xTGNNLPyMI`) stayed on the same channel, so the post-transition `"Andrej Karpathy"` reading cannot distinguish fresh from stale. The owner `href` and the avatar `src` were not read after the transition at all.
 - **Whether live detection survives an SPA transition.** All three live URL shapes were loaded with `Page.navigate` (full loads). **No VOD↔LIVE in-page transition was performed.** The `.ytp-live-badge` visibility check — the document's first-ranked live recommendation — has verified ISOLATED reachability but entirely unverified SPA behaviour. **Partly resolved by Task 5:** it performed a live→VOD in-page navigation and measured `.ytp-time-display`'s `ytp-live` class clearing correctly. The **VOD→live** direction is still unmeasured — no live video appeared in any related rail sampled.
-- **The reverse caption direction (captions → no captions) across an SPA transition.** Only no-captions → captions was tested. Whether `data-tooltip-title` reverts, and whether `ytd-video-description-transcript-section-renderer` is genuinely unmounted rather than left over from the previous video, is unknown. A stale leftover would misreport a no-caption video as captioned, silently.
-- **Whether `aria-pressed` on the CC button tracks caption *availability* or the user's caption *preference*.** Across the three samples taken it discriminated perfectly (`true`/`true`/`false`). I labelled it unusable on the conventional reading of `aria-pressed` on a toggle button, but never ran the settling experiment (toggle CC off on a captioned video, re-read).
+- ~~**The reverse caption direction (captions → no captions) across an SPA transition.**~~ **Measured by Task 6** — see the resolved callout above. It unmounts, but not before the new panel mounts, so the document is briefly ambiguous.
+- ~~**Whether `aria-pressed` on the CC button tracks caption *availability* or the user's caption *preference*.**~~ **Measured by Task 6 — it tracks the preference.** See the resolved callout in the attribute table.
 - **Whether the `attributeFilter: ['video-id']` MutationObserver reliably fires at all.** Its measured callback lagged 14 ms *behind* a value that was already observable, which suggests `ytd-watch-flexy` is replaced rather than mutated — in which case some transitions would produce no callback. Not investigated.
 - **Whether the constructed thumbnail URLs actually resolve.** Zero HTTP requests were issued during this research. The `hqdefault.jpg`-always-exists / `maxresdefault.jpg`-sometimes-404s claim is general knowledge, not measurement.
 - **The exact instant `document.title` changes after an SPA transition.** The "~90 ms" figure is an upper bound from a 25 ms poll plus event timestamps, not a direct measurement. Only the *ordering* (old at `yt-navigate-finish`, new at `yt-page-data-updated`) is measured.
@@ -484,13 +498,13 @@ Everything in this document was produced from real CDP measurements against a re
 | 1 | "How world-reachability was determined" | `Page.createIsolatedWorld` ≡ a content script's ISOLATED world | **Inference. The premise the entire document rests on.** | Confirm once with a trivial real content script (Task 4) |
 | 2 | Channel, rows 1 / 1b / 1c + avatar | Channel name, `/@handle`, avatar survive an SPA transition | **Confounded measurement** (same channel both sides) for row 1; **not measured at all** for 1b/1c/avatar | Re-test across two different channels |
 | 3 | Live detection #1 | `.ytp-live-badge` visibility is SPA-safe | **Not measured.** ISOLATED reachability *was* measured; SPA behaviour was not. **Task 5 superseded this with plain class checks** and measured `ytp-live` clearing across live→VOD | VOD→live in-page transition still untested |
-| 4 | Caption attribute table, `disabled` row | No `disabled` attribute on the CC button | **Measured on the fixture only** (n=1); other two cells now marked *not measured* | Measure on the no-caption video if it matters |
-| 5 | Caption attribute table, `aria-pressed` row | Reflects user CC on/off preference, not availability | **Interpretation.** Raw data (`true`/`true`/`false`) actually discriminates perfectly | Toggle CC off on a captioned video and re-read |
+| 4 | Caption attribute table, `disabled` row | No `disabled` attribute on the CC button | **RESOLVED (Task 6)** — measured on all three, absent every time | none |
+| 5 | Caption attribute table, `aria-pressed` row | Reflects user CC on/off preference, not availability | **RESOLVED (Task 6)** — toggle test run; the interpretation was correct | none |
 | 6 | Video ID, row 1 | `new URL(location.href).searchParams.get('v')` | `location.href` measured in both worlds; the `searchParams` derivation was **never executed** | Trivial — but it is a derivation, not a reading |
 | 7 | Thumbnail recommendation | `hqdefault.jpg` always exists, `maxresdefault.jpg` does not | **General knowledge. Zero HTTP requests issued.** | Handle a 404 rather than assuming |
 | 8 | `document.title` / SPA section | `document.title` updates "~90 ms" after `yt-navigate-finish` | **Upper bound** from a 25 ms poll + event timestamps, not the true change instant | Ordering is measured and sufficient; ignore the number |
 | 9 | Caption section intro | CC button always `display:block` / `offsetWidth:48` | **n=2** — fixture and no-caption video; the manual-caption video was not measured | Low risk |
-| 10 | Caption 3f test | ISOLATED caption signals flip correctly across SPA | **Measured, but one direction only** (no-captions → captions) | Test captions → no-captions |
+| 10 | Caption 3f test | ISOLATED caption signals flip correctly across SPA | **RESOLVED (Task 6)** — both directions measured; they flip, but not atomically | none |
 | 11 | Duration, row F | `getPlayerResponse().videoDetails.lengthSeconds` is fresh + ad-immune post-SPA | **Inference** from other fields of the same object being fresh; this field was never read | Most promising untested candidate |
 | 12 | MutationObserver backup | `attributeFilter: ['video-id']` observer is a reliable backup | **Contradicted by its own timing data** — likely misses replaced elements | Observe `childList` too |
 
