@@ -2,25 +2,9 @@ import { useEffect, useState } from 'react';
 import { Button } from '~/components/Button';
 import { StatusBadge } from '~/components/StatusBadge';
 import { useApiKey } from '~/features/api-key/useApiKey';
+import { isYoutubeWatchUrl } from '~/lib/youtube';
 
 type TabKind = 'checking' | 'youtube' | 'other';
-
-// The panel's host_permissions only cover youtube.com, so `tab.url` reads as
-// undefined on any other origin — that's Chrome enforcing the permission
-// boundary, not a bug. isYoutubeWatchUrl treats an unreadable url the same as
-// a non-YouTube tab (falls through to `other`), which is the correct result
-// either way.
-function isYoutubeWatchUrl(url: string | undefined): boolean {
-  if (!url) return false;
-  try {
-    const parsed = new URL(url);
-    return (
-      /(^|\.)youtube\.com$/.test(parsed.hostname) && parsed.pathname === '/watch'
-    );
-  } catch {
-    return false;
-  }
-}
 
 export function App() {
   const { status } = useApiKey();
@@ -30,14 +14,56 @@ export function App() {
   const present = status?.present === true;
   const ready = present && tabKind === 'youtube';
 
+  // The panel is long-lived (unlike the popup this logic was originally
+  // written for, which was destroyed and recreated on every open) — it
+  // survives tab switches and in-page navigation, so a mount-only query is
+  // not enough. Re-run the same detection whenever the active tab could
+  // have changed: the user switched tabs (`onActivated`) or the active tab
+  // navigated in place (`onUpdated` — YouTube is an SPA, so moving between
+  // videos fires a `url` change on the existing tab rather than a fresh
+  // page load/tab-created event).
+  //
+  // `chrome.windows.onFocusChanged` is deliberately NOT subscribed to: it
+  // fires when focus moves between browser windows, but it never changes
+  // which tab is active *within* a given window. Since detection is always
+  // scoped via `currentWindow: true` to the window the panel itself is
+  // hosted in, a focus change elsewhere carries no information this
+  // detection needs — `onActivated`/`onUpdated` on that window already
+  // cover every way its active tab can change.
   useEffect(() => {
     let cancelled = false;
-    chrome.tabs.query({ active: true, currentWindow: true }).then(([tab]) => {
-      if (cancelled) return;
-      setTabKind(isYoutubeWatchUrl(tab?.url) ? 'youtube' : 'other');
-    });
+
+    const detect = () => {
+      chrome.tabs.query({ active: true, currentWindow: true }).then(([tab]) => {
+        if (cancelled) return;
+        setTabKind(isYoutubeWatchUrl(tab?.url) ? 'youtube' : 'other');
+      });
+    };
+
+    detect();
+
+    const handleActivated = () => detect();
+
+    // onUpdated fires for every tab, not just the active one — guard on
+    // `tab.active` so background-tab churn doesn't trigger a re-query, and
+    // on `changeInfo.url` being present so an in-place navigation's several
+    // onUpdated events (loading/complete/title/etc.) only cause one.
+    const handleUpdated = (
+      _tabId: number,
+      changeInfo: chrome.tabs.OnUpdatedInfo,
+      tab: chrome.tabs.Tab,
+    ) => {
+      if (!tab.active || changeInfo.url === undefined) return;
+      detect();
+    };
+
+    chrome.tabs.onActivated.addListener(handleActivated);
+    chrome.tabs.onUpdated.addListener(handleUpdated);
+
     return () => {
       cancelled = true;
+      chrome.tabs.onActivated.removeListener(handleActivated);
+      chrome.tabs.onUpdated.removeListener(handleUpdated);
     };
   }, []);
 
