@@ -666,6 +666,14 @@ describe('caption availability — the measured mid-SPA-transition transient', (
    * measured page is 2 containers that agree — 2/2 transcript sections on a
    * captioned video, 2/0 on a caption-free one — so 3 containers that
    * disagree is the transient, not the resting state.)
+   *
+   * The stale panels go AFTER the fresh one because that is the measured
+   * order for this direction: Task 7 tagged each container with a sequence
+   * number on first sight and read `2:0 0:1 1:0` — new container first, then
+   * the leftover (`t7d-identity.log`, direction B; `r3-container-agreement.log`
+   * agrees). The opposite direction puts the stale one first, which is what
+   * the next test builds. The rule under test is order-independent, so this
+   * only keeps the fixture honest.
    */
   function withStalePanels(fixture: string): Document {
     const doc = loadFixture(fixture);
@@ -674,7 +682,7 @@ describe('caption availability — the measured mid-SPA-transition transient', (
     for (let i = 0; i < 2; i += 1) {
       const stale = doc.createElement('ytd-structured-description-content-renderer');
       stale.appendChild(doc.createElement('ytd-video-description-transcript-section-renderer'));
-      flexy.insertBefore(stale, fresh);
+      flexy.insertBefore(stale, fresh?.nextSibling ?? null);
     }
     return doc;
   }
@@ -690,9 +698,13 @@ describe('caption availability — the measured mid-SPA-transition transient', (
     );
     expect(holdingTranscript).toHaveLength(2);
 
-    // A plain querySelector finds the FIRST container in document order, which
-    // is stale, and would report captions on a caption-free video — the exact
-    // wrong answer observed live before this check existed.
+    // The removed bug was a GLOBAL query for a transcript section, which finds
+    // one wherever it sits — the fresh container being first in document order
+    // here does not save it. It would report captions on a caption-free video,
+    // the exact wrong answer observed live before this check existed.
+    expect(doc.querySelector('ytd-structured-description-content-renderer')?.children).toHaveLength(
+      0,
+    );
     expect(
       doc.querySelector('ytd-video-description-transcript-section-renderer'),
     ).not.toBeNull();
@@ -707,6 +719,8 @@ describe('caption availability — the measured mid-SPA-transition transient', (
     // this direction happened to resolve correctly (the new panel mounts
     // before the old one is removed, so a positive leads rather than lags),
     // but the ambiguity is identical and must not be answered from.
+    // Stale-before-fresh IS the measured order for this direction — Task 7 read
+    // `0:0 2:1 1:1`, the leftover container first (`t7d-identity.log`, A).
     const doc = loadFixture(SPA_CAP_UNKNOWN);
     const stale = doc.createElement('ytd-structured-description-content-renderer');
     doc.querySelector('ytd-watch-flexy')!.insertBefore(

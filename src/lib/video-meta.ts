@@ -383,9 +383,19 @@ const DESCRIPTION_CONTAINER = 'ytd-structured-description-content-renderer';
  *
  * During an in-page navigation YouTube mounts the NEW video's description
  * panel before unmounting the PREVIOUS one, so for a while the document
- * describes two videos at once. A single `querySelector` finds whichever comes
- * first in document order, which is the stale one — measured live, that made
- * the content script report captions on a caption-free video.
+ * describes two videos at once. The shipped-then-removed bug was a GLOBAL
+ * `doc.querySelector(TRANSCRIPT_SECTION)`: it finds a transcript section
+ * wherever one sits, so a stale panel anywhere in the document was enough to
+ * report captions on a caption-free video — measured live.
+ *
+ * (An earlier version of this comment blamed document order and asserted the
+ * stale container comes first. Both halves are wrong. Document order never
+ * entered into it, the query being global; and Task 7 tagged every container
+ * with a sequence number on first sight and watched both orders occur —
+ * `t7d-identity.log`, arriving at a caption-free video the FRESH panel
+ * container is first (`2:0 0:1 1:0`), arriving at a captioned one the STALE
+ * one is (`0:0 2:1 1:1`). Nothing about position identifies the fresh
+ * container, which is why the rule below is order-independent.)
  *
  * Measured settled shape (4 full loads incl. a Short, plus SPA arrivals):
  * every description container holds exactly 0 or 1 transcript section and they
