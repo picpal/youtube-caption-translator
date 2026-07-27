@@ -1,7 +1,21 @@
 import { defineBackground } from 'wxt/sandbox';
 import { saveApiKey, getApiKey, getApiKeyStatus, deleteApiKey } from '~/lib/storage';
 import { testGeminiKey } from '~/lib/gemini';
-import type { AppMessage, AppResponseMap } from '~/types/message';
+import { putVideo } from '~/lib/db';
+import { sendMessage } from '~/lib/messaging';
+import type { AppMessage, AppResponseMap, CurrentVideoState } from '~/types/message';
+
+// Latest known state per tab, keyed by the tab the content script's message
+// arrived FROM (`sender.tab.id`) — never by the panel's notion of "the
+// active tab", which the panel tracks for itself. In-memory only: an MV3
+// service worker can be evicted and this map lost with it. That is
+// acceptable rather than a bug to work around — `GET_CURRENT_VIDEO` then
+// answers `null` ("no report yet"), which the panel already renders as
+// loading, and the content script's settle loop (which re-emits on every
+// navigation and un-eviction wakes the worker to receive it) refills the
+// entry on its very next tick. Nothing here needs to survive a restart on
+// its own.
+const latestByTab = new Map<number, CurrentVideoState>();
 
 export default defineBackground(() => {
   chrome.sidePanel
@@ -9,8 +23,8 @@ export default defineBackground(() => {
     .catch((err) => console.warn('sidePanel.setPanelBehavior failed', err));
 
   chrome.runtime.onMessage.addListener(
-    (msg: AppMessage, _sender, sendResponse) => {
-      handle(msg)
+    (msg: AppMessage, sender, sendResponse) => {
+      handle(msg, sender)
         .then((res) => sendResponse(res))
         .catch((err) => {
           console.error('background handler error', err);
@@ -19,10 +33,18 @@ export default defineBackground(() => {
       return true;
     },
   );
+
+  // Drops a closed tab's entry so the map does not grow for the lifetime of
+  // the browser session. Fires without the "tabs" permission (only reading
+  // url/title on the event requires it, which this doesn't do).
+  chrome.tabs.onRemoved.addListener((tabId) => {
+    latestByTab.delete(tabId);
+  });
 });
 
-async function handle<T extends AppMessage['type']>(
+export async function handle<T extends AppMessage['type']>(
   msg: Extract<AppMessage, { type: T }>,
+  sender?: chrome.runtime.MessageSender,
 ): Promise<AppResponseMap[T]> {
   switch (msg.type) {
     case 'SAVE_API_KEY': {
@@ -50,6 +72,63 @@ async function handle<T extends AppMessage['type']>(
       }
       return (await testGeminiKey(key)) as AppResponseMap[T];
     }
+    case 'VIDEO_DETECTED': {
+      const { payload } = msg as Extract<AppMessage, { type: 'VIDEO_DETECTED' }>;
+      const tabId = sender?.tab?.id;
+      // A message with no tab (should not happen for a content script, but
+      // the type only makes `sender` optional, not `sender.tab`) has nothing
+      // to key the cache on — acknowledge and drop rather than throw.
+      if (tabId === undefined) return { ok: true } as AppResponseMap[T];
+
+      latestByTab.set(tabId, payload);
+
+      // Load-bearing: only a `settled` report with a real record is safe to
+      // cache. `provisional` is, by definition (see `VideoMetaReport` in
+      // entrypoints/content.ts), a record the settle loop still expects to
+      // improve — most pointedly a pre-roll-ad `durationSeconds: null`
+      // (Task 7), which caching now would freeze at the wrong value forever.
+      // `unsettled` is best-effort and may never improve, but it is still not
+      // a confirmed final answer, so it is not cached either. `meta: null`
+      // has nothing to persist regardless of status.
+      if (payload.status === 'settled' && payload.meta !== null) {
+        // `fetchedAt` is stamped HERE, not by the extractor: `ExtractedVideoMeta`
+        // (what the content script produces) omits it on purpose so the
+        // settle loop's byte-identity comparison (`serialised === previous`)
+        // isn't broken by a timestamp that changes on every read. The cache
+        // is the first and only place a `VideoMeta` (with `fetchedAt`) comes
+        // into existence.
+        await putVideo({ ...payload.meta, fetchedAt: new Date().toISOString() });
+      }
+
+      // Push to the panel. Polling `chrome.tabs` events (as the panel's M0
+      // logic already does for tab-switch detection) cannot substitute for
+      // this: a same-tab SPA transition never fires a `tabs` event the panel
+      // could poll on — the content script's `yt-page-data-updated` listener
+      // is the only thing that sees it, so the only way the panel learns
+      // about it is a message FROM here. `sendMessage` here is fire-and-forget
+      // by design (see `.catch` below): if no panel is listening — closed, or
+      // open on a different tab that will filter this out by `tabId` anyway
+      // — there is nothing to retry.
+      void sendMessage({
+        type: 'CURRENT_VIDEO_UPDATED',
+        payload: { tabId, video: payload },
+      }).catch(() => {
+        // "Could not establish connection. Receiving end does not exist." —
+        // expected whenever the panel isn't open. Not an error.
+      });
+
+      return { ok: true } as AppResponseMap[T];
+    }
+    case 'GET_CURRENT_VIDEO': {
+      const { payload } = msg as Extract<AppMessage, { type: 'GET_CURRENT_VIDEO' }>;
+      return (latestByTab.get(payload.tabId) ?? null) as AppResponseMap[T];
+    }
+    case 'CURRENT_VIDEO_UPDATED':
+      // Only ever produced by this file's own broadcast above. Handled here
+      // solely so the switch — and `errorResponseFor`'s below — stay
+      // exhaustive if this is ever redelivered to the sender; there is no
+      // state to update on receipt.
+      return { ok: true } as AppResponseMap[T];
   }
   throw new Error(`Unhandled message type: ${(msg as AppMessage).type}`);
 }
@@ -65,5 +144,11 @@ function errorResponseFor(msg: AppMessage, err: unknown): AppResponseMap[AppMess
       return { ok: true };
     case 'TEST_API_KEY':
       return { ok: false, reason: 'unknown', message };
+    case 'VIDEO_DETECTED':
+      return { ok: true };
+    case 'GET_CURRENT_VIDEO':
+      return null;
+    case 'CURRENT_VIDEO_UPDATED':
+      return { ok: true };
   }
 }

@@ -5,6 +5,7 @@ import {
   isDurationAdBlocked,
   type ExtractedVideoMeta,
 } from '~/lib/video-meta';
+import { sendMessage } from '~/lib/messaging';
 
 // ISOLATED world (the default — no `world` option needed), and Task 4's ruling
 // stands, but not for the reason it gave. Task 4 assumed MAIN world would be
@@ -125,8 +126,6 @@ export default defineContentScript({
       if (key === lastEmitted) return;
       lastEmitted = key;
 
-      // Task 8 replaces this with messaging; the shape it forwards is
-      // `report`, unchanged.
       console.log(
         `[ypa] ${report.status} (${report.trigger}#${report.attempt}) kind:`,
         classifyYoutubeUrl(location.href),
@@ -138,6 +137,27 @@ export default defineContentScript({
         'meta:',
         report.meta,
       );
+
+      // Forward to the background service worker. `trigger`/`attempt` are
+      // deliberately dropped here — they exist to explain settle-loop
+      // behaviour in logs, not to inform the panel — while `status` DOES
+      // cross the wire: it is what lets the background tell a
+      // still-improving record apart from a final one (see the caching
+      // decision in entrypoints/background.ts).
+      //
+      // Fire-and-forget: nothing here awaits or retries a failed send.
+      // Every future `emit()` call carries a fresher (or equally fresh)
+      // report than the one before it, so a dropped message is superseded
+      // by the next settle-loop tick rather than needing its own retry.
+      sendMessage({
+        type: 'VIDEO_DETECTED',
+        payload: { status: report.status, meta: report.meta },
+      }).catch((err) => {
+        // Expected when the service worker has not woken up yet, or right
+        // after an extension reload orphans this content script ("Extension
+        // context invalidated") — never fatal to the settle loop itself.
+        console.warn('[ypa] VIDEO_DETECTED send failed', err);
+      });
     };
 
     const startCycle = (trigger: string): void => {
