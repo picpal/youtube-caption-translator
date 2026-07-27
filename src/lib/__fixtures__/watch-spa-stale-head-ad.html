@@ -1,0 +1,69 @@
+<!-- COMPOSED from two real measurements — the combination itself was
+     never observed in a single page, and this comment is the disclosure.
+     Base   : watch-spa-stale-head.html (real post-SPA document, stale microdata).
+     Grafted: the #movie_player class attribute and the .ytp-time-duration node
+              captured verbatim while a REAL pre-roll ad was playing on
+              https://www.youtube.com/watch?v=XBu54nfzxAQ. At that instant
+              .ytp-time-duration read "0:59" while meta[itemprop="duration"]
+              for that video read PT12M58S (778s) — i.e. the clock was showing
+              the ad's length, not the video's. The player carried
+              "ad-created ad-showing ad-interrupting".
+     Why    : this is the one case where BOTH duration sources are wrong — the
+              microdata is stale AND the clock is ad-poisoned. The extractor
+              must return null here rather than 3588 (stale) or 59 (the ad). -->
+<html lang="ko-KR">
+<head>
+<title>AI, Machine Learning, Deep Learning and Generative AI Explained - YouTube</title>
+<link rel="canonical" href="https://www.youtube.com/watch?v=zjkBMFhNj_g">
+<meta name="title" content="[1hr Talk] Intro to Large Language Models">
+<meta property="og:title" content="[1hr Talk] Intro to Large Language Models">
+<meta property="og:image" content="https://i.ytimg.com/vi/zjkBMFhNj_g/maxresdefault.jpg">
+</head>
+<body>
+
+<!-- Server-rendered schema.org microdata. NOTE: this block lives in <body>,
+     not <head> — docs/youtube-dom-findings.md calls it "the <head> block", but
+     meta[itemprop="identifier"] / [itemprop="duration"] are actually children
+     of div#watch7-content. It is the block that goes stale after an in-page
+     navigation. Trimmed to the itemprops that matter (the real block also
+     carries description, regionsAllowed, interactionStatistic, keywords,
+     datePublished, uploadDate and genre). -->
+<div id="watch7-content" class="watch-main-col" itemscope="" itemid="https://www.youtube.com/watch?v=zjkBMFhNj_g" itemtype="http://schema.org/VideoObject"><link itemprop="url" href="https://www.youtube.com/watch?v=zjkBMFhNj_g"><meta itemprop="name" content="[1hr Talk] Intro to Large Language Models"><meta itemprop="identifier" content="zjkBMFhNj_g"><meta itemprop="duration" content="PT59M48S"><span itemprop="author" itemscope="" itemtype="http://schema.org/Person"><link itemprop="url" href="http://www.youtube.com/@AndrejKarpathy"><link itemprop="name" content="Andrej Karpathy"></span><link itemprop="thumbnailUrl" href="https://i.ytimg.com/vi/zjkBMFhNj_g/maxresdefault.jpg"></div>
+
+<ytd-watch-flexy class="style-scope ytd-page-manager watch-root-element hide-skeleton" video-id="qYNweeDHiyU" reduced-top-margin="" view-transition-enabled="" is-dark-theme="" respect-aspect-ratio="" is-four-three-to-sixteen-nine-video_="" hidden-action-button-target-ids="[]" is-single-column="" full-bleed-player="" role="main" cinematic-light-theme="" watch-metadata-refresh="" has-metadata="" cinematics-active="" response-has-comments="">
+
+  <!-- Decoy: id="title" is NOT unique on a watch page (17 elements carried it
+       in the measured document). This engagement-panel header is the FIRST one
+       in document order, so document.querySelector('#title') returns it. The
+       '#title h1' selector still resolves correctly because only the
+       ytd-watch-metadata host has an h1 child. -->
+  <h2 id="title" class="style-scope ytd-engagement-panel-title-header-renderer" aria-label="댓글 2.1천">
+      <yt-formatted-string id="title-text" ellipsis-truncate="" class="style-scope ytd-engagement-panel-title-header-renderer" ellipsis-truncate-styling="" title="댓글">댓글</yt-formatted-string>
+      <yt-formatted-string id="contextual-info" class="style-scope ytd-engagement-panel-title-header-renderer">2.1천</yt-formatted-string>
+    </h2>
+
+  <div id="title" class="style-scope ytd-watch-metadata">
+    <h1 class="style-scope ytd-watch-metadata">
+      <yt-formatted-string force-default-style="" class="style-scope ytd-watch-metadata" title="AI, Machine Learning, Deep Learning and Generative AI Explained">AI, Machine Learning, Deep Learning and Generative AI Explained</yt-formatted-string>
+    </h1>
+  </div>
+
+  <div id="owner" class="item style-scope ytd-watch-metadata">
+    <ytd-video-owner-renderer watch-metadata-refresh="" class="style-scope ytd-watch-metadata">
+      <ytd-channel-name id="channel-name" class="style-scope ytd-video-owner-renderer">
+        <a class="yt-simple-endpoint style-scope yt-formatted-string" spellcheck="false" href="/@IBMTechnology">IBM Technology</a>
+      </ytd-channel-name>
+    </ytd-video-owner-renderer>
+  </div>
+
+  <div id="movie_player" class="html5-video-player ytp-transparent ytp-exp-bottom-control-flexbox ytp-modern-caption ytp-exp-ppp-update ytp-livebadge-color ytp-grid-scrollable ytp-delhi-modern ytp-delhi-modern-icons ytp-delhi-horizontal-volume-controls ytp-delhi-modern-compact-controls ad-created ad-showing ad-interrupting ytp-fit-cover-video ytp-fine-scrubbing-exp ytp-cards-teaser-dismissible playing-mode buffering-mode unstarted-mode ytp-xsmall-width-mode ytp-disable-bottom-gradient">
+    <div class="ytp-time-display">
+      <span class="ytp-time-current">0:00</span>
+      <span class="ytp-time-separator"> / </span>
+      <span class="ytp-time-duration">0:59</span>
+    </div>
+  </div>
+
+</ytd-watch-flexy>
+</body>
+</html>

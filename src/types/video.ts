@@ -23,7 +23,14 @@ export interface VideoMeta {
   title: string;
   channelName: string;
   thumbnailUrl: string;
-  durationSeconds: number;
+  // `null` when the duration genuinely could not be determined. Task 5
+  // measured that no source is simultaneously ISOLATED-reachable, correct
+  // after an in-page (SPA) navigation, and immune to a pre-roll ad — when the
+  // staleness sentinel says the microdata is stale AND an ad is poisoning the
+  // player clock, there is no honest value. `0` is not an acceptable stand-in:
+  // it renders as "0:00", which is a confident lie rather than an absence.
+  // See `resolveDurationSeconds` in src/lib/video-meta.ts.
+  durationSeconds: number | null;
   captionAvailability: CaptionAvailability;
   // ISO 8601 timestamp of when this metadata was extracted/cached.
   fetchedAt: string;

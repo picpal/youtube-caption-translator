@@ -1,0 +1,74 @@
+<!-- CAPTURED, not hand-written. THE IMPORTANT ONE.
+     How    : loaded zjkBMFhNj_g as a full page, then genuinely CLICKED a
+              related-video anchor in-page (CDP Runtime.evaluate -> a.click()),
+              producing a real SPA transition to a DIFFERENT CHANNEL:
+                Andrej Karpathy / zjkBMFhNj_g  ->  IBM Technology / qYNweeDHiyU
+     State  : STALE microdata. Note in the markup below that
+                - meta[itemprop="identifier"] still says zjkBMFhNj_g
+                - meta[itemprop="duration"]   still says PT59M48S (59m48s)
+                - meta[itemprop="name"], og:title, og:image, meta[name=title],
+                  the [itemprop=author] block and div#watch7-content@itemid all
+                  still describe the PREVIOUS video
+                - link[rel=canonical] is ALSO stale (contradicts Task 1, which
+                  recorded canonical as SPA-fresh — see task-5-report.md)
+              while document.title, ytd-watch-flexy[video-id], #title h1,
+              #owner #channel-name a and .ytp-time-duration are all FRESH.
+              The real duration of qYNweeDHiyU is 10:00 (video.duration was
+              600.461s); the stale meta would report 3588s.
+     Reduced: same reduction as watch-full-load.html. -->
+<html lang="ko-KR">
+<head>
+<title>AI, Machine Learning, Deep Learning and Generative AI Explained - YouTube</title>
+<link rel="canonical" href="https://www.youtube.com/watch?v=zjkBMFhNj_g">
+<meta name="title" content="[1hr Talk] Intro to Large Language Models">
+<meta property="og:title" content="[1hr Talk] Intro to Large Language Models">
+<meta property="og:image" content="https://i.ytimg.com/vi/zjkBMFhNj_g/maxresdefault.jpg">
+</head>
+<body>
+
+<!-- Server-rendered schema.org microdata. NOTE: this block lives in <body>,
+     not <head> — docs/youtube-dom-findings.md calls it "the <head> block", but
+     meta[itemprop="identifier"] / [itemprop="duration"] are actually children
+     of div#watch7-content. It is the block that goes stale after an in-page
+     navigation. Trimmed to the itemprops that matter (the real block also
+     carries description, regionsAllowed, interactionStatistic, keywords,
+     datePublished, uploadDate and genre). -->
+<div id="watch7-content" class="watch-main-col" itemscope="" itemid="https://www.youtube.com/watch?v=zjkBMFhNj_g" itemtype="http://schema.org/VideoObject"><link itemprop="url" href="https://www.youtube.com/watch?v=zjkBMFhNj_g"><meta itemprop="name" content="[1hr Talk] Intro to Large Language Models"><meta itemprop="identifier" content="zjkBMFhNj_g"><meta itemprop="duration" content="PT59M48S"><span itemprop="author" itemscope="" itemtype="http://schema.org/Person"><link itemprop="url" href="http://www.youtube.com/@AndrejKarpathy"><link itemprop="name" content="Andrej Karpathy"></span><link itemprop="thumbnailUrl" href="https://i.ytimg.com/vi/zjkBMFhNj_g/maxresdefault.jpg"></div>
+
+<ytd-watch-flexy class="style-scope ytd-page-manager watch-root-element hide-skeleton" video-id="qYNweeDHiyU" reduced-top-margin="" view-transition-enabled="" is-dark-theme="" respect-aspect-ratio="" is-four-three-to-sixteen-nine-video_="" hidden-action-button-target-ids="[]" is-single-column="" full-bleed-player="" role="main" cinematic-light-theme="" watch-metadata-refresh="" has-metadata="" cinematics-active="" response-has-comments="">
+
+  <!-- Decoy: id="title" is NOT unique on a watch page (17 elements carried it
+       in the measured document). This engagement-panel header is the FIRST one
+       in document order, so document.querySelector('#title') returns it. The
+       '#title h1' selector still resolves correctly because only the
+       ytd-watch-metadata host has an h1 child. -->
+  <h2 id="title" class="style-scope ytd-engagement-panel-title-header-renderer" aria-label="댓글 2.1천">
+      <yt-formatted-string id="title-text" ellipsis-truncate="" class="style-scope ytd-engagement-panel-title-header-renderer" ellipsis-truncate-styling="" title="댓글">댓글</yt-formatted-string>
+      <yt-formatted-string id="contextual-info" class="style-scope ytd-engagement-panel-title-header-renderer">2.1천</yt-formatted-string>
+    </h2>
+
+  <div id="title" class="style-scope ytd-watch-metadata">
+    <h1 class="style-scope ytd-watch-metadata">
+      <yt-formatted-string force-default-style="" class="style-scope ytd-watch-metadata" title="AI, Machine Learning, Deep Learning and Generative AI Explained">AI, Machine Learning, Deep Learning and Generative AI Explained</yt-formatted-string>
+    </h1>
+  </div>
+
+  <div id="owner" class="item style-scope ytd-watch-metadata">
+    <ytd-video-owner-renderer watch-metadata-refresh="" class="style-scope ytd-watch-metadata">
+      <ytd-channel-name id="channel-name" class="style-scope ytd-video-owner-renderer">
+        <a class="yt-simple-endpoint style-scope yt-formatted-string" spellcheck="false" href="/@IBMTechnology">IBM Technology</a>
+      </ytd-channel-name>
+    </ytd-video-owner-renderer>
+  </div>
+
+  <div id="movie_player" class="html5-video-player ytp-transparent ytp-exp-bottom-control-flexbox ytp-modern-caption ytp-exp-ppp-update ytp-livebadge-color ytp-grid-scrollable ytp-delhi-modern ytp-delhi-modern-icons ytp-delhi-horizontal-volume-controls ytp-delhi-modern-compact-controls ytp-fit-cover-video ytp-fine-scrubbing-exp ytp-cards-teaser-dismissible ytp-hide-info-bar ytp-disable-bottom-gradient ytp-autonav-endscreen-cancelled-state ytp-large-width-mode ytp-hide-fullscreen-title ytp-fullscreen-metadata-top ytp-heat-map playing-mode">
+    <div class="ytp-time-display">
+      <span class="ytp-time-current">0:00</span>
+      <span class="ytp-time-separator"> / </span>
+      <span class="ytp-time-duration">10:00</span>
+    </div>
+  </div>
+
+</ytd-watch-flexy>
+</body>
+</html>
