@@ -21,7 +21,12 @@ export interface VideoMeta {
   videoId: string;
   url: string;
   title: string;
-  channelName: string;
+  // `null` when the channel could not be resolved (e.g. a Shorts page, or a
+  // watch page read before `#owner` hydrated — the content script genuinely
+  // observes this on its first pass). Deliberately not `''`: once records are
+  // cached, an empty string is indistinguishable from a genuinely blank
+  // channel and the record would never be re-read.
+  channelName: string | null;
   thumbnailUrl: string;
   // `null` when the duration genuinely could not be determined. Task 5
   // measured that no source is simultaneously ISOLATED-reachable, correct

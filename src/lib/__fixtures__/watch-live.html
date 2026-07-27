@@ -1,0 +1,66 @@
+<!-- CAPTURED, not hand-written.
+     Source : https://www.youtube.com/@SkyNews/live  ->  video id yq2ozBAd4MI
+              ("Mornings with Ridge and Frost | Monday 27 July 2026")
+     How    : full document load (CDP Page.navigate), Chrome 150.0.7871.184,
+              captured after the pre-roll ad cleared.
+     Why it exists: a live stream is the case where BOTH duration fallbacks
+              lie. Measured at this instant:
+                - meta[itemprop="duration"]  ABSENT (the microdata block is
+                  otherwise FRESH: identifier == yq2ozBAd4MI == the video id)
+                - .ytp-time-duration         "1:00:00"  <- the DVR window
+                - video.duration             3600       <- also the DVR window
+              Reporting 3600 for a live broadcast is a confident lie, so the
+              extractor must return null. Two independent measured signals say
+              "live" here: the fresh-microdata-without-a-duration shape, and
+              the ytp-live class on .ytp-time-display.
+
+     IMPORTANT correction to an assumption: video.duration is NOT Infinity on
+     a YouTube live stream. It was measured as a finite, growing number equal
+     to seekable.end() (3600 here, 4760 in another sample). Any live handling
+     that keys on Infinity will not fire. -->
+<html lang="ko-KR">
+<head>
+<title>Mornings with Ridge and Frost | Monday 27 July 2026 - YouTube</title>
+<link rel="canonical" href="https://www.youtube.com/watch?v=yq2ozBAd4MI">
+<meta name="title" content="Mornings with Ridge and Frost | Monday 27 July 2026">
+<meta property="og:title" content="Mornings with Ridge and Frost | Monday 27 July 2026">
+<meta property="og:image" content="https://i.ytimg.com/vi/yq2ozBAd4MI/maxresdefault.jpg?v=6a6654a2">
+</head>
+<body>
+
+<!-- Fresh microdata block — note it carries NO meta[itemprop="duration"]. -->
+<div id="watch7-content" class="watch-main-col" itemscope="" itemid="https://www.youtube.com/watch?v=yq2ozBAd4MI" itemtype="http://schema.org/VideoObject"><link itemprop="url" href="https://www.youtube.com/watch?v=yq2ozBAd4MI"><meta itemprop="name" content="Mornings with Ridge and Frost | Monday 27 July 2026"><meta itemprop="identifier" content="yq2ozBAd4MI"><span itemprop="author" itemscope="" itemtype="http://schema.org/Person"><link itemprop="url" href="http://www.youtube.com/@SkyNews"><link itemprop="name" content="Sky News"></span><link itemprop="thumbnailUrl" href="https://i.ytimg.com/vi/yq2ozBAd4MI/maxresdefault.jpg?v=6a6654a2"></div>
+
+<ytd-watch-flexy class="style-scope ytd-page-manager watch-root-element hide-skeleton" video-id="yq2ozBAd4MI" reduced-top-margin="" view-transition-enabled="" is-dark-theme="" respect-aspect-ratio="" is-four-three-to-sixteen-nine-video_="" hidden-action-button-target-ids="[]" is-single-column="" full-bleed-player="" role="main" should-stamp-chat="" cinematic-light-theme="" should-collapse-donation-shelf="" live-chat-present-and-expanded="" panel-expanded="" watch-metadata-refresh="" has-metadata="">
+
+  <h2 id="title" class="style-scope ytd-engagement-panel-title-header-renderer" aria-label="설명">
+      <yt-formatted-string id="title-text" ellipsis-truncate="" class="style-scope ytd-engagement-panel-title-header-renderer" ellipsis-truncate-styling="" title="설명">설명</yt-formatted-string>
+      <yt-formatted-string id="contextual-info" class="style-scope ytd-engagement-panel-title-header-renderer" is-empty="" hidden=""><!--css-build:shady--><!--css_build_scope:yt-formatted-string--><!--css_build_styles:video.youtube.src.web.polymer.shared.ui.styles.yt_base_styles.yt.base.styles.css.js,video.youtube.src.web.polymer.shared.ui.yt_formatted_string.yt.formatted.string.css.js--><yt-attributed-string class="style-scope yt-formatted-string"></yt-attributed-string></yt-formatted-string>
+    </h2>
+
+  <div id="title" class="style-scope ytd-watch-metadata">
+    <h1 class="style-scope ytd-watch-metadata">
+      <yt-formatted-string force-default-style="" class="style-scope ytd-watch-metadata" title="Mornings with Ridge and Frost | Monday 27 July 2026">Mornings with Ridge and Frost | Monday 27 July 2026</yt-formatted-string>
+    </h1>
+  </div>
+
+  <div id="owner" class="item style-scope ytd-watch-metadata">
+    <ytd-video-owner-renderer watch-metadata-refresh="" class="style-scope ytd-watch-metadata">
+      <ytd-channel-name id="channel-name" class="style-scope ytd-video-owner-renderer">
+        <a class="yt-simple-endpoint style-scope yt-formatted-string" spellcheck="false" href="/@SkyNews">Sky News</a>
+      </ytd-channel-name>
+    </ytd-video-owner-renderer>
+  </div>
+
+  <div id="movie_player" class="html5-video-player ytp-transparent ytp-exp-bottom-control-flexbox ytp-modern-caption ytp-exp-ppp-update ytp-livebadge-color ytp-grid-scrollable ytp-delhi-modern ytp-delhi-modern-icons ytp-delhi-horizontal-volume-controls ytp-delhi-modern-compact-controls ad-created ytp-cards-teaser-dismissible ytp-hide-info-bar ytp-disable-bottom-gradient ytp-autonav-endscreen-cancelled-state ytp-branding-shown ytp-fit-cover-video ytp-large-width-mode playing-mode ytp-hide-fullscreen-title ytp-fullscreen-metadata-top">
+    <button class="ytp-live-badge ytp-button ytp-live-badge-is-livehead" disabled="">라이브</button>
+    <div class="ytp-time-display notranslate ytp-live" style="">
+      <span class="ytp-time-current">0:00</span>
+      <span class="ytp-time-separator"> / </span>
+      <span class="ytp-time-duration">1:00:00</span>
+    </div>
+  </div>
+
+</ytd-watch-flexy>
+</body>
+</html>

@@ -29,8 +29,13 @@ function attr(doc: Document, selector: string, name: string): string | null {
 /**
  * Seconds from an ISO-8601 duration such as `"PT59M48S"` (the shape
  * `meta[itemprop="duration"]` carries). Returns `null` for anything
- * unparseable, and also for a zero duration — YouTube reports `"PT0S"`-ish
- * values for live streams, and rendering that as `0:00` would be a lie.
+ * unparseable, and also for a zero duration, since rendering `0:00` would be
+ * a lie rather than an absence.
+ *
+ * (An earlier version of this comment claimed YouTube emits `"PT0S"` for live
+ * streams. That was inference and it is wrong — on a measured live stream the
+ * `duration` meta is absent entirely. The zero guard is kept as ordinary
+ * defensiveness, not as live handling.)
  */
 export function parseIsoDuration(iso: string | null | undefined): number | null {
   if (!iso) return null;
@@ -134,6 +139,30 @@ function isAdShowing(doc: Document): boolean {
 }
 
 /**
+ * True when the player is showing a live broadcast, for which no duration is
+ * meaningful — both `.ytp-time-duration` and `video.duration` report the DVR
+ * window instead (measured: `"1:00:00"` / 3600 on a stream that had been
+ * running far longer, and `"137:04:51:37"` on another).
+ *
+ * `.ytp-time-display` gains the class `ytp-live`; measured present on a live
+ * full load, absent on a VOD, and — unlike Task 1's `.ytp-live-badge`
+ * visibility candidate — this is a plain class check, so it needs no
+ * `getComputedStyle` and stays pure over the `Document`.
+ *
+ * Measured to clear correctly across a live -> VOD in-page navigation, which
+ * is the direction that matters: a stale `ytp-live` would suppress a
+ * legitimate VOD duration. The VOD -> live direction is untested (no live
+ * video appeared in a related rail).
+ *
+ * Note this reads `false` while a pre-roll ad plays on a live stream — the
+ * player drops `ytp-live` for the ad. That case is caught by `isAdShowing`
+ * and by the fresh-microdata-without-a-duration check instead.
+ */
+function isLivePlayback(doc: Document): boolean {
+  return doc.querySelector('.ytp-time-display')?.classList.contains('ytp-live') ?? false;
+}
+
+/**
  * Duration in seconds, or `null` when it genuinely cannot be determined.
  *
  * No single measured source is simultaneously reachable from an ISOLATED
@@ -141,9 +170,15 @@ function isAdShowing(doc: Document): boolean {
  *
  * - `meta[itemprop="duration"]` is ad-immune but goes stale after an in-page
  *   navigation (it keeps describing the previous video).
- * - `.ytp-time-duration` stays fresh across navigations but reports the AD's
- *   length while one is playing (measured: `"0:59"` on a video whose real
- *   duration was `PT12M58S`).
+ * - the media element (`video.duration`) and `.ytp-time-duration` stay fresh
+ *   across navigations but both report the AD's length while one is playing
+ *   (measured: `"0:59"` on a video whose real duration was `PT12M58S`).
+ *
+ * The media element is preferred over the clock: it was read in every probe
+ * and matched ground truth every time (3587.701 / 600.461 / 477.467 /
+ * 7543.121 / 12683.321), needs no string parsing, and has no locale or
+ * format ambiguity. The clock remains behind it as a text fallback for when
+ * the media element has not loaded (`duration` is `NaN` until then).
  *
  * So instead of picking one and hoping, staleness is *detected*. The same
  * server-rendered `div#watch7-content` microdata block that carries the
@@ -152,23 +187,39 @@ function isAdShowing(doc: Document): boolean {
  * says whether the block describes the current video:
  *
  * - identifier === videoId  -> the block is fresh, use the ad-immune ISO value.
- * - identifier !== videoId  -> the block is stale, fall back to the clock, but
- *   only when no ad is playing.
+ * - identifier !== videoId  -> the block is stale, fall back to the live DOM,
+ *   but only when neither an ad nor a live broadcast is poisoning it.
  * - neither usable          -> return null. A fabricated `0` would render as
  *   "0:00" in the panel, which is a confident lie; absent is honest.
  *
- * Measured on Chrome 150 across two independent cross-channel SPA transitions
- * (zjkBMFhNj_g -> qYNweeDHiyU and zjkBMFhNj_g -> RQWpF2Gb-gU): the sentinel
- * correctly reported "stale" in both, while the id matched on every full load.
+ * Measured on Chrome 150 across three independent cross-channel SPA
+ * transitions: the sentinel correctly reported "stale" in every one, while
+ * the id matched on every full load.
+ *
+ * A fresh block that carries NO duration is itself a signal: every measured
+ * VOD and Short had one, and the measured live stream did not. That is why
+ * step 1 returns `null` instead of falling through — the fall-through would
+ * hand back the DVR window.
  */
 function resolveDurationSeconds(doc: Document, videoId: string): number | null {
   const microdataId = attr(doc, 'meta[itemprop="identifier"]', 'content');
   if (microdataId === videoId) {
-    const fromMicrodata = parseIsoDuration(attr(doc, 'meta[itemprop="duration"]', 'content'));
-    if (fromMicrodata !== null) return fromMicrodata;
+    // The block describes this video, so its duration (or its absence) is
+    // authoritative and ad-immune.
+    return parseIsoDuration(attr(doc, 'meta[itemprop="duration"]', 'content'));
   }
 
-  if (isAdShowing(doc)) return null;
+  // From here the block is stale or missing, so only live DOM is usable.
+  if (isLivePlayback(doc) || isAdShowing(doc)) return null;
+
+  // `video.duration` is NaN before the media loads and — measured on YouTube —
+  // a finite DVR length rather than Infinity on a live stream, so guard for
+  // finiteness rather than treating Infinity as the live marker.
+  const mediaDuration = (doc.querySelector('video') as HTMLVideoElement | null)?.duration;
+  if (typeof mediaDuration === 'number' && Number.isFinite(mediaDuration) && mediaDuration > 0) {
+    return Math.round(mediaDuration);
+  }
+
   return parseClockDuration(doc.querySelector('.ytp-time-duration')?.textContent);
 }
 
@@ -181,10 +232,16 @@ function resolveDurationSeconds(doc: Document, videoId: string): number | null {
  * document or one left over from an in-page navigation, which is exactly why
  * every source it reads has to be SPA-safe (or staleness-checked).
  *
- * Returns `null` when the document yields neither a video id nor a title —
- * a Shorts page, a feed, or a watch page that has not hydrated yet. Partial
- * metadata is preferable to none, so a missing channel yields `''` and a
- * missing duration yields `null` rather than discarding the whole record.
+ * A video id and a title are both required — without either, the record could
+ * not be keyed or displayed, so the whole thing is discarded and `null` is
+ * returned (a feed page, or a watch page that has not hydrated yet). Every
+ * other field is optional: a missing channel or duration yields `null` for
+ * that field rather than discarding the record.
+ *
+ * Note this does NOT return `null` for a Shorts page — the id comes from the
+ * `/shorts/<id>` URL and the title from `document.title`, producing a usable
+ * record whose `url` is the equivalent `/watch?v=` form. That behaviour is
+ * deliberate and pinned by test.
  */
 export function extractVideoMeta(doc: Document, url: string): ExtractedVideoMeta | null {
   const videoId = resolveVideoId(doc, url);
@@ -200,10 +257,13 @@ export function extractVideoMeta(doc: Document, url: string): ExtractedVideoMeta
     // is keyed by video id.
     url: `https://www.youtube.com/watch?v=${videoId}`,
     title,
-    // '' means "not determined", never a guess. The only ISOLATED-reachable,
-    // SPA-safe channel source is this anchor; its `/@handle` href is available
-    // too, but there is no `UC…` channelId that survives an SPA transition.
-    channelName: elementText(doc.querySelector('#owner #channel-name a')) ?? '',
+    // `null` means "not determined", never a guess or an empty string: once
+    // Task 8 caches these records, `''` would be indistinguishable from a
+    // genuinely blank channel and the record would never be re-read. The only
+    // ISOLATED-reachable, SPA-safe channel source is this anchor; its
+    // `/@handle` href is available too, but there is no `UC…` channelId that
+    // survives an SPA transition.
+    channelName: elementText(doc.querySelector('#owner #channel-name a')),
     // Derived from the video id — the only thumbnail source that is both
     // ISOLATED-reachable and SPA-safe. NOTE: that `hqdefault.jpg` always
     // resolves is general knowledge, NOT measured; no HTTP request has ever

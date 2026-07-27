@@ -1,12 +1,12 @@
 import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { extractVideoMeta, parseIsoDuration, parseClockDuration } from '~/lib/video-meta';
 
-// Resolved from the vitest root rather than `import.meta.url`: vite rewrites
-// module URLs to root-relative paths, so `new URL('./x', import.meta.url)`
-// resolves to `/src/lib/x` instead of the real on-disk location.
-const FIXTURE_DIR = path.resolve(process.cwd(), 'src/lib/__fixtures__');
+// Resolved from this file's own location, not `process.cwd()`, so the suite
+// still works when vitest is invoked from a subdirectory.
+const FIXTURE_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), '__fixtures__');
 
 function loadFixture(name: string): Document {
   const html = fs.readFileSync(path.join(FIXTURE_DIR, name), 'utf8');
@@ -19,6 +19,8 @@ const FULL_LOAD = 'watch-full-load.html';
 const SPA_STALE = 'watch-spa-stale-head.html';
 const SPA_STALE_AD = 'watch-spa-stale-head-ad.html';
 const NOTHING = 'no-video-metadata.html';
+const LIVE = 'watch-live.html';
+const SHORTS = 'shorts.html';
 
 const FULL_URL = 'https://www.youtube.com/watch?v=zjkBMFhNj_g';
 const SPA_URL = 'https://www.youtube.com/watch?v=qYNweeDHiyU';
@@ -224,17 +226,51 @@ describe('extractVideoMeta — fallback chains', () => {
     );
   });
 
-  it('falls back to the player clock when the microdata duration is absent but fresh', () => {
+  it('treats a fresh microdata block with no duration as live and reports none', () => {
+    // Measured: a live stream is exactly this shape — the microdata block is
+    // fresh (identifier matches) yet carries no meta[itemprop="duration"].
+    // A VOD always had one. So this is a live signal, not a reason to trust
+    // the clock (which would report the DVR window).
     const doc = loadFixture(FULL_LOAD);
     doc.querySelector('meta[itemprop="duration"]')?.remove();
-    expect(extractVideoMeta(doc, FULL_URL)?.durationSeconds).toBe(3587);
+    expect(extractVideoMeta(doc, FULL_URL)?.durationSeconds).toBeNull();
+  });
+
+  it('prefers the media element over the player clock', () => {
+    const doc = loadFixture(SPA_STALE);
+    // The SPA fixture's clock says 10:00 (600s). Give the media element a
+    // clearly different value so this test can only pass if the media element
+    // is genuinely preferred.
+    const video = doc.createElement('video');
+    Object.defineProperty(video, 'duration', { value: 612.7, configurable: true });
+    doc.querySelector('#movie_player')?.appendChild(video);
+    expect(extractVideoMeta(doc, SPA_URL)?.durationSeconds).toBe(613);
+  });
+
+  it('ignores a media element whose duration has not loaded yet and uses the clock', () => {
+    const doc = loadFixture(SPA_STALE);
+    const video = doc.createElement('video');
+    Object.defineProperty(video, 'duration', { value: NaN, configurable: true });
+    doc.querySelector('#movie_player')?.appendChild(video);
+    expect(extractVideoMeta(doc, SPA_URL)?.durationSeconds).toBe(600);
+  });
+
+  it('ignores a media element reporting Infinity and falls through to the clock', () => {
+    // Not observed on YouTube (its live player reports a finite DVR length),
+    // but Infinity is the standard live value for a plain media element, so
+    // it must never be rounded into a number.
+    const doc = loadFixture(SPA_STALE);
+    const video = doc.createElement('video');
+    Object.defineProperty(video, 'duration', { value: Infinity, configurable: true });
+    doc.querySelector('#movie_player')?.appendChild(video);
+    expect(extractVideoMeta(doc, SPA_URL)?.durationSeconds).toBe(600);
   });
 
   it('reports no channel rather than guessing when the owner anchor is gone', () => {
     const doc = loadFixture(SPA_STALE);
     doc.querySelector('#owner #channel-name a')?.remove();
     const meta = extractVideoMeta(doc, SPA_URL);
-    expect(meta?.channelName).toBe('');
+    expect(meta?.channelName).toBeNull();
     expect(meta?.title).toBe('AI, Machine Learning, Deep Learning and Generative AI Explained');
   });
 
@@ -265,5 +301,85 @@ describe('extractVideoMeta — nothing usable', () => {
     doc.querySelector('ytd-watch-flexy')?.removeAttribute('video-id');
     doc.querySelector('link[rel="canonical"]')?.remove();
     expect(extractVideoMeta(doc, 'https://www.youtube.com/feed/subscriptions')).toBeNull();
+  });
+});
+
+describe('extractVideoMeta — live stream (no honest duration exists)', () => {
+  const meta = () => extractVideoMeta(loadFixture(LIVE), 'https://www.youtube.com/watch?v=yq2ozBAd4MI');
+
+  it('reports no duration rather than the DVR window', () => {
+    const doc = loadFixture(LIVE);
+    // Guard the fixture's premises, all measured on the live page:
+    expect(doc.querySelector('meta[itemprop="identifier"]')?.getAttribute('content')).toBe('yq2ozBAd4MI');
+    expect(doc.querySelector('meta[itemprop="duration"]')).toBeNull();
+    expect(doc.querySelector('.ytp-time-duration')?.textContent).toBe('1:00:00');
+    expect(doc.querySelector('.ytp-time-display')?.classList.contains('ytp-live')).toBe(true);
+
+    // 3600 is the DVR window, not a runtime. So is the 137-day figure that
+    // Task 1 measured on a longer DVR window.
+    expect(meta()?.durationSeconds).toBeNull();
+    expect(meta()?.durationSeconds).not.toBe(3600);
+  });
+
+  it('still extracts title and channel for a live stream', () => {
+    expect(meta()).toEqual({
+      videoId: 'yq2ozBAd4MI',
+      url: 'https://www.youtube.com/watch?v=yq2ozBAd4MI',
+      title: 'Mornings with Ridge and Frost | Monday 27 July 2026',
+      channelName: 'Sky News',
+      thumbnailUrl: 'https://i.ytimg.com/vi/yq2ozBAd4MI/hqdefault.jpg',
+      durationSeconds: null,
+    });
+  });
+
+  it('rejects the DVR window via the ytp-live class even when the microdata is stale', () => {
+    // The SPA-into-a-live-stream shape: stale microdata (so the
+    // fresh-block-without-duration signal cannot fire) plus a live player.
+    const doc = loadFixture(LIVE);
+    doc.querySelector('meta[itemprop="identifier"]')?.setAttribute('content', 'someOtherId');
+    expect(extractVideoMeta(doc, 'https://www.youtube.com/watch?v=yq2ozBAd4MI')?.durationSeconds).toBeNull();
+  });
+
+  it('does not let a live media element duration through either', () => {
+    const doc = loadFixture(LIVE);
+    doc.querySelector('meta[itemprop="identifier"]')?.setAttribute('content', 'someOtherId');
+    const video = doc.createElement('video');
+    // Measured on the real live stream: a finite DVR length, NOT Infinity.
+    Object.defineProperty(video, 'duration', { value: 3600, configurable: true });
+    doc.querySelector('#movie_player')?.appendChild(video);
+    expect(extractVideoMeta(doc, 'https://www.youtube.com/watch?v=yq2ozBAd4MI')?.durationSeconds).toBeNull();
+  });
+});
+
+describe('extractVideoMeta — Shorts (behaviour pinned, not accidental)', () => {
+  const SHORTS_URL = 'https://www.youtube.com/shorts/3cRnRfPT7mM';
+  const meta = () => extractVideoMeta(loadFixture(SHORTS), SHORTS_URL);
+
+  it('returns a full record, NOT null', () => {
+    // An earlier report claimed Shorts returned null "naturally". It does not,
+    // and this test exists so the real behaviour stops being accidental.
+    expect(meta()).toEqual({
+      videoId: '3cRnRfPT7mM',
+      // Deliberate: a Short is playable at the /watch?v= form, and the record
+      // is keyed by video id.
+      url: 'https://www.youtube.com/watch?v=3cRnRfPT7mM',
+      title: "[외신 헤드라인] 빅테크 AI 투자 눈덩이…'현금' 잠식 경고 #shorts",
+      channelName: null,
+      thumbnailUrl: 'https://i.ytimg.com/vi/3cRnRfPT7mM/hqdefault.jpg',
+      durationSeconds: 71,
+    });
+  });
+
+  it('falls through the whitespace-only #title h1 to document.title', () => {
+    const doc = loadFixture(SHORTS);
+    const h1 = doc.querySelector('#title h1');
+    // Guard the premise: the element exists but holds only whitespace.
+    expect(h1).not.toBeNull();
+    expect(h1?.textContent?.trim()).toBe('');
+  });
+
+  it('has no owner anchor, so the channel is null rather than a guess', () => {
+    expect(loadFixture(SHORTS).querySelector('#owner #channel-name a')).toBeNull();
+    expect(meta()?.channelName).toBeNull();
   });
 });

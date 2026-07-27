@@ -1,0 +1,37 @@
+<!-- CAPTURED, not hand-written.
+     Source : https://www.youtube.com/shorts/3cRnRfPT7mM (SBS Biz 뉴스)
+     How    : full document load (CDP Page.navigate), Chrome 150.0.7871.184.
+     Why it exists: to PIN the actual Shorts behaviour rather than leave it
+              accidental. Measured on this page:
+                - ytd-watch-flexy            ABSENT
+                - link[rel=canonical]        stays /shorts/<id>
+                - #owner #channel-name a     ABSENT
+                - .ytp-time-duration         ABSENT (the Shorts player is
+                                             #shorts-player, not #movie_player)
+                - #title h1                  PRESENT but WHITESPACE-ONLY
+                                             ("\n      \n    ")
+                - the microdata block is FRESH and does carry a duration
+              So extraction does NOT return null: the id comes from the URL
+              (/shorts/<id>), the title falls through to document.title, and
+              the duration comes from the fresh microdata. That is deliberate
+              and is asserted in video-meta.test.ts. -->
+<html lang="ko-KR">
+<head>
+<title>[외신 헤드라인] 빅테크 AI 투자 눈덩이…'현금' 잠식 경고 #shorts - YouTube</title>
+<link rel="canonical" href="https://www.youtube.com/shorts/3cRnRfPT7mM">
+<meta property="og:title" content="[외신 헤드라인] 빅테크 AI 투자 눈덩이…'현금' 잠식 경고 #shorts">
+</head>
+<body>
+
+<div id="watch7-content" class="watch-main-col" itemscope="" itemid="https://www.youtube.com/shorts/3cRnRfPT7mM" itemtype="http://schema.org/VideoObject"><link itemprop="url" href="https://www.youtube.com/shorts/3cRnRfPT7mM"><meta itemprop="name" content="[외신 헤드라인] 빅테크 AI 투자 눈덩이…'현금' 잠식 경고 #shorts"><meta itemprop="identifier" content="3cRnRfPT7mM"><meta itemprop="duration" content="PT1M11S"><span itemprop="author" itemscope="" itemtype="http://schema.org/Person"><link itemprop="url" href="http://www.youtube.com/@SBSBiz2021"><link itemprop="name" content="SBS Biz 뉴스"></span><link itemprop="thumbnailUrl" href="https://i.ytimg.com/vi/3cRnRfPT7mM/oardefault.jpg?sqp=-oaymwEoCJUDENAFSFqQAgHyq4qpAxcIARUAAIhC2AEB4gEKCBgQAhgGOAFAAQ==&amp;rs=AOn4CLDnFV04yI0w-dEJmRZdVuorTuBUVA&amp;usqp=CCk"></div>
+
+<ytd-app fix-ambient-cutoff="" is-shorts-page="" mini-guide-visible="">
+  <div id="title" class="style-scope ytd-watch-metadata">
+    <h1 class="style-scope ytd-watch-metadata">
+      <yt-formatted-string force-default-style="" class="style-scope ytd-watch-metadata" is-empty=""><!--css-build:shady--><!--css_build_scope:yt-formatted-string--><!--css_build_styles:video.youtube.src.web.polymer.shared.ui.styles.yt_base_styles.yt.base.styles.css.js,video.youtube.src.web.polymer.shared.ui.yt_formatted_string.yt.formatted.string.css.js--><yt-attributed-string class="style-scope yt-formatted-string"></yt-attributed-string></yt-formatted-string>
+    </h1>
+  </div>
+  <div id="shorts-player"></div>
+</ytd-app>
+</body>
+</html>
