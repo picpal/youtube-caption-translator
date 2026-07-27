@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react';
 import { Button } from '~/components/Button';
 import { StatusBadge } from '~/components/StatusBadge';
+import { VideoCard } from '~/components/VideoCard';
 import { useApiKey } from '~/features/api-key/useApiKey';
+import { useCurrentVideo } from '~/features/video/useCurrentVideo';
 import { isYoutubeWatchUrl } from '~/lib/youtube';
 
 type TabKind = 'checking' | 'youtube' | 'other';
@@ -132,25 +134,17 @@ function NonYoutubeBody() {
 // 88x50 thumbnail becomes an exact-16:9 96x54 so it doesn't look stretched at
 // the wider column. The popup's own "패널 열기" button is dropped — the panel
 // is the destination now, not a link to one.
+//
+// The thumbnail/title/channel block and the caption-availability bar are
+// real data as of Task 9, via VideoCard + useCurrentVideo. The 자막 표시
+// selector, the (still-disabled) AI 자막 생성 button, and the 처리 단계
+// footer remain static — M2's concern, not this task's.
 function ReadyBody() {
+  const { video, loading } = useCurrentVideo();
+
   return (
     <>
-      <div className="flex gap-3 px-4 pb-3.5 pt-4">
-        <div className="h-[54px] w-24 flex-none rounded-[5px] bg-[repeating-linear-gradient(135deg,#eceef0_0_6px,#e3e6e9_6px_12px)] dark:bg-[repeating-linear-gradient(135deg,#2a2d31_0_6px,#23262a_6px_12px)]" />
-        <div className="flex min-w-0 flex-col gap-1">
-          <span className="text-[13px] font-semibold leading-snug text-neutral-500 dark:text-neutral-400">
-            영상 정보 로딩 중
-          </span>
-          <span className="text-[11px] text-neutral-400 dark:text-neutral-500">—</span>
-        </div>
-      </div>
-
-      <div className="mx-4 mb-4 flex items-center gap-1.5 rounded-md border border-neutral-200 bg-neutral-50 px-3 py-2 dark:border-neutral-800 dark:bg-neutral-900">
-        <span className="block h-1.5 w-1.5 flex-none rounded-full bg-neutral-400 dark:bg-neutral-600" />
-        <span className="font-mono text-[11px] text-neutral-500 dark:text-neutral-400">
-          자막 정보 확인 중
-        </span>
-      </div>
+      <VideoCard video={video} loading={loading} />
 
       <div className="px-4">
         <span className="text-[10.5px] font-semibold tracking-wide text-neutral-400 dark:text-neutral-500">
