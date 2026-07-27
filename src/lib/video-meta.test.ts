@@ -21,9 +21,16 @@ const SPA_STALE_AD = 'watch-spa-stale-head-ad.html';
 const NOTHING = 'no-video-metadata.html';
 const LIVE = 'watch-live.html';
 const SHORTS = 'shorts.html';
+// Task 6 caption fixtures — same capture method, see each file's header.
+const CAP_MANUAL = 'watch-captions-manual.html';
+const CAP_NONE = 'watch-captions-none.html';
+const SPA_CAP_UNKNOWN = 'watch-spa-captions-unknown.html';
+const SPA_CAP_NONE = 'watch-spa-captions-none.html';
 
 const FULL_URL = 'https://www.youtube.com/watch?v=zjkBMFhNj_g';
 const SPA_URL = 'https://www.youtube.com/watch?v=qYNweeDHiyU';
+const CAP_MANUAL_URL = 'https://www.youtube.com/watch?v=MB5IX-np5fE';
+const CAP_NONE_URL = 'https://www.youtube.com/watch?v=I_6ZcOo6pnk';
 
 describe('parseIsoDuration', () => {
   it('parses the measured fixture value PT59M48S', () => {
@@ -113,6 +120,9 @@ describe('extractVideoMeta — full-load document (fresh microdata)', () => {
       channelName: 'Andrej Karpathy',
       thumbnailUrl: 'https://i.ytimg.com/vi/zjkBMFhNj_g/hqdefault.jpg',
       durationSeconds: 3588,
+      // The inline player-response script names this same video and carries
+      // exactly one `kind: "asr"` track.
+      captionAvailability: 'auto-only',
     });
   });
 
@@ -145,6 +155,11 @@ describe('extractVideoMeta — post-SPA document (stale microdata, different cha
       channelName: 'IBM Technology',
       thumbnailUrl: 'https://i.ytimg.com/vi/qYNweeDHiyU/hqdefault.jpg',
       durationSeconds: 600,
+      // This fixture was captured for Task 5 and carries no caption nodes at
+      // all — no inline script, no description subtree — so nothing about
+      // captions can be determined from it. See the dedicated caption
+      // fixtures below for the SPA caption cases.
+      captionAvailability: 'unknown',
     });
   });
 
@@ -201,6 +216,7 @@ describe('extractVideoMeta — post-SPA document with a pre-roll ad playing', ()
       channelName: 'IBM Technology',
       thumbnailUrl: 'https://i.ytimg.com/vi/qYNweeDHiyU/hqdefault.jpg',
       durationSeconds: null,
+      captionAvailability: 'unknown',
     });
   });
 });
@@ -329,6 +345,7 @@ describe('extractVideoMeta — live stream (no honest duration exists)', () => {
       channelName: 'Sky News',
       thumbnailUrl: 'https://i.ytimg.com/vi/yq2ozBAd4MI/hqdefault.jpg',
       durationSeconds: null,
+      captionAvailability: 'unknown',
     });
   });
 
@@ -367,6 +384,7 @@ describe('extractVideoMeta — Shorts (behaviour pinned, not accidental)', () =>
       channelName: null,
       thumbnailUrl: 'https://i.ytimg.com/vi/3cRnRfPT7mM/hqdefault.jpg',
       durationSeconds: 71,
+      captionAvailability: 'unknown',
     });
   });
 
@@ -381,5 +399,235 @@ describe('extractVideoMeta — Shorts (behaviour pinned, not accidental)', () =>
   it('has no owner anchor, so the channel is null rather than a guess', () => {
     expect(loadFixture(SHORTS).querySelector('#owner #channel-name a')).toBeNull();
     expect(meta()?.channelName).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Task 6: caption availability
+// ---------------------------------------------------------------------------
+
+/** A minimal watch document carrying a hand-built inline player response. */
+function docWithPlayerResponse(scriptBody: string, extraBody = ''): Document {
+  return new DOMParser().parseFromString(
+    `<html><head><title>T - YouTube</title></head><body>` +
+      `<ytd-watch-flexy video-id="vvvvvvvvvvv"></ytd-watch-flexy>` +
+      `<div id="title"><h1>T</h1></div>` +
+      extraBody +
+      `<script nonce="">${scriptBody}</script>` +
+      `</body></html>`,
+    'text/html',
+  );
+}
+
+const VVV_URL = 'https://www.youtube.com/watch?v=vvvvvvvvvvv';
+
+describe('caption availability — the inline player-response script (full loads)', () => {
+  it('reports auto-only when every track is auto-generated', () => {
+    const doc = loadFixture(FULL_LOAD);
+    // Guard the fixture's premises: the script names THIS video, and its one
+    // track is the asr shape (kind "asr", vssId "a.en").
+    const text = doc.querySelector('script')?.textContent ?? '';
+    expect(text).toContain('"videoId":"zjkBMFhNj_g"');
+    expect(text).toContain('"kind":"asr"');
+    expect(text).toContain('"vssId":"a.en"');
+    expect(extractVideoMeta(doc, FULL_URL)?.captionAvailability).toBe('auto-only');
+  });
+
+  it('reports available when a human-authored track sits alongside the asr one', () => {
+    const doc = loadFixture(CAP_MANUAL);
+    const text = doc.querySelector('script')?.textContent ?? '';
+    // The measured discriminator: a manual track has NO `kind` property and a
+    // vssId beginning with "."; an auto track has kind "asr" and vssId "a.".
+    expect(text).toContain('"vssId":".en"');
+    expect(text).toContain('"vssId":"a.en"');
+    expect(extractVideoMeta(doc, CAP_MANUAL_URL)?.captionAvailability).toBe('available');
+  });
+
+  it('reports none when the captions key is absent from the player response', () => {
+    const doc = loadFixture(CAP_NONE);
+    const text = doc.querySelector('script')?.textContent ?? '';
+    // Measured: the key is absent entirely, not an empty object or array. This
+    // is why the check is `'captions' in response`, not a length check.
+    expect(text).toContain('"videoId":"I_6ZcOo6pnk"');
+    expect(text).not.toContain('"captions"');
+    expect(extractVideoMeta(doc, CAP_NONE_URL)?.captionAvailability).toBe('none');
+  });
+
+  it('reports none for an empty captionTracks array (the measured live-stream shape)', () => {
+    const doc = docWithPlayerResponse(
+      'var ytInitialPlayerResponse = {"captions":{"playerCaptionsTracklistRenderer":' +
+        '{"captionTracks":[]}},"videoDetails":{"videoId":"vvvvvvvvvvv"}};',
+    );
+    expect(extractVideoMeta(doc, VVV_URL)?.captionAvailability).toBe('none');
+  });
+
+  it('treats any non-asr kind as a human-authored track', () => {
+    const doc = docWithPlayerResponse(
+      'var ytInitialPlayerResponse = {"captions":{"playerCaptionsTracklistRenderer":' +
+        '{"captionTracks":[{"vssId":".en","languageCode":"en","kind":"forced"}]}},' +
+        '"videoDetails":{"videoId":"vvvvvvvvvvv"}};',
+    );
+    expect(extractVideoMeta(doc, VVV_URL)?.captionAvailability).toBe('available');
+  });
+
+  it('survives a player response whose strings contain a literal };', () => {
+    // A non-greedy /(\{[\s\S]*?\});/ regex would truncate here and throw. The
+    // real scripts measured on Chrome 150 were 34KB-671KB with exactly one
+    // "};" in them, so this never fired in practice — but a video description
+    // is free text and one day it will.
+    const doc = docWithPlayerResponse(
+      'var ytInitialPlayerResponse = {"videoDetails":{"videoId":"vvvvvvvvvvv",' +
+        '"shortDescription":"code sample: if (x) {y();};  and more"},' +
+        '"captions":{"playerCaptionsTracklistRenderer":{"captionTracks":' +
+        '[{"vssId":".en","languageCode":"en"}]}}};var meta = 1;',
+    );
+    expect(extractVideoMeta(doc, VVV_URL)?.captionAvailability).toBe('available');
+  });
+
+  it('ignores an inline script left over from a PREVIOUS video', () => {
+    // Measured: this script is never replaced on an SPA transition. Trusting
+    // it blindly would report the previous video's captions.
+    const doc = loadFixture(CAP_MANUAL);
+    const script = doc.querySelector('script')!;
+    script.textContent = script.textContent!.replace('"videoId":"MB5IX-np5fE"', '"videoId":"someOtherId"');
+    // The manual fixture's DOM says only "a transcript section exists", so the
+    // kind is no longer knowable: 'unknown', never 'available'.
+    const result = extractVideoMeta(doc, CAP_MANUAL_URL)?.captionAvailability;
+    expect(result).toBe('unknown');
+    expect(result).not.toBe('available');
+  });
+
+  it('degrades to the DOM path instead of throwing when the JSON is malformed', () => {
+    const doc = loadFixture(CAP_NONE);
+    const script = doc.querySelector('script')!;
+    script.textContent = 'var ytInitialPlayerResponse = {"videoDetails":{"videoId": ,,,};';
+    // CAP_NONE's DOM has a mounted description subtree and no transcript
+    // section, so the DOM path can still answer.
+    expect(() => extractVideoMeta(doc, CAP_NONE_URL)).not.toThrow();
+    expect(extractVideoMeta(doc, CAP_NONE_URL)?.captionAvailability).toBe('none');
+  });
+
+  it('degrades to the DOM path when the object never closes', () => {
+    const doc = docWithPlayerResponse('var ytInitialPlayerResponse = {"videoDetails": {"videoId": "vvv');
+    expect(extractVideoMeta(doc, VVV_URL)?.captionAvailability).toBe('unknown');
+  });
+
+  it('ignores a script that merely mentions the variable without assigning it', () => {
+    const doc = docWithPlayerResponse('if (window.ytInitialPlayerResponse) { boot(); }');
+    expect(extractVideoMeta(doc, VVV_URL)?.captionAvailability).toBe('unknown');
+  });
+});
+
+describe('caption availability — the DOM fallback (post-SPA, no usable script)', () => {
+  it('reports unknown for a captioned video reached by an in-page navigation', () => {
+    const doc = loadFixture(SPA_CAP_UNKNOWN);
+    // Guard the fixture's premise: measured "no-script" on this document.
+    expect(doc.querySelector('script')).toBeNull();
+    expect(doc.querySelector('ytd-video-description-transcript-section-renderer')).not.toBeNull();
+    // Captions demonstrably exist (this is the asr fixture video), but from
+    // the DOM alone their kind cannot be recovered.
+    expect(extractVideoMeta(doc, FULL_URL)?.captionAvailability).toBe('unknown');
+  });
+
+  it('reports none for a caption-free video reached by an in-page navigation', () => {
+    // THE reverse-direction case Task 1 never measured: a stale positive here
+    // would silently claim captions on a video that has none.
+    const doc = loadFixture(SPA_CAP_NONE);
+    expect(doc.querySelector('script')).toBeNull();
+    expect(doc.querySelector('ytd-structured-description-content-renderer')).not.toBeNull();
+    expect(doc.querySelector('ytd-video-description-transcript-section-renderer')).toBeNull();
+    expect(extractVideoMeta(doc, CAP_NONE_URL)?.captionAvailability).toBe('none');
+  });
+
+  it('reports unknown, not none, while the description subtree is still mounting', () => {
+    // Measured lazy mount: on a captioned video the transcript section read
+    // absent 947ms after load and present at 1599ms. Reading "absent" as "no
+    // captions" during that window would be a confident lie, so the mounted
+    // container is required as corroboration.
+    const doc = loadFixture(SPA_CAP_NONE);
+    doc.querySelector('ytd-structured-description-content-renderer')?.remove();
+    expect(extractVideoMeta(doc, CAP_NONE_URL)?.captionAvailability).toBe('unknown');
+  });
+
+  it('never reads data-tooltip-title, which is locale-dependent AND transiently wrong', () => {
+    // Measured on a captioned video: "자막 사용 불가" at +947ms, "자막(c)" at
+    // +1372ms. Both directions are pinned here.
+    const captioned = loadFixture(SPA_CAP_UNKNOWN);
+    captioned
+      .querySelector('.ytp-subtitles-button')
+      ?.setAttribute('data-tooltip-title', '자막 사용 불가');
+    expect(extractVideoMeta(captioned, FULL_URL)?.captionAvailability).toBe('unknown');
+
+    const bare = loadFixture(SPA_CAP_NONE);
+    bare.querySelector('.ytp-subtitles-button')?.setAttribute('data-tooltip-title', '자막(c)');
+    expect(extractVideoMeta(bare, CAP_NONE_URL)?.captionAvailability).toBe('none');
+  });
+
+  it('never reads aria-pressed, which follows the user\'s CC toggle', () => {
+    // Measured: clicking the CC button on a captioned video flipped
+    // aria-pressed true -> false and the preference persisted to the next
+    // video, making it indistinguishable from a caption-free one.
+    const captioned = loadFixture(SPA_CAP_UNKNOWN);
+    captioned.querySelector('.ytp-subtitles-button')?.setAttribute('aria-pressed', 'false');
+    expect(extractVideoMeta(captioned, FULL_URL)?.captionAvailability).toBe('unknown');
+
+    const bare = loadFixture(SPA_CAP_NONE);
+    bare.querySelector('.ytp-subtitles-button')?.setAttribute('aria-pressed', 'true');
+    expect(extractVideoMeta(bare, CAP_NONE_URL)?.captionAvailability).toBe('none');
+  });
+
+  it('never reads aria-label, which said "subtitles unavailable" on all three videos', () => {
+    const doc = loadFixture(SPA_CAP_UNKNOWN);
+    // Guard the trap's premise straight from the capture.
+    expect(doc.querySelector('.ytp-subtitles-button')?.getAttribute('aria-label')).toBe(
+      '자막 사용 불가',
+    );
+    expect(extractVideoMeta(doc, FULL_URL)?.captionAvailability).toBe('unknown');
+  });
+
+  it('reports unknown when the page carries no caption signal whatsoever', () => {
+    // A watch document read before the player or the description exists.
+    // 'none' would assert an absence that was never observed.
+    const doc = docWithPlayerResponse('/* nothing */');
+    expect(extractVideoMeta(doc, VVV_URL)?.captionAvailability).toBe('unknown');
+  });
+});
+
+describe('caption availability — the measured mid-SPA-transition transient', () => {
+  it('still sees the previous video\'s panel while both are mounted', () => {
+    // Measured synchronously inside a yt-page-data-updated handler, arriving
+    // at the caption-free I_6ZcOo6pnk from a captioned video: the document
+    // held 2 transcript sections and 3 description containers; at +100ms it
+    // held 0 and 2. Nothing in the markup says which panel belongs to which
+    // video, so the pure function cannot tell them apart and reports the
+    // previous video's captions.
+    //
+    // This test does not endorse that answer — it pins it, so the day a
+    // caller starts reading at yt-page-data-updated the failure is a visible
+    // expectation rather than a silent wrong label in the panel.
+    const doc = loadFixture(SPA_CAP_NONE);
+    const stalePanel = doc.createElement('ytd-structured-description-content-renderer');
+    stalePanel.appendChild(
+      doc.createElement('ytd-video-description-transcript-section-renderer'),
+    );
+    doc.querySelector('ytd-watch-flexy')?.insertBefore(
+      stalePanel,
+      doc.querySelector('ytd-structured-description-content-renderer'),
+    );
+
+    expect(doc.querySelectorAll('ytd-structured-description-content-renderer')).toHaveLength(2);
+    expect(extractVideoMeta(doc, CAP_NONE_URL)?.captionAvailability).toBe('unknown');
+  });
+
+  it('is unreachable when the inline script is fresh, which is why full loads are safe', () => {
+    // The same stale panel on a full load changes nothing: the sentinel
+    // matches, so the player response answers and the DOM is never consulted.
+    const doc = loadFixture(CAP_NONE);
+    const stalePanel = doc.createElement('ytd-structured-description-content-renderer');
+    stalePanel.appendChild(
+      doc.createElement('ytd-video-description-transcript-section-renderer'),
+    );
+    doc.querySelector('ytd-watch-flexy')?.appendChild(stalePanel);
+    expect(extractVideoMeta(doc, CAP_NONE_URL)?.captionAvailability).toBe('none');
   });
 });

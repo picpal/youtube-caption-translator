@@ -1,0 +1,65 @@
+<!-- CAPTURED, not hand-written.
+     Source : https://www.youtube.com/watch?v=I_6ZcOo6pnk (Matthias Lang,
+              "[ 8K resolution ] - 10 Hours Black Screen - No Sound")
+     How    : full document load (CDP Page.navigate), Chrome 150.0.7871.184,
+              dev profile .chrome-dev-profile, UI locale ko-KR, 2026-07-27.
+     Why    : the NO-CAPTION case, and the reason the detector tests
+              `'captions' in playerResponse` rather than reaching into
+              captions.playerCaptionsTracklistRenderer.captionTracks.length —
+              the `captions` key is ABSENT from this video's player response
+              entirely. The measured top-level key list was:
+                responseContext, playabilityStatus, streamingData,
+                playbackTracking, videoDetails, playerConfig, storyboards,
+                microformat, cards, trackingParams, adBreakHeartbeatParams,
+                frameworkUpdates
+              — no `captions`, and playabilityStatus was "OK", so this is a
+              genuinely caption-free playable video, not a blocked one.
+     State  : FRESH microdata (identifier == I_6ZcOo6pnk) and the inline
+              script's videoDetails.videoId agrees, so the sentinel matches.
+              Note the description subtree IS mounted here while the
+              transcript section is absent — that pair is what lets the DOM
+              fallback distinguish "no captions" from "not rendered yet".
+     Reduced: same reduction and the same COMPOSED-script disclosure as
+              watch-captions-manual.html. The `captions` key is absent below
+              because it was absent in the capture. -->
+<html lang="ko-KR">
+<head>
+<title>[ 8K resolution ] - 10 Hours Black Screen - No Sound - YouTube</title>
+<link rel="canonical" href="https://www.youtube.com/watch?v=I_6ZcOo6pnk">
+</head>
+<body>
+
+<div id="watch7-content" class="watch-main-col" itemscope="" itemid="https://www.youtube.com/watch?v=I_6ZcOo6pnk" itemtype="http://schema.org/VideoObject"><link itemprop="url" href="https://www.youtube.com/watch?v=I_6ZcOo6pnk"><meta itemprop="name" content="[ 8K resolution ] - 10 Hours Black Screen - No Sound"><meta itemprop="identifier" content="I_6ZcOo6pnk"><meta itemprop="duration" content="PT600M0S"><span itemprop="author" itemscope="" itemtype="http://schema.org/Person"><link itemprop="url" href="http://www.youtube.com/@matzelang"><link itemprop="name" content="Matthias Lang"></span></div>
+
+<ytd-watch-flexy class="style-scope ytd-page-manager watch-root-element hide-skeleton" video-id="I_6ZcOo6pnk" reduced-top-margin="" view-transition-enabled="" is-dark-theme="" respect-aspect-ratio="" is-four-three-to-sixteen-nine-video_="" hidden-action-button-target-ids="[]" is-single-column="" full-bleed-player="" role="main" cinematic-light-theme="" watch-metadata-refresh="" has-metadata="" cinematics-active="" response-has-comments="">
+
+  <div id="title" class="style-scope ytd-watch-metadata">
+    <h1 class="style-scope ytd-watch-metadata">
+      <yt-formatted-string force-default-style="" class="style-scope ytd-watch-metadata" title="[ 8K resolution ] - 10 Hours Black Screen - No Sound">[ 8K resolution ] - 10 Hours Black Screen - No Sound</yt-formatted-string>
+    </h1>
+  </div>
+
+  <div id="owner" class="item style-scope ytd-watch-metadata">
+    <ytd-video-owner-renderer watch-metadata-refresh="" class="style-scope ytd-watch-metadata">
+      <ytd-channel-name id="channel-name" class="style-scope ytd-video-owner-renderer">
+        <a class="yt-simple-endpoint style-scope yt-formatted-string" spellcheck="false" href="/@matzelang">Matthias Lang</a>
+      </ytd-channel-name>
+    </ytd-video-owner-renderer>
+  </div>
+
+  <div id="movie_player" class="html5-video-player ytp-transparent ytp-modern-caption playing-mode">
+    <div class="ytp-time-display notranslate">
+      <span class="ytp-time-current">0:02</span>
+      <span class="ytp-time-separator"> / </span>
+      <span class="ytp-time-duration">10:00:00</span>
+    </div>
+  </div>
+
+  <!-- Mounted, and with NO transcript section inside it. -->
+  <ytd-structured-description-content-renderer class="style-scope ytd-engagement-panel-section-list-renderer" engagement-panel="" panel-target-id="engagement-panel-structured-description"></ytd-structured-description-content-renderer>
+
+</ytd-watch-flexy>
+
+<script nonce="">var ytInitialPlayerResponse = {"responseContext":{},"playabilityStatus":{"status":"OK"},"videoDetails":{"videoId":"I_6ZcOo6pnk","lengthSeconds":"36000"},"microformat":{}};var meta = document.createElement('meta'); meta.name = 'referrer'; meta.content = 'origin-when-cross-origin'; document.getElementsByTagName('head')[0].appendChild(meta);</script>
+</body>
+</html>

@@ -2,18 +2,28 @@ import { defineContentScript } from 'wxt/sandbox';
 import { classifyYoutubeUrl } from '~/lib/youtube';
 import { extractVideoMeta } from '~/lib/video-meta';
 
-// ISOLATED world (the default — no `world` option needed). MAIN world would
-// only be required to distinguish manual captions from auto-generated ones
-// via `ytInitialPlayerResponse.captions` (a page-context global), and M1's
-// UI only renders a binary "captions available" / "no captions" that never
-// surfaces that distinction. See task-4-report.md for the full reasoning.
+// ISOLATED world (the default — no `world` option needed), and Task 4's ruling
+// stands, but not for the reason it gave. Task 4 assumed MAIN world would be
+// required to distinguish manual captions from auto-generated ones, since
+// `ytInitialPlayerResponse` is a page-context global. Task 6 measured that the
+// ISOLATED world can recover the same object on a full load by reading the
+// inline <script> element's TEXT — script text is ordinary DOM content — so
+// all four CaptionAvailability values are reachable from here. See
+// `resolveCaptionAvailability` in src/lib/video-meta.ts and task-6-report.md.
 export default defineContentScript({
   matches: ['https://www.youtube.com/*'],
   main() {
     const logMeta = (reason: string) => {
       const kind = classifyYoutubeUrl(location.href);
       const meta = extractVideoMeta(document, location.href);
-      console.log(`[ypa] ${reason} kind:`, kind, 'meta:', meta);
+      console.log(
+        `[ypa] ${reason} kind:`,
+        kind,
+        'captions:',
+        meta?.captionAvailability ?? '(no meta)',
+        'meta:',
+        meta,
+      );
     };
 
     logMeta('load');

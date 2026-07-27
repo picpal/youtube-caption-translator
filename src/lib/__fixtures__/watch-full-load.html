@@ -7,7 +7,23 @@
               so meta[itemprop="duration"] (PT59M48S) describes THIS video.
      Reduced: only the nodes the parser reads were kept; every one of them is
               verbatim outerHTML from the live page. The ytd-watch-flexy inline
-              `style` attribute was dropped (layout state, never read). -->
+              `style` attribute was dropped (layout state, never read).
+
+     Task 6 addition (re-captured 2026-07-27 from the same URL, same Chrome
+     build and profile): the inline `var ytInitialPlayerResponse` script and
+     the structured-description subtree. This video is the AUTO-ONLY caption
+     case — exactly one `kind: "asr"` track.
+       - The script element is COMPOSED, and this is the disclosure: the real
+         one is 671,013 characters. Its shape is reproduced faithfully (the
+         assignment starts at character 0, the epilogue after the closing `};`
+         is the real trailing referrer-meta code, and the element carries the
+         real `nonce=""` attribute and lives in <body>), and the single
+         captionTracks entry plus videoDetails.videoId are VERBATIM from the
+         capture. responseContext / streamingData / playbackTracking / cards /
+         adPlacements and 155 translationLanguages entries were dropped: the
+         parser reads none of them.
+       - The description nodes are verbatim opening tags with their children
+         dropped; only their presence is ever read. -->
 <html lang="ko-KR">
 <head>
 <title>[1hr Talk] Intro to Large Language Models - YouTube</title>
@@ -61,6 +77,17 @@
     </div>
   </div>
 
+  <!-- The structured-description subtree. Measured to mount atomically: in a
+       150ms-resolution timeline the transcript section and this container
+       appeared in the SAME sample on all three test videos, so "container
+       present, transcript section absent" genuinely means "no captions"
+       rather than "not rendered yet". -->
+  <ytd-structured-description-content-renderer class="style-scope ytd-engagement-panel-section-list-renderer" engagement-panel="" panel-target-id="engagement-panel-structured-description">
+    <ytd-video-description-transcript-section-renderer class="style-scope ytd-structured-description-content-renderer"></ytd-video-description-transcript-section-renderer>
+  </ytd-structured-description-content-renderer>
+
 </ytd-watch-flexy>
+
+<script nonce="">var ytInitialPlayerResponse = {"responseContext":{},"playabilityStatus":{"status":"OK"},"captions":{"playerCaptionsTracklistRenderer":{"captionTracks":[{"name":{"simpleText":"영어 (자동 생성됨)"},"vssId":"a.en","languageCode":"en","kind":"asr","isTranslatable":true,"trackName":""}],"audioTracks":[{"captionTrackIndices":[0]}],"translationLanguages":[],"defaultAudioTrackIndex":0}},"videoDetails":{"videoId":"zjkBMFhNj_g","lengthSeconds":"3588"},"microformat":{}};var meta = document.createElement('meta'); meta.name = 'referrer'; meta.content = 'origin-when-cross-origin'; document.getElementsByTagName('head')[0].appendChild(meta);</script>
 </body>
 </html>

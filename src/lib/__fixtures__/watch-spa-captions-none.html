@@ -1,0 +1,59 @@
+<!-- CAPTURED, not hand-written.
+     How    : identical route to watch-spa-captions-unknown.html — full-loaded
+              a search-results page (no `var ytInitialPlayerResponse` script
+              on it), then genuinely CLICKED the result anchor, producing a
+              real SPA transition into the CAPTION-FREE video I_6ZcOo6pnk.
+              Chrome 150.0.7871.184, dev profile, ko-KR, 2026-07-27.
+              `window.__ypaMarker` survived the click: same document.
+     Why    : the reverse SPA direction Task 1 never measured — arriving at a
+              caption-free video through an in-page navigation. This is the
+              case where a stale positive signal would silently report
+              captions on a video that has none. The transcript section is
+              genuinely ABSENT here while the description container is
+              present, so the DOM fallback reports 'none'.
+
+              The same clearing was watched live at 150ms resolution on a
+              history.back() out of a captioned video: the transcript section
+              went true -> false 1015ms after the transition began. It does
+              unmount. But it lagged ytd-watch-flexy[video-id] by ~150ms, so
+              for that one sample window the document said "new video, old
+              transcript section" — see task-6-report.md.
+     Reduced: same as watch-spa-captions-unknown.html. The CC button is again
+              verbatim and again deliberately unread. -->
+<html lang="ko-KR">
+<head>
+<title>[ 8K resolution ] - 10 Hours Black Screen - No Sound - YouTube</title>
+<link href="https://www.youtube.com/watch?v=I_6ZcOo6pnk" rel="canonical">
+</head>
+<body>
+
+<ytd-watch-flexy class="style-scope ytd-page-manager watch-root-element hide-skeleton" reduced-top-margin="" view-transition-enabled="" is-dark-theme="" respect-aspect-ratio="" is-four-three-to-sixteen-nine-video_="" hidden-action-button-target-ids="[]" is-single-column="" full-bleed-player="" watch-metadata-refresh="" has-metadata="" role="main" video-id="I_6ZcOo6pnk" cinematic-light-theme="" cinematics-active="" response-has-comments="">
+
+  <div id="title" class="style-scope ytd-watch-metadata">
+    <h1 class="style-scope ytd-watch-metadata">
+      <yt-formatted-string force-default-style="" class="style-scope ytd-watch-metadata" title="[ 8K resolution ] - 10 Hours Black Screen - No Sound">[ 8K resolution ] - 10 Hours Black Screen - No Sound</yt-formatted-string>
+    </h1>
+  </div>
+
+  <div id="owner" class="item style-scope ytd-watch-metadata">
+    <ytd-video-owner-renderer watch-metadata-refresh="" class="style-scope ytd-watch-metadata">
+      <ytd-channel-name id="channel-name" class="style-scope ytd-video-owner-renderer">
+        <a class="yt-simple-endpoint style-scope yt-formatted-string" spellcheck="false" href="/@matzelang">Matthias Lang</a>
+      </ytd-channel-name>
+    </ytd-video-owner-renderer>
+  </div>
+
+  <div id="movie_player" class="html5-video-player ytp-transparent ytp-modern-caption playing-mode">
+    <div class="ytp-time-display notranslate">
+      <span class="ytp-time-current">0:02</span>
+      <span class="ytp-time-separator"> / </span>
+      <span class="ytp-time-duration">10:00:00</span>
+    </div>
+    <button class="ytp-subtitles-button ytp-button" aria-keyshortcuts="c" data-priority="5" data-tooltip-title="자막 사용 불가" data-title-no-tooltip="자막 사용 불가" aria-pressed="false" aria-label="자막 사용 불가"></button>
+  </div>
+
+  <ytd-structured-description-content-renderer class="style-scope ytd-engagement-panel-section-list-renderer" engagement-panel="" panel-target-id="engagement-panel-structured-description"></ytd-structured-description-content-renderer>
+
+</ytd-watch-flexy>
+</body>
+</html>

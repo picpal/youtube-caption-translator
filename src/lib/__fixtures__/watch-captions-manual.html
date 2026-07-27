@@ -1,0 +1,78 @@
+<!-- CAPTURED, not hand-written.
+     Source : https://www.youtube.com/watch?v=MB5IX-np5fE (TED, "This could be
+              why you're depressed or anxious | Johann Hari")
+     How    : full document load (CDP Page.navigate), Chrome 150.0.7871.184,
+              dev profile .chrome-dev-profile, UI locale ko-KR, 2026-07-27.
+     Why    : the MANUAL-caption case. The live capture had 35 caption tracks —
+              34 human-authored ones (no `kind` property, vssId ".xx") plus one
+              auto-generated one (kind "asr", vssId "a.en"). It is the only
+              measured video where the manual/auto split is observable, and it
+              is the reason `captionAvailability` can report 'available' rather
+              than collapsing to 'auto-only'.
+     State  : FRESH microdata — meta[itemprop="identifier"] == MB5IX-np5fE, and
+              the inline script's videoDetails.videoId agrees, so the caption
+              sentinel trusts the script.
+     Reduced: only the nodes the parser reads were kept.
+              - The <script> element is COMPOSED, and this is the disclosure:
+                the real one is hundreds of kilobytes. Its shape is faithful
+                (assignment at character 0, the real trailing referrer-meta
+                epilogue after the closing `};`, the real `nonce=""`
+                attribute, and it lives in <body>). THREE of the 35
+                captionTracks are kept, verbatim: the first manual track
+                (".gu"), the manual English track (".en") and the auto English
+                track ("a.en"). Every dropped track has the same shape as one
+                of these three. The full measured vssId list was:
+                  .gu .el .nl .de .lv .ru .ro .mr .my .vi .bg .sr .ckb .sv .es
+                  .ar .en a.en .it .id .zh-CN .zh-TW .ku .hr .tr .fa .pt-BR
+                  .pt-PT .pl .fr .fi .ko .hu .iw .hi
+                `baseUrl` (a long signed URL) was stripped from each track and
+                155 translationLanguages entries were dropped; the parser
+                reads none of them.
+              - The microdata block was trimmed to the itemprops the parser
+                reads (the real one also carries description, regionsAllowed,
+                interactionStatistic, keywords, dates, thumbnails and genre).
+              - The description nodes are verbatim opening tags with their
+                children dropped; only their presence is ever read.
+              - The ytd-watch-flexy inline `style` attribute was dropped. -->
+<html lang="ko-KR">
+<head>
+<title>This could be why you're depressed or anxious | Johann Hari | TED - YouTube</title>
+<link rel="canonical" href="https://www.youtube.com/watch?v=MB5IX-np5fE">
+</head>
+<body>
+
+<div id="watch7-content" class="watch-main-col" itemscope="" itemid="https://www.youtube.com/watch?v=MB5IX-np5fE" itemtype="http://schema.org/VideoObject"><link itemprop="url" href="https://www.youtube.com/watch?v=MB5IX-np5fE"><meta itemprop="name" content="This could be why you're depressed or anxious | Johann Hari | TED"><meta itemprop="identifier" content="MB5IX-np5fE"><meta itemprop="duration" content="PT20M32S"><span itemprop="author" itemscope="" itemtype="http://schema.org/Person"><link itemprop="url" href="http://www.youtube.com/@TED"><link itemprop="name" content="TED"></span></div>
+
+<ytd-watch-flexy class="style-scope ytd-page-manager watch-root-element hide-skeleton" video-id="MB5IX-np5fE" reduced-top-margin="" view-transition-enabled="" is-dark-theme="" respect-aspect-ratio="" is-four-three-to-sixteen-nine-video_="" hidden-action-button-target-ids="[]" is-single-column="" full-bleed-player="" role="main" cinematic-light-theme="" watch-metadata-refresh="" has-metadata="" cinematics-active="" response-has-comments="">
+
+  <div id="title" class="style-scope ytd-watch-metadata">
+    <h1 class="style-scope ytd-watch-metadata">
+      <yt-formatted-string force-default-style="" class="style-scope ytd-watch-metadata" title="This could be why you're depressed or anxious | Johann Hari | TED">This could be why you're depressed or anxious | Johann Hari | TED</yt-formatted-string>
+    </h1>
+  </div>
+
+  <div id="owner" class="item style-scope ytd-watch-metadata">
+    <ytd-video-owner-renderer watch-metadata-refresh="" class="style-scope ytd-watch-metadata">
+      <ytd-channel-name id="channel-name" class="style-scope ytd-video-owner-renderer">
+        <a class="yt-simple-endpoint style-scope yt-formatted-string" spellcheck="false" href="/@TED">TED</a>
+      </ytd-channel-name>
+    </ytd-video-owner-renderer>
+  </div>
+
+  <div id="movie_player" class="html5-video-player ytp-transparent ytp-modern-caption ad-created playing-mode">
+    <div class="ytp-time-display notranslate">
+      <span class="ytp-time-current">0:02</span>
+      <span class="ytp-time-separator"> / </span>
+      <span class="ytp-time-duration">20:31</span>
+    </div>
+  </div>
+
+  <ytd-structured-description-content-renderer class="style-scope ytd-engagement-panel-section-list-renderer" engagement-panel="" panel-target-id="engagement-panel-structured-description">
+    <ytd-video-description-transcript-section-renderer class="style-scope ytd-structured-description-content-renderer"></ytd-video-description-transcript-section-renderer>
+  </ytd-structured-description-content-renderer>
+
+</ytd-watch-flexy>
+
+<script nonce="">var ytInitialPlayerResponse = {"responseContext":{},"playabilityStatus":{"status":"OK"},"captions":{"playerCaptionsTracklistRenderer":{"captionTracks":[{"name":{"simpleText":"구자라트어"},"vssId":".gu","languageCode":"gu","isTranslatable":true,"trackName":""},{"name":{"simpleText":"영어"},"vssId":".en","languageCode":"en","isTranslatable":true,"trackName":""},{"name":{"simpleText":"영어 (자동 생성됨)"},"vssId":"a.en","languageCode":"en","kind":"asr","isTranslatable":true,"trackName":""}],"audioTracks":[{"captionTrackIndices":[0,1,2]}],"translationLanguages":[],"defaultAudioTrackIndex":0}},"videoDetails":{"videoId":"MB5IX-np5fE","lengthSeconds":"1232"},"microformat":{}};var meta = document.createElement('meta'); meta.name = 'referrer'; meta.content = 'origin-when-cross-origin'; document.getElementsByTagName('head')[0].appendChild(meta);</script>
+</body>
+</html>

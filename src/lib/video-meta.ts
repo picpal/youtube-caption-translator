@@ -1,13 +1,13 @@
-import type { VideoMeta } from '~/types/video';
+import type { CaptionAvailability, VideoMeta } from '~/types/video';
 import { parseVideoId } from '~/lib/youtube';
 
 /**
  * What `extractVideoMeta` can determine from a `Document` alone.
  *
- * `captionAvailability` needs the caption signals (Task 6) and `fetchedAt` is
- * stamped by whoever caches the record (Task 8), so neither is produced here.
+ * `fetchedAt` is stamped by whoever caches the record (Task 8), so it is not
+ * produced here.
  */
-export type ExtractedVideoMeta = Omit<VideoMeta, 'captionAvailability' | 'fetchedAt'>;
+export type ExtractedVideoMeta = Omit<VideoMeta, 'fetchedAt'>;
 
 const YOUTUBE_TITLE_SUFFIX = ' - YouTube';
 
@@ -223,6 +223,219 @@ function resolveDurationSeconds(doc: Document, videoId: string): number | null {
   return parseClockDuration(doc.querySelector('.ytp-time-duration')?.textContent);
 }
 
+const PLAYER_RESPONSE_ASSIGNMENT = 'var ytInitialPlayerResponse = ';
+
+/**
+ * The `{...}` immediately following `startIndex`, found by counting braces
+ * while respecting JSON string literals and their escapes.
+ *
+ * This deliberately replaces the `/var ytInitialPlayerResponse = (\{[\s\S]*?\});/`
+ * regex that Task 1 measured. The regex stops at the first `};` in the script,
+ * which happens to be the right one today (the six real scripts measured on
+ * Chrome 150 ranged 34KB-671KB and contained exactly one `};` each) — but a
+ * player response embeds free text (`shortDescription`, caption track names),
+ * and the day one of those contains `};` the regex silently truncates and the
+ * caption data is lost. Counting braces cannot be fooled that way.
+ */
+function sliceBalancedObject(text: string, startIndex: number): string | null {
+  if (text[startIndex] !== '{') return null;
+
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+
+  for (let i = startIndex; i < text.length; i += 1) {
+    const char = text[i];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (char === '\\') escaped = true;
+      else if (char === '"') inString = false;
+      continue;
+    }
+    if (char === '"') inString = true;
+    else if (char === '{') depth += 1;
+    else if (char === '}') {
+      depth -= 1;
+      if (depth === 0) return text.slice(startIndex, i + 1);
+    }
+  }
+  // The object never closed — a truncated or mid-stream script.
+  return null;
+}
+
+/**
+ * `ytInitialPlayerResponse` recovered from the ISOLATED world, or `null`.
+ *
+ * Task 4 registered a single ISOLATED-world content script on the grounds that
+ * the manual-vs-auto caption split needs MAIN world. It does not: on a full
+ * document load YouTube server-renders the whole player response into an
+ * inline `<script>` in `<body>`, and a script element's *text* is ordinary DOM
+ * content. Task 1 verified the parsed result byte-identical in both worlds.
+ * Reading it is DOM reading, not code execution — nothing here evaluates the
+ * script, and nothing here should ever start.
+ *
+ * Everything that can go wrong (no script, no assignment, an unterminated
+ * object, malformed JSON, a non-object payload) yields `null` so the caller
+ * falls back to the DOM rather than taking the whole extraction down with it.
+ */
+function parseInlinePlayerResponse(doc: Document): Record<string, unknown> | null {
+  try {
+    for (const script of Array.from(doc.querySelectorAll('script'))) {
+      const text = script.textContent;
+      if (!text) continue;
+
+      const assignment = text.indexOf(PLAYER_RESPONSE_ASSIGNMENT);
+      if (assignment === -1) continue;
+
+      const json = sliceBalancedObject(text, assignment + PLAYER_RESPONSE_ASSIGNMENT.length);
+      if (!json) continue;
+
+      const parsed: unknown = JSON.parse(json);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        return parsed as Record<string, unknown>;
+      }
+    }
+  } catch {
+    // Malformed payload. Absent is honest; a throw here would lose the title,
+    // channel and duration too.
+  }
+  return null;
+}
+
+/**
+ * The caption verdict a player response supports, given that it has already
+ * been confirmed to describe the current video.
+ *
+ * Measured on Chrome 150 across three videos:
+ * - no captions at all -> the `captions` key is ABSENT from the response
+ *   entirely, not an empty object and not an empty array. Hence `in` rather
+ *   than a reach into `playerCaptionsTracklistRenderer.captionTracks.length`,
+ *   which would throw.
+ * - a human-authored track has NO `kind` property and a `vssId` beginning
+ *   `"."` (`.en`, `.gu`, …).
+ * - an auto-generated track has `kind === "asr"` and `vssId` beginning `"a."`.
+ *
+ * `kind` alone is enough, and is used alone: `t.kind !== 'asr'` is true both
+ * for a manual track (`undefined`) and for any future non-asr kind, which is
+ * the safe direction — a track YouTube does not label `asr` is not something
+ * this code may claim was machine-generated.
+ *
+ * An empty `captionTracks` array is treated as `'none'`: Task 1 measured
+ * exactly that shape on a live stream with no captions.
+ */
+function captionsFromPlayerResponse(response: Record<string, unknown>): CaptionAvailability {
+  if (!('captions' in response)) return 'none';
+
+  const captions = response.captions as
+    | { playerCaptionsTracklistRenderer?: { captionTracks?: unknown } }
+    | null
+    | undefined;
+  const tracks = captions?.playerCaptionsTracklistRenderer?.captionTracks;
+  if (!Array.isArray(tracks) || tracks.length === 0) return 'none';
+
+  const hasHumanAuthored = tracks.some(
+    (track) => (track as { kind?: unknown } | null)?.kind !== 'asr',
+  );
+  return hasHumanAuthored ? 'available' : 'auto-only';
+}
+
+// Present exactly when the video offers a transcript, i.e. when captions
+// exist. Locale-independent, unlike `data-tooltip-title`.
+const TRANSCRIPT_SECTION = 'ytd-video-description-transcript-section-renderer';
+// The transcript section's own parent. Its presence means the description
+// subtree has finished mounting, which is what makes the transcript section's
+// ABSENCE meaningful rather than merely early.
+const DESCRIPTION_CONTAINER = 'ytd-structured-description-content-renderer';
+
+/**
+ * Caption availability from DOM signals alone — everything the ISOLATED world
+ * can still say once the inline script is stale or absent, which is the
+ * situation after every in-page (SPA) navigation.
+ *
+ * Chosen signal: the presence of `ytd-video-description-transcript-section-renderer`.
+ * It is locale-independent and it was the only candidate that survived
+ * measurement on Chrome 150. The rejected ones, with the measurement that
+ * rejected each:
+ *
+ * - `aria-label` on the CC button reads "자막 사용 불가" ("subtitles
+ *   unavailable") on all three test videos, including the two that have
+ *   captions. It never discriminated at all.
+ * - `aria-pressed` follows the user's CC toggle. Clicking the button on the
+ *   manual-caption video flipped it `true` -> `false`, and the preference
+ *   persisted into a *different* captioned video on a later load, making that
+ *   video indistinguishable from the caption-free one. (Task 1 suspected this
+ *   but never ran the experiment and left the row open; the experiment now
+ *   confirms its suspicion.)
+ * - the `disabled` attribute was absent on all three videos — Task 1 had only
+ *   ever measured it on one. It does not discriminate either.
+ * - `data-tooltip-title` does discriminate once settled, but it is written in
+ *   the UI language, and it is also transiently wrong: on the manual-caption
+ *   video it read "자막 사용 불가" 947ms after load and "자막(c)" at 1372ms.
+ * - `class`, computed `display` and `offsetWidth` were identical regardless.
+ *
+ * The transcript section is itself lazily rendered, so its absence alone would
+ * be a false 'none' during the mount window. `DESCRIPTION_CONTAINER` closes
+ * that: sampled at 150ms resolution on all three videos, the container and the
+ * transcript section appeared in the SAME sample, so a mounted container with
+ * no transcript section inside it is a genuine absence.
+ *
+ * KNOWN TRANSIENT, measured and not fixed here. During an in-page navigation
+ * YouTube briefly keeps the PREVIOUS video's engagement panel mounted next to
+ * the new one. Sampled synchronously inside a `yt-page-data-updated` handler
+ * while arriving at a caption-free video from a captioned one, the document
+ * held TWO transcript sections and THREE description containers; 100ms later
+ * it held zero and two. So a caller that reads at `yt-page-data-updated` can
+ * still see the previous video's captions. Nothing in the document identifies
+ * which panel belongs to which video — unlike the duration case, there is no
+ * identifier to build a sentinel from — so this function cannot tell, and a
+ * caller must read after the DOM settles (Task 7) and must not cache a value
+ * read inside that window (Task 8). See task-6-report.md.
+ *
+ * What this cannot do: tell 'available' from 'auto-only'. That distinction
+ * exists nowhere in the DOM, so captions-that-exist collapse to 'unknown'.
+ */
+function captionsFromDom(doc: Document): CaptionAvailability {
+  if (doc.querySelector(TRANSCRIPT_SECTION)) return 'unknown';
+  if (doc.querySelector(DESCRIPTION_CONTAINER)) return 'none';
+  // Neither signal is present: the description subtree has not mounted, or
+  // this is a page shape with no description at all. Nothing was observed, so
+  // nothing is claimed — 'none' would assert an absence never measured.
+  return 'unknown';
+}
+
+/**
+ * Caption availability, using the inline player response when it can be proved
+ * to describe the current video and DOM signals when it cannot.
+ *
+ * The sentinel is the same shape as the duration one: the inline script is
+ * server-rendered for the initially loaded video and Task 1 measured that it
+ * is NEVER replaced on an in-page navigation (after navigating away it still
+ * parsed to the previous video's id, and after a transition into Shorts there
+ * was no such script at all). So its `videoDetails.videoId` is compared with
+ * the id resolved from the SPA-safe chain:
+ *
+ * - match    -> the script describes this video. Trust it completely,
+ *               including the manual/auto split: 'available' | 'auto-only' |
+ *               'none'.
+ * - mismatch
+ *   or absent-> stale. Fall back to the DOM, which can only answer has/hasn't:
+ *               'unknown' | 'none'.
+ *
+ * Note 'unknown' is therefore also the value when nothing could be determined
+ * at all, which is slightly wider than the "captions exist, kind undetermined"
+ * reading in src/types/video.ts. It is the only one of the four that asserts
+ * nothing false in that case; see task-6-report.md.
+ */
+export function resolveCaptionAvailability(doc: Document, videoId: string): CaptionAvailability {
+  const response = parseInlinePlayerResponse(doc);
+  const scriptVideoId = (response?.videoDetails as { videoId?: unknown } | undefined)?.videoId;
+
+  if (response && scriptVideoId === videoId) {
+    return captionsFromPlayerResponse(response);
+  }
+  return captionsFromDom(doc);
+}
+
 /**
  * Extracts everything about a video that can be read from a `Document`.
  *
@@ -270,5 +483,6 @@ export function extractVideoMeta(doc: Document, url: string): ExtractedVideoMeta
     // been issued against it by this project. Consumers should tolerate a 404.
     thumbnailUrl: `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
     durationSeconds: resolveDurationSeconds(doc, videoId),
+    captionAvailability: resolveCaptionAvailability(doc, videoId),
   };
 }
