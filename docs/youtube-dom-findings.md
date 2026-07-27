@@ -42,7 +42,7 @@ Verified by clicking a related-video anchor on the fixture (`/watch?v=zjkBMFhNj_
 |---|---|---|
 | `location.href` | ✅ yes | `https://www.youtube.com/watch?v=7xTGNNLPyMI` |
 | `document.title` | ✅ yes | `Deep Dive into LLMs like ChatGPT - YouTube` |
-| `link[rel=canonical]` | ✅ yes | `https://www.youtube.com/watch?v=7xTGNNLPyMI` |
+| `link[rel=canonical]` | ⚠️ **contested — do not rely on it** | Task 1's 25 ms poller recorded it flipping to `…7xTGNNLPyMI` at t≈1387.6 ms. **Task 5 measured the opposite**, twice: after cross-channel transitions to `qYNweeDHiyU` and to `RQWpF2Gb-gU` it was still `https://www.youtube.com/watch?v=zjkBMFhNj_g` at a moment when `ytd-watch-flexy[video-id]`, `#title h1` and `.ytp-time-duration` had all already updated. See "Contested claims" below. |
 | `ytd-watch-flexy[video-id]` | ✅ yes | `7xTGNNLPyMI` |
 | DOM `#title h1` | ✅ yes | `Deep Dive into LLMs like ChatGPT` |
 | DOM `#owner #channel-name a` | ⚠️ **confounded — cannot tell** | `Andrej Karpathy` — but **both videos are on the same channel**, so this reading is equally consistent with fresh and with stale. See the caveat in [Channel](#channel). |
@@ -65,10 +65,12 @@ This means **`og:*`, JSON-LD and `ytInitialPlayerResponse` are only trustworthy 
 |---|---|---|---|---|
 | 1 | `new URL(location.href).searchParams.get('v')` | `zjkBMFhNj_g` | **both** | ⚠️ ✅ derived |
 | 2 | `document.querySelector('ytd-watch-flexy')?.getAttribute('video-id')` | `"zjkBMFhNj_g"` | **both** | ✅ |
-| 3 | `document.querySelector('link[rel="canonical"]')?.href` | `https://www.youtube.com/watch?v=zjkBMFhNj_g` | **both** | ✅ |
+| 3 | `document.querySelector('link[rel="canonical"]')?.href` | `https://www.youtube.com/watch?v=zjkBMFhNj_g` | **both** | ⚠️ **full load only** — see the contested-claims entry |
 | 4 | `window.ytInitialPlayerResponse.videoDetails.videoId` | `"zjkBMFhNj_g"` | MAIN only | ❌ stale |
 
-**Recommended chain:** URL param → `ytd-watch-flexy[video-id]` → `link[rel=canonical]`.
+**Recommended chain:** URL param → `ytd-watch-flexy[video-id]` → `link[rel=canonical]` **(full-load-only last resort)**.
+
+> The order is unchanged, but row 3's role has narrowed. `link[rel=canonical]` earns its place because it is the documented way to recover the `/watch?v=<id>` form from the `/live/<id>` and `/@handle/live` URL shapes — and those are always full loads, where it is correct. It must **never** be read as evidence of freshness after an in-page navigation. Because rows 1 and 2 were both measured fresh post-SPA, row 3 is only ever reached when they fail.
 
 > ⚠️ Row 1 is marked "derived" because `location.href` itself was measured fresh in both worlds after an SPA transition, but the `new URL(...).searchParams.get('v')` derivation on top of it was **never actually executed** during this research. The underlying reading is solid; the one-line extraction is untested. See item 6 of the inference table.
 
@@ -443,6 +445,8 @@ The `.ytp-time-duration` VOD cell reads `"1:13"` because that sample was taken d
 
 > ⚠️ **All three live pages were loaded with `Page.navigate` — i.e. full loads. No VOD↔LIVE SPA transition was ever performed.** Every "SPA" property below is therefore unmeasured for live detection specifically.
 
+> ⚠️ **Superseded by Task 5 — prefer the plain class checks in "Contested claims" below.** `.ytp-time-display.ytp-live` and the `ytp-live-badge-is-livehead` class / `disabled` attribute discriminate just as well, need no `getComputedStyle`, and `ytp-live` was measured clearing correctly across a live→VOD in-page navigation. Task 5 implements those, not the visibility check below.
+
 1. **ISOLATED reachability measured; SPA behaviour NOT measured** — `getComputedStyle(document.querySelector('.ytp-live-badge')).display !== 'none'` (or `offsetWidth > 0`). The ISOLATED read was verified (identical `"inline-block"` / `51` in both worlds). Whether the badge's visibility updates correctly when navigating VOD→live or live→VOD in-page is **unknown**. It is a computed style on a live player element, so it *plausibly* updates — but that is inference. **This is the highest-risk recommendation in this document**, because it is ranked first and Task 5 is likely to implement it verbatim. Verify it across a real SPA transition first.
 2. ISOLATED, full-load only: `meta[itemprop="duration"] === null` on an otherwise-valid watch page. (Known stale after any SPA transition — the `<head>` staleness result applies.)
 3. MAIN, measured fresh after SPA transitions for other fields: `#movie_player.getPlayerResponse().videoDetails.isLive === true`. The player-response object was verified fresh post-SPA; the `isLive` field specifically was only read on full loads.
@@ -454,7 +458,7 @@ The `.ytp-time-duration` VOD cell reads `"1:13"` because that sample was taken d
 - **The equivalence of `Page.createIsolatedWorld` and a real content-script ISOLATED world.** This is the single assumption the whole document rests on, and it was **not verified** — doing so requires registering a content script, which requires reloading the extension, which the task forbade. Everything labelled "ISOLATED-reachable" should be confirmed once against a trivial real content script before Tasks 5–8 build on it.
 - **A duration source that is simultaneously ISOLATED-reachable, SPA-safe, and ad-immune.** `video.duration` and `.ytp-time-duration` report the *pre-roll ad's* length while an ad plays — observed `.ytp-time-duration === "0:30"` and `"1:13"` at moments when an ad was running. **I did not measure the true runtime of those pages**, so the size of the error is unquantified. `meta[itemprop="duration"]` is ad-immune but stale after an SPA transition. I did not find or test a workaround (e.g. gating on `#movie_player` losing the `ad-showing` class, reading `.ytp-progress-bar[aria-valuemax]`, or reading `lengthSeconds` off `getPlayerResponse()`); Task 5/6 will need to solve this. I also did not verify how `.ytp-time-duration` formats videos over 24 h beyond seeing `"137:04:50:27"` on a live DVR window.
 - **Channel extraction across a transition between two *different* channels.** The one SPA transition measured (`zjkBMFhNj_g` → `7xTGNNLPyMI`) stayed on the same channel, so the post-transition `"Andrej Karpathy"` reading cannot distinguish fresh from stale. The owner `href` and the avatar `src` were not read after the transition at all.
-- **Whether live detection survives an SPA transition.** All three live URL shapes were loaded with `Page.navigate` (full loads). **No VOD↔LIVE in-page transition was performed.** The `.ytp-live-badge` visibility check — the document's first-ranked live recommendation — has verified ISOLATED reachability but entirely unverified SPA behaviour.
+- **Whether live detection survives an SPA transition.** All three live URL shapes were loaded with `Page.navigate` (full loads). **No VOD↔LIVE in-page transition was performed.** The `.ytp-live-badge` visibility check — the document's first-ranked live recommendation — has verified ISOLATED reachability but entirely unverified SPA behaviour. **Partly resolved by Task 5:** it performed a live→VOD in-page navigation and measured `.ytp-time-display`'s `ytp-live` class clearing correctly. The **VOD→live** direction is still unmeasured — no live video appeared in any related rail sampled.
 - **The reverse caption direction (captions → no captions) across an SPA transition.** Only no-captions → captions was tested. Whether `data-tooltip-title` reverts, and whether `ytd-video-description-transcript-section-renderer` is genuinely unmounted rather than left over from the previous video, is unknown. A stale leftover would misreport a no-caption video as captioned, silently.
 - **Whether `aria-pressed` on the CC button tracks caption *availability* or the user's caption *preference*.** Across the three samples taken it discriminated perfectly (`true`/`true`/`false`). I labelled it unusable on the conventional reading of `aria-pressed` on a toggle button, but never ran the settling experiment (toggle CC off on a captioned video, re-read).
 - **Whether the `attributeFilter: ['video-id']` MutationObserver reliably fires at all.** Its measured callback lagged 14 ms *behind* a value that was already observable, which suggests `ytd-watch-flexy` is replaced rather than mutated — in which case some transitions would produce no callback. Not investigated.
@@ -479,7 +483,7 @@ Everything in this document was produced from real CDP measurements against a re
 |---|---|---|---|---|
 | 1 | "How world-reachability was determined" | `Page.createIsolatedWorld` ≡ a content script's ISOLATED world | **Inference. The premise the entire document rests on.** | Confirm once with a trivial real content script (Task 4) |
 | 2 | Channel, rows 1 / 1b / 1c + avatar | Channel name, `/@handle`, avatar survive an SPA transition | **Confounded measurement** (same channel both sides) for row 1; **not measured at all** for 1b/1c/avatar | Re-test across two different channels |
-| 3 | Live detection #1 | `.ytp-live-badge` visibility is SPA-safe | **Not measured.** ISOLATED reachability *was* measured; SPA behaviour was not | Perform a VOD↔LIVE in-page transition |
+| 3 | Live detection #1 | `.ytp-live-badge` visibility is SPA-safe | **Not measured.** ISOLATED reachability *was* measured; SPA behaviour was not. **Task 5 superseded this with plain class checks** and measured `ytp-live` clearing across live→VOD | VOD→live in-page transition still untested |
 | 4 | Caption attribute table, `disabled` row | No `disabled` attribute on the CC button | **Measured on the fixture only** (n=1); other two cells now marked *not measured* | Measure on the no-caption video if it matters |
 | 5 | Caption attribute table, `aria-pressed` row | Reflects user CC on/off preference, not availability | **Interpretation.** Raw data (`true`/`true`/`false`) actually discriminates perfectly | Toggle CC off on a captioned video and re-read |
 | 6 | Video ID, row 1 | `new URL(location.href).searchParams.get('v')` | `location.href` measured in both worlds; the `searchParams` derivation was **never executed** | Trivial — but it is a derivation, not a reading |
@@ -490,4 +494,63 @@ Everything in this document was produced from real CDP measurements against a re
 | 11 | Duration, row F | `getPlayerResponse().videoDetails.lengthSeconds` is fresh + ad-immune post-SPA | **Inference** from other fields of the same object being fresh; this field was never read | Most promising untested candidate |
 | 12 | MutationObserver backup | `attributeFilter: ['video-id']` observer is a reliable backup | **Contradicted by its own timing data** — likely misses replaced elements | Observe `childList` too |
 
-**Measured, despite looking like they might not be** (listed so nobody re-checks them unnecessarily): `link[rel=canonical]` freshness after an SPA transition; the `h1.ytd-watch-metadata yt-formatted-string` title selector; `ytd-shorts` absence on a watch page (`false`, both worlds, measured on the baseline watch page alongside the Shorts comparison).
+**Measured, despite looking like they might not be** (listed so nobody re-checks them unnecessarily): the `h1.ytd-watch-metadata yt-formatted-string` title selector; `ytd-shorts` absence on a watch page (`false`, both worlds, measured on the baseline watch page alongside the Shorts comparison).
+
+> `link[rel=canonical]` freshness after an SPA transition **was removed from this list by Task 5.** It is now contested (see below), and leaving it here would tell downstream tasks not to re-check it — the opposite of what is wanted.
+
+---
+
+## Contested claims — two runs disagree
+
+### `link[rel=canonical]` freshness after an SPA transition
+
+| | Task 1 | Task 5 |
+|---|---|---|
+| Reading | flipped to the new id at t≈1387.6 ms | still the **old** id, twice |
+| Transitions | `zjkBMFhNj_g` → `7xTGNNLPyMI` (same channel) | `zjkBMFhNj_g` → `qYNweeDHiyU`, and → `RQWpF2Gb-gU` (both cross-channel) |
+| Evidence | one line from a 25 ms poller; the read expression was not preserved | a persisted DOM snapshot, `src/lib/__fixtures__/watch-spa-stale-head.html` line 22 |
+
+**Timing does not reconcile them.** Task 1's own timeline has canonical flipping at t≈1387.6 ms — *before* `yt-page-data-updated` (1460.9) and *before* the flexy mutation (1474.8). So in that run canonical updated **earlier** than the rest of the DOM. Task 5's snapshot has `ytd-watch-flexy[video-id]`, `#title h1`, `#owner #channel-name a` and `.ytp-time-duration` all already fresh **while canonical was still stale** — which is impossible under Task 1's ordering. The runs disagree about ordering, not about sampling instant.
+
+**Corroboration for the stale reading:** Task 1's own end-of-run dump records `og:url` as STALE. `og:url` and `link[rel=canonical]` are the same server-rendered pair; a client-side rewrite that touches one would normally touch both.
+
+**Resolution:** treat canonical as full-load-only. This costs nothing, because the two higher-priority id sources were both measured fresh.
+
+**Open questions, none investigated:**
+
+- Was the Task 1 poller's read expression buggy (e.g. reading `.href` off a re-resolved base, or reading a different element)? It was not preserved, so this cannot be checked after the fact.
+- Was a **second** `<link rel="canonical">` node appended rather than the first one mutated? `document.querySelector` returns the first match, so a poller that captured "a" canonical could see the new one while an extractor keeps reading the stale one. This would make **both** measurements correct and is the most economical explanation.
+- Task 5's captured `ytd-watch-flexy` carries `view-transition-enabled=""`. Does that indicate a different navigation code path or A/B bucket than Task 1's run?
+
+### Where the "stale `<head>` block" actually lives
+
+Not a contested claim, but a correction that matters for Task 6's caption-signal hunt: this document repeatedly calls the stale microdata "the `<head>` block". `meta[itemprop="identifier"]`, `meta[itemprop="duration"]`, `meta[itemprop="name"]` and the `[itemprop="author"]` span are **not in `<head>`** — they are children of `div#watch7-content[itemtype="http://schema.org/VideoObject"]` in the **`<body>`**:
+
+```
+parentChain of meta[itemprop="identifier"]:
+  ["META", "DIV#watch7-content[itemtype=http://schema.org/VideoObject]", "BODY"]
+document.head.querySelector('meta[itemprop="identifier"]')  ->  null
+```
+
+The staleness behaviour this document describes is unchanged and was re-confirmed; only the location is different. The `og:*` and `meta[name=title]` tags *are* genuinely in `<head>`.
+
+### `video.duration` on a live stream is finite, not `Infinity`
+
+Recorded here because it is a natural assumption and it is wrong for YouTube. Measured on `https://www.youtube.com/@SkyNews/live` at `readyState: 4`:
+
+```
+duration: 4760   isInfinity: false   seekable.end(): 4760
+clock: "1:19:20"   meta[itemprop=duration]: null   .ytp-live-badge display: inline-block
+```
+
+`video.duration` tracks `seekable.end()` — the DVR window — and grows. A second sample read `3600`. Any live handling that keys on `Infinity` will never fire.
+
+Two signals that **do** discriminate, both plain attribute checks (no `getComputedStyle`, unlike the `.ytp-live-badge` visibility candidate this document ranks first):
+
+| Signal | VOD | LIVE |
+|---|---|---|
+| `.ytp-time-display` class list | `ytp-time-display notranslate` | `ytp-time-display notranslate `**`ytp-live`** |
+| `.ytp-live-badge` | `ytp-live-badge ytp-button` | `… `**`ytp-live-badge-is-livehead`**, plus a `disabled` attribute |
+| fresh microdata block carrying no `meta[itemprop="duration"]` | has one | **absent** |
+
+`ytp-live` was measured **clearing correctly across a live → VOD in-page navigation** (the direction that matters — a stale `ytp-live` would suppress a real VOD duration). The **VOD → live** direction is still untested: no live video appeared in any related rail sampled. Note also that `ytp-live` **drops while a pre-roll ad plays on a live stream**, so it must be combined with the ad check and the microdata signal.
