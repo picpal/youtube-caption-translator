@@ -1,20 +1,43 @@
 import { useEffect, useState } from 'react';
 import { Button } from '~/components/Button';
 import { StatusBadge } from '~/components/StatusBadge';
+import { UnsupportedBanner } from '~/components/UnsupportedBanner';
 import { VideoCard } from '~/components/VideoCard';
 import { useApiKey } from '~/features/api-key/useApiKey';
 import { useCurrentVideo } from '~/features/video/useCurrentVideo';
-import { isYoutubeWatchUrl } from '~/lib/youtube';
+import { classifyYoutubeUrl, type YoutubePageKind } from '~/lib/youtube';
 
-type TabKind = 'checking' | 'youtube' | 'other';
+// 'checking' is this component's own pre-first-query state, layered on top
+// of the 4-way `YoutubePageKind` — not one of its members, since
+// `classifyYoutubeUrl` always has an answer once given a url (even
+// `undefined` resolves to `'other'`); there is simply no url to classify yet
+// on the very first render.
+type PageKind = 'checking' | YoutubePageKind;
 
+// This is the single source of truth for the panel's top-level branch
+// (watch / shorts / live / other-or-non-YouTube). It is intentionally NOT
+// `useCurrentVideo().kind`, even though that hook computes the same
+// `classifyYoutubeUrl` value internally: that hook's `kind` only becomes
+// meaningful once its own tab-identity effect has run, and gating the
+// top-level branch on it would mean this component's shorts/live detection
+// depends on a second component's internal state happening to have settled
+// first (the exact "two sources of truth fighting" risk Task 8 flagged).
+// This effect already does its own independent `chrome.tabs.query` +
+// `onActivated`/`onUpdated` detection (unchanged from the pre-Task-10 M0
+// logic, just upgraded from the boolean `isYoutubeWatchUrl` to the 4-way
+// `classifyYoutubeUrl`), so the branch below never needs to wait on a
+// content-script report existing.
+//
+// `useCurrentVideo()` is still used, but only inside `ReadyBody`, for the
+// one thing this effect genuinely cannot know: whether a *watch* page's
+// extraction pipeline actually produced a video (the `no-metadata` reason).
 export function App() {
   const { status } = useApiKey();
-  const [tabKind, setTabKind] = useState<TabKind>('checking');
+  const [pageKind, setPageKind] = useState<PageKind>('checking');
 
   const loading = status === null;
   const present = status?.present === true;
-  const ready = present && tabKind === 'youtube';
+  const ready = present && pageKind === 'watch';
 
   // The panel is long-lived (unlike the popup this logic was originally
   // written for, which was destroyed and recreated on every open) — it
@@ -38,7 +61,7 @@ export function App() {
     const detect = () => {
       chrome.tabs.query({ active: true, currentWindow: true }).then(([tab]) => {
         if (cancelled) return;
-        setTabKind(isYoutubeWatchUrl(tab?.url) ? 'youtube' : 'other');
+        setPageKind(classifyYoutubeUrl(tab?.url));
       });
     };
 
@@ -104,7 +127,17 @@ export function App() {
         </div>
       ) : (
         <div className="flex-1 overflow-auto p-6">
-          {loading ? <LoadingBody /> : present ? <NonYoutubeBody /> : <OnboardingBody />}
+          {loading ? (
+            <LoadingBody />
+          ) : !present ? (
+            <OnboardingBody />
+          ) : pageKind === 'shorts' ? (
+            <UnsupportedBanner reason="shorts" />
+          ) : pageKind === 'live' ? (
+            <UnsupportedBanner reason="live" />
+          ) : (
+            <NonYoutubeBody />
+          )}
         </div>
       )}
     </div>
@@ -141,6 +174,21 @@ function NonYoutubeBody() {
 // footer remain static — M2's concern, not this task's.
 function ReadyBody() {
   const { video, loading } = useCurrentVideo();
+
+  // `no-metadata`: the pipeline settled for this watch-page tab (`loading`
+  // is false — see useCurrentVideo's doc comment on what that requires) and
+  // still produced no video record. This is the one UnsupportedReason that
+  // legitimately comes from the extraction pipeline rather than the URL
+  // alone — App's top-level branch already guarantees `pageKind === 'watch'`
+  // by the time ReadyBody is mounted at all, so there is nothing further to
+  // check here beyond "did it settle, and is it still empty".
+  if (!loading && video === null) {
+    return (
+      <div className="p-6">
+        <UnsupportedBanner reason="no-metadata" onRetry={retryActiveTab} />
+      </div>
+    );
+  }
 
   return (
     <>
@@ -197,6 +245,20 @@ function ReadyBody() {
       </div>
     </>
   );
+}
+
+// The `no-metadata` retry affordance: forces a full page reload of the
+// active tab. Chosen over re-pulling GET_CURRENT_VIDEO because a re-pull
+// would only return the background's already-cached (empty) state — nothing
+// re-triggers the content script's extraction without a fresh navigation.
+// Requires no extra permission: `chrome.tabs.reload`/`.query` (unlike
+// reading `tab.url` on an arbitrary tab) do not need the "tabs" permission,
+// and this tab is already known to match this extension's youtube.com host
+// permission (pageKind is only 'watch' for a youtube.com tab).
+function retryActiveTab(): void {
+  chrome.tabs.query({ active: true, currentWindow: true }).then(([tab]) => {
+    if (tab?.id !== undefined) chrome.tabs.reload(tab.id);
+  });
 }
 
 function OnboardingBody() {

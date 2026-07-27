@@ -65,3 +65,27 @@ export interface VideoMeta {
   // ISO 8601 timestamp of when this metadata was extracted/cached.
   fetchedAt: string;
 }
+
+/**
+ * Why the panel is showing `UnsupportedBanner` instead of a video card, for
+ * a tab that is otherwise eligible (API key present).
+ *
+ * - `'shorts'`      — out of scope by design (PRD §7.1), not a failure. The
+ *   tool is for talks/lectures; reliably detected from the URL alone via
+ *   `classifyYoutubeUrl` (`/shorts/<id>`).
+ * - `'live'`        — out of scope by design (PRD §7.1), not a failure.
+ *   Reliably detected from the URL alone ONLY for the unambiguous
+ *   `/live/<id>` and `/@handle/live` shapes. A live stream opened on a plain
+ *   `/watch?v=` URL classifies as `'watch'` instead (Task 1 measured no
+ *   URL-level difference from a VOD there) — that case is NOT routed to this
+ *   reason; it falls through to the ready video card with a null duration.
+ * - `'restricted'`  — a genuine failure (age/region-restricted video).
+ *   Defined here to document intent for M2, but deliberately UNPOPULATED in
+ *   M1: no ISOLATED-world signal for restriction has been measured (Task 1
+ *   did not characterize this case), so nothing in this milestone sets this
+ *   reason. May offer a retry once implemented.
+ * - `'no-metadata'` — a genuine failure: a watch-page tab where the
+ *   extraction pipeline settled (see `CurrentVideoState.status`) and still
+ *   produced no video record. May offer a retry.
+ */
+export type UnsupportedReason = 'shorts' | 'live' | 'restricted' | 'no-metadata';
