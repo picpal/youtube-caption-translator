@@ -44,6 +44,7 @@ export function Button({
 }: Props) {
   return (
     <button
+      type="button"
       {...rest}
       className={`${base} ${variants[variant]} ${sizes[size]} ${className}`}
     />

@@ -43,6 +43,8 @@ export const Input = forwardRef<HTMLInputElement, Props>(function Input(
           <button
             type="button"
             onClick={() => setRevealed((v) => !v)}
+            aria-label={revealed ? 'API 키 숨김' : 'API 키 표시'}
+            aria-pressed={revealed}
             className="absolute right-1.5 top-1/2 -translate-y-1/2 rounded px-2 py-1 text-[11px] font-medium text-[#6c6f74] hover:bg-[#f2f2f3] dark:text-[#9a9a9a] dark:hover:bg-[#1e1e1e]"
           >
             {revealed ? '숨김' : '표시'}
