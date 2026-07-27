@@ -70,15 +70,25 @@ export function App() {
     const handleActivated = () => detect();
 
     // onUpdated fires for every tab, not just the active one — guard on
-    // `tab.active` so background-tab churn doesn't trigger a re-query, and
-    // on `changeInfo.url` being present so an in-place navigation's several
-    // onUpdated events (loading/complete/title/etc.) only cause one.
+    // `tab.active` so background-tab churn doesn't trigger a re-query. Then
+    // re-detect only on a real navigation lifecycle signal: a `url` change
+    // (SPA video switches, full reloads) OR a `status` change. Gating on
+    // `url` alone would miss a critical case — when the active tab navigates
+    // in place to a host outside this extension's permissions (e.g. the user
+    // types a non-YouTube address into the tab bar), Chrome REDACTS
+    // `changeInfo.url` to `undefined`, yet still delivers the `status`
+    // lifecycle (loading/complete). Without the `status` fallback we'd never
+    // re-run detection for "the user left YouTube," leaving a stale video
+    // card for a page we're no longer on. Pure title/favicon/audible churn
+    // carries neither `url` nor `status`, so it's still filtered out — one
+    // detect per meaningful event, as before.
     const handleUpdated = (
       _tabId: number,
       changeInfo: chrome.tabs.OnUpdatedInfo,
       tab: chrome.tabs.Tab,
     ) => {
-      if (!tab.active || changeInfo.url === undefined) return;
+      if (!tab.active) return;
+      if (changeInfo.url === undefined && changeInfo.status === undefined) return;
       detect();
     };
 
