@@ -10,7 +10,7 @@
 Every expression was evaluated **twice against the same page target in the same instant**:
 
 1. In the page's **MAIN world** — CDP `Runtime.evaluate` against the target's default execution context.
-2. In a real **ISOLATED world** — CDP `Page.createIsolatedWorld` (`grantUniveralAccess: false`) on the main frame, then `Runtime.evaluate` with that `contextId`. This is the same isolation mechanism a content script gets: it shares the DOM but has its own JS global.
+2. In a real **ISOLATED world** — CDP `Page.createIsolatedWorld` (`grantUniveralAccess: false`) on the main frame, then `Runtime.evaluate` with that `contextId`. It shares the DOM but has its own JS global.
 
 The isolation was verified positively, not assumed:
 
@@ -23,7 +23,14 @@ The isolation was verified positively, not assumed:
   ISO :  "undefined"
 ```
 
-So anywhere this document says **ISOLATED-reachable**, it means the value was actually read from that isolated context, not inferred.
+> ⚠️ **Load-bearing assumption — not verified.** `Page.createIsolatedWorld` is *believed* to be the same isolation primitive Chromium gives a content script, which is why it was used as a proxy. **This was never cross-checked by registering an actual content script**, because that requires reloading the extension, which the task forbade. Every "ISOLATED-reachable" claim in this document rests on that equivalence. Task 4 should confirm it once with a trivial real content script before the rest of this document is trusted.
+
+**What the "ISOLATED-reachable" label does and does not guarantee:**
+
+- ✅ **Guaranteed measured.** The *world* column — whether a given expression returned a value from the isolated context or `undefined`. Every such value was actually read from that context, in the same instant as the MAIN read.
+- ⚠️ **Not uniformly measured.** The *SPA-safe* column. Some entries were observed surviving a real in-page transition; others are inferred from "it is a live DOM read, so it should update." Entries in the second category are called out inline and collected in the "Claims that rest on inference" table at the end of this document.
+
+Before relying on any SPA-safe ✅, check that table.
 
 ---
 
@@ -80,28 +87,47 @@ Note: `meta[itemprop="videoId"]` and `meta[itemprop="channelId"]` do **not** exi
 
 | Priority | Expression | Observed | World | SPA-safe |
 |---|---|---|---|---|
-| 1 | `document.querySelector('#owner #channel-name a')?.textContent?.trim()` | `"Andrej Karpathy"` | **both** | ✅ |
-| 1b | `document.querySelector('#owner #channel-name a')?.getAttribute('href')` | `"/@AndrejKarpathy"` | **both** | ✅ |
-| 1c | `document.querySelector('ytd-video-owner-renderer a.yt-simple-endpoint')?.getAttribute('href')` | `"/@AndrejKarpathy"` | **both** | ✅ |
+| 1 | `document.querySelector('#owner #channel-name a')?.textContent?.trim()` | `"Andrej Karpathy"` | **both** | ⚠️ see note |
+| 1b | `document.querySelector('#owner #channel-name a')?.getAttribute('href')` | `"/@AndrejKarpathy"` | **both** | ⚠️ **not measured after SPA** |
+| 1c | `document.querySelector('ytd-video-owner-renderer a.yt-simple-endpoint')?.getAttribute('href')` | `"/@AndrejKarpathy"` | **both** | ⚠️ **not measured after SPA** |
 | 2 | `document.querySelector('[itemprop="author"] [itemprop="name"]')?.getAttribute('content')` | `"Andrej Karpathy"` | **both** | ❌ stale after SPA |
 | 3 | `ytInitialPlayerResponse.videoDetails.author` / `.channelId` | `"Andrej Karpathy"` / `"UCXUPKJO5MZQN11PqgIvyuvQ"` | MAIN only | ❌ stale after SPA |
 
+> ⚠️ **The channel SPA-safety measurement is confounded — do not treat it as proven.** The only post-SPA channel reading came from the transition `zjkBMFhNj_g` → `7xTGNNLPyMI`, and **both videos belong to the same channel (Andrej Karpathy)**. The post-transition value `"Andrej Karpathy"` is therefore consistent with the element being fresh *and* with it being stale — the measurement cannot distinguish the two. Row 1 is marked ⚠️ for that reason.
+>
+> Rows 1b and 1c (the `/@handle` href) and the avatar below were **not read at all after the SPA transition** — only on a full load. Their SPA behaviour is entirely unmeasured.
+>
+> Task 5/6 should re-verify channel extraction across a transition between **two different channels** before relying on any of these.
+
 There is **no ISOLATED-reachable source for the raw `channelId` (`UC…`) that survives an SPA transition.** The handle (`/@AndrejKarpathy`) is available; the `UC…` id is only in the MAIN-world player response / the stale `<head>`.
 
-Channel avatar (bonus, both worlds, SPA-safe):
+Channel avatar (bonus, both worlds; **SPA behaviour not measured** — see the note above):
 `document.querySelector('ytd-video-owner-renderer img')?.src` → `https://yt3.ggpht.com/ytc/AIdro_nDvyq2NoPL626bk1IbxQ94SfQsD-B0qgZchghtQNkLWoEz=s48-c-k-c0x00ffffff-no-rj`
 
 ### Duration
 
-| Priority | Expression | Observed | World | SPA-safe | Notes |
-|---|---|---|---|---|---|
-| 1 | `document.querySelector('video')?.duration` | `3587.701` | **both** | ✅ | **Reads the AD's duration while a pre-roll is playing.** Measured `"0:30"` on a page whose real length is ~52 min. |
-| 2 | `document.querySelector('.ytp-time-duration')?.textContent` | `"59:47"` | **both** | ✅ | Same ad caveat — observed `"1:13"` and `"0:30"` mid-ad. Also formats as `H:MM:SS`/`D:HH:MM:SS`. |
-| 3 | `meta[itemprop="duration"]` (ISO-8601) | `"PT59M48S"` | **both** | ❌ stale after SPA | Correct and ad-immune on a full load. |
-| 4 | `ytInitialPlayerResponse.videoDetails.lengthSeconds` | `"3588"` (string) | MAIN only | ❌ stale after SPA | |
-| 5 | `#movie_player.getDuration()` | `3587.701` | MAIN only | ✅ | Same ad caveat as `video.duration`. |
+**This table is ordered by freshness, NOT by preference — do not read it as a fallback chain.** The two sources that survive an SPA transition are also the two that return the *wrong number* during a pre-roll ad. See the recommended chain below the table.
 
-**Duration is the least reliable field.** No source is simultaneously ISOLATED-reachable, SPA-safe, and ad-immune. See "What I could not determine".
+| # | Expression | Observed | World | SPA-safe | Ad-immune | Notes |
+|---|---|---|---|---|---|---|
+| A | `document.querySelector('video')?.duration` | `3587.701` | **both** | ✅ | ❌ **no** | Returns the **ad's** duration while a pre-roll plays. |
+| B | `document.querySelector('.ytp-time-duration')?.textContent` | `"59:47"` (no ad) | **both** | ✅ | ❌ **no** | Same ad caveat. Formats as `M:SS` / `H:MM:SS` / `D:HH:MM:SS`. |
+| C | `meta[itemprop="duration"]` (ISO-8601) | `"PT59M48S"` | **both** | ❌ stale after SPA | ✅ yes | Correct on a full load. |
+| D | `ytInitialPlayerResponse.videoDetails.lengthSeconds` | `"3588"` (string) | MAIN only | ❌ stale after SPA | ✅ yes | |
+| E | `#movie_player.getDuration()` | `3587.701` | MAIN only | ✅ | ❌ **no** | Same ad caveat as A. |
+| F | `#movie_player.getPlayerResponse().videoDetails.lengthSeconds` | not measured | MAIN only | ✅ (inferred) | ✅ (inferred) | **Untested.** The player-response object *was* measured fresh after an SPA transition for other fields, so this is the most promising ad-immune + SPA-safe candidate — but `lengthSeconds` specifically was never read from it. |
+
+**Recommended chain (with the caveat that no option is fully satisfactory):**
+
+1. On a **full load**: `meta[itemprop="duration"]` (C) — ad-immune and ISOLATED-reachable.
+2. After an **SPA transition**, ISOLATED-only: `.ytp-time-duration` (B), but **only once no ad is playing**. Gate it on the ad state (`#movie_player` carries an `ad-showing` class during playback — *this gating was not tested*, see gaps).
+3. If MAIN world is available anyway (e.g. for captions): try (F) first and fall back to (C)/(B).
+
+**Duration is the least reliable field in this document.** No measured source is simultaneously ISOLATED-reachable, SPA-safe, and ad-immune. See "What I could not determine".
+
+**On the ad caveat, stated precisely:** `.ytp-time-duration` was observed reading `"0:30"` and `"1:13"` at moments when a pre-roll ad was playing, on pages whose real durations are certainly much longer. **I did not measure the true runtime of those pages**, so I cannot quantify the error — only that the value read was an ad length, not a video length. (An earlier draft of this document stated one of those pages was "~52 min"; that figure had no measurement behind it and has been removed.)
+
+**Fixture baseline discrepancy, explained:** this section reports `.ytp-time-duration === "59:47"` for the fixture, while the Shorts/live comparison table further down reports `"1:13"` for the *same* fixture. Both are genuine readings: `"59:47"` was taken with no ad playing (the true value, matching `PT59M48S`), `"1:13"` was taken mid-pre-roll. **`"1:13"` in that table is an ad artefact and must not be read as a VOD baseline.**
 
 ### Thumbnail
 
@@ -111,13 +137,17 @@ Channel avatar (bonus, both worlds, SPA-safe):
 | 2 | `meta[property="og:image"]` | `https://i.ytimg.com/vi/zjkBMFhNj_g/maxresdefault.jpg` | **both** | ❌ stale after SPA |
 | 3 | `ytInitialPlayerResponse.videoDetails.thumbnail.thumbnails` | array of 5, `168×94` … `1920×1080` (`.../vi_webp/zjkBMFhNj_g/maxresdefault.webp`) | MAIN only | ❌ stale after SPA |
 
-**Recommendation: construct the URL from the video id.** It is the only option that is both ISOLATED-reachable and SPA-safe, and `i.ytimg.com/vi/<id>/hqdefault.jpg` always exists (`maxresdefault.jpg` does not exist for every video).
+**Recommendation: construct the URL from the video id.** It is the only option that is both ISOLATED-reachable and SPA-safe.
+
+> ⚠️ **Not measured:** the claim that `i.ytimg.com/vi/<id>/hqdefault.jpg` always exists while `maxresdefault.jpg` does not exist for every video is **general knowledge, not a measurement — zero HTTP requests were issued during this research.** The observed `thumbnail.thumbnails` array on the fixture did include a `maxresdefault` entry. Task 5/6 should handle a 404 on the constructed URL rather than assuming either form resolves.
 
 Companion tags on a full load (both worlds): `og:image:width` = `1280`, `og:image:height` = `720`.
 
 ### `document.title` and `og:*` summary
 
-`document.title` = `"[1hr Talk] Intro to Large Language Models - YouTube"` (title + literal `" - YouTube"` suffix). Present in both worlds and it **does** update on SPA transitions — but ~90 ms *after* `yt-navigate-finish` fires (see below).
+`document.title` = `"[1hr Talk] Intro to Large Language Models - YouTube"` (title + literal `" - YouTube"` suffix). Present in both worlds and it **does** update on SPA transitions — but only *after* `yt-navigate-finish` fires (see below).
+
+> On timing precision: the "~90 ms" figure used below is an **upper bound derived from a 25 ms poll plus the `yt-page-data-updated` timestamp**, not a measurement of the exact moment `document.title` changed. The event handler at `yt-navigate-finish` (t=1372) saw the old title; the handler at `yt-page-data-updated` (t=1460.9) saw the new one. The true change instant lies somewhere in that ~89 ms window. What is *measured* — and what matters — is the ordering: **old at `yt-navigate-finish`, new at `yt-page-data-updated`.**
 
 Full `og:*` set present on a watch page (all readable from both worlds, all stale after SPA):
 `og:site_name`=`YouTube`, `og:url`, `og:title`, `og:image`, `og:image:width`, `og:image:height`, `og:description`, `og:type`=`video.other`, `og:video:url`=`https://www.youtube.com/embed/<id>`, `og:video:width`=`1280`, `og:video:height`=`720`.
@@ -165,18 +195,23 @@ The `captions` key is **entirely absent** from `ytInitialPlayerResponse` — not
 
 ### ISOLATED-world signals — what works and what does not
 
-The CC button always exists and is always visible (`display: block`, `offsetWidth: 48`) whether or not captions exist. Presence/visibility of the button is **not** a signal.
+The CC button exists whether or not captions exist. `display: block` / `offsetWidth: 48` was measured on the fixture and on the no-caption video (**n=2 — not measured on the manual-caption video**), so button presence/visibility is not a usable signal.
 
 | Attribute | Fixture (asr only) | Manual+asr video | No captions | Discriminates? |
 |---|---|---|---|---|
 | `data-tooltip-title` | `"자막(c)"` | `"자막(c)"` | `"자막 사용 불가"` | ✅ **yes** (has/hasn't) |
 | `aria-label` | `"자막 사용 불가"` | `"자막 사용 불가"` | `"자막 사용 불가"` | ❌ **no — identical in all three** |
-| `aria-pressed` | `"true"` | `"true"` | `"false"` | ❌ reflects whether CC is currently *on*, i.e. user preference |
+| `aria-pressed` | `"true"` | `"true"` | `"false"` | ⚠️ see note below |
 | `class` | `ytp-subtitles-button ytp-button` | same | same | ❌ no |
-| `disabled` attribute | absent | absent | absent | ❌ no |
+| `disabled` attribute | absent | *not measured* | *not measured* | ⚠️ unknown |
+| computed `display` / `offsetWidth` | `block` / `48` | *not measured* | `block` / `48` | ❌ no (n=2) |
 | `ytd-video-description-transcript-section-renderer` present | `true` | `true` | `false` | ✅ **yes** (has/hasn't), locale-independent |
 
 **The `aria-label` trap is real**: on this Korean-locale profile `aria-label` reads `"자막 사용 불가"` ("subtitles unavailable") even on a video that *does* have captions. Do not use `aria-label`.
+
+> ⚠️ **On `aria-pressed` — my "user preference" reading is an interpretation, not a measurement.** Across the only three samples taken it discriminates *perfectly* (`true` / `true` / `false`), so on the raw data it looks like a valid signal. I labelled it unusable because `aria-pressed` on a toggle button conventionally reports the toggle's current on/off state, which would make it track the user's caption preference rather than caption availability — but **I never ran the experiment that would settle this** (toggle CC off on a captioned video and re-read the attribute). If Task 6 wants to use `aria-pressed`, run that toggle test first; do not take this row's verdict on faith.
+
+> ⚠️ **The `disabled` row is now honest about its evidence.** `hasAttribute('disabled')` was evaluated **only on the fixture** (result: `false`). An earlier draft filled the other two columns with "absent" — those cells were never measured and have been replaced with *not measured*.
 
 There is no `<meta>` and no JSON-LD caption hint at all:
 ```
@@ -234,12 +269,18 @@ ISO : {"href":".../watch?v=zjkBMFhNj_g&t=14s","ccTooltip":"자막(c)","transcrip
 
 Both `data-tooltip-title` and the transcript-section element **did** flip correctly across the SPA transition, in the ISOLATED world.
 
+> ⚠️ **This test was run in one direction only: no-captions → captions.** The reverse (captions → no-captions) was **never measured**. Specifically unknown:
+> - whether `data-tooltip-title` reverts from `"자막(c)"` back to `"자막 사용 불가"`,
+> - whether `ytd-video-description-transcript-section-renderer` is actually *unmounted* (`true` → `false`) or merely left in the DOM from the previous video.
+>
+> The second one is the real risk: a stale-but-present transcript section would make a no-caption video report as captioned, and the failure would be **silent**. Task 6 must verify the reverse direction before shipping either signal.
+
 ### Verdict for `CaptionAvailability = 'available' | 'auto-only' | 'none' | 'unknown'`
 
 | Value | ISOLATED world alone | MAIN world |
 |---|---|---|
-| `'none'` | ✅ yes — `data-tooltip-title` and/or absence of the transcript section, SPA-safe | ✅ `'captions' in playerResponse === false` |
-| has-some-captions | ✅ yes — same signals | ✅ |
+| `'none'` | ⚠️ **partially** — `data-tooltip-title` and/or absence of the transcript section. Verified fresh in the has→hasn't direction only *(see the one-directional caveat above)* | ✅ `'captions' in playerResponse === false` |
+| has-some-captions | ✅ yes — same signals, verified across an SPA transition | ✅ |
 | **`'available'` vs `'auto-only'`** | ❌ **no** — no DOM attribute differs between the manual-caption video and the asr-only fixture | ✅ `captionTracks[].kind !== 'asr'` |
 
 **ISOLATED does NOT suffice if `'available'` and `'auto-only'` must be told apart.** It suffices only if `'available' | 'auto-only'` may be collapsed into one bucket.
@@ -323,14 +364,19 @@ Two further traps in that table:
 
 Reasons, all measured above:
 
-- It is the only signal that fires on **both** a full load and an SPA transition.
-- It is the only signal at which `ytd-watch-flexy[video-id]` and `document.title` are **already the new video's values** in every case observed.
+- **It is the only signal at which `ytd-watch-flexy[video-id]` and `document.title` already hold the new video's values, in every case observed.** This is the whole reason to pick it. `yt-navigate-finish` and `yt-player-updated` also fire on both a full load and an SPA transition (see the table above) — firing on both is *necessary* but not sufficient, and `yt-navigate-finish` fails the DOM-readiness test.
 - It is fully **ISOLATED-reachable**: the ISOLATED log recorded it at t=1459.8 vs the MAIN log's t=1460.9 — a ~1 ms difference, and the `detail` object was readable from the isolated world too (`detailKind: "object:pageType"`).
 
 Belt-and-braces, if extra robustness is wanted:
 
-- Add a `MutationObserver` on `ytd-page-manager` with `attributeFilter: ['video-id']`, `subtree: true`. It fired at t=1474.8 (MAIN) / t=1473.7 (ISO) with the correct new value, i.e. ~14 ms after `yt-page-data-updated`. Also ISOLATED-reachable, and locale/event-name independent.
+- Add a `MutationObserver` on `ytd-page-manager` with `attributeFilter: ['video-id']`, `subtree: true`. It fired at t=1474.8 (MAIN) / t=1473.7 (ISO) with the correct new value. Also ISOLATED-reachable, and locale/event-name independent.
 - Guard with a "last seen video id" check so duplicate events are idempotent.
+
+> ⚠️ **This `attributeFilter` observer may miss transitions entirely — treat it as a supplement, never as the primary signal.** The measured timing is self-inconsistent: the `yt-page-data-updated` handler at t=1460.9 already read `flexyVideoId: "7xTGNNLPyMI"`, yet the `[video-id]` MutationObserver only reported that change **14 ms later at t=1474.8**. MutationObserver callbacks are microtasks and should fire at or before the point the new value becomes observable, so a 14 ms lag behind an already-visible value is anomalous.
+>
+> The most plausible explanation is that **the `ytd-watch-flexy` element was replaced rather than mutated.** A freshly inserted node that already carries `video-id` does not trigger an `attributeFilter: ['video-id']` observer at all — which would mean the t=1474.8 record came from something else (e.g. a later attribute rewrite on the new node) and that some transitions produce **no observer callback whatsoever**.
+>
+> This was not investigated further. If Task 7 wants a MutationObserver backup, observe `childList` on `ytd-page-manager` **in addition to** `attributes`, and re-derive the video id from the DOM on every callback rather than trusting `mutation.target`.
 
 **Do not use:** `popstate` (never fires), `history.pushState` patching (page-context `history` cannot be patched from an ISOLATED world), or `yt-navigate-finish` alone (fires before the DOM updates).
 
@@ -379,7 +425,7 @@ Three URL shapes were measured, all resolving to the same live stream `YDvsBbKfL
 | `.ytp-live-badge` `offsetWidth` | `0` | `0` | **`51`** |
 | `meta[itemprop="duration"]` | `"PT59M48S"` | `"PT1M11S"` | **`null`** |
 | `script[type=application/ld+json]` count | `2` | `0` | `1` |
-| `.ytp-time-duration` | `"1:13"` | `""` | `"137:04:51:37"` (DVR window) |
+| `.ytp-time-duration` | `"1:13"` ⚠️ **ad artefact — see below** | `""` | `"137:04:51:37"` (DVR window) |
 | `videoDetails.isLive` | absent | absent | **`true`** |
 | `videoDetails.isLiveContent` | `false` | `false` | **`true`** |
 | `videoDetails.lengthSeconds` | `"3588"` | `"71"` | **`"0"`** |
@@ -388,16 +434,29 @@ Three URL shapes were measured, all resolving to the same live stream `YDvsBbKfL
 
 `.ytp-live-badge` **always exists in the DOM** — `!!document.querySelector('.ytp-live-badge')` returned `true` on the VOD, the Shorts page, and the live stream. Only its computed `display` / `offsetWidth` distinguishes. Likewise `#movie_player` carries the class `ytp-livebadge-color` on *all three* pages; it is a theming class, not a live marker.
 
+The `.ytp-time-duration` VOD cell reads `"1:13"` because that sample was taken during a pre-roll ad; the fixture's true `.ytp-time-duration` is `"59:47"` (see the Duration section). It is listed here only to show the shape difference against the live DVR value, **not as a VOD baseline.**
+
 **Recommended live detection:**
-1. ISOLATED, SPA-safe: `getComputedStyle(document.querySelector('.ytp-live-badge')).display !== 'none'` (or `offsetWidth > 0`).
-2. ISOLATED, full-load only: `meta[itemprop="duration"] === null` on an otherwise-valid watch page.
-3. MAIN, always fresh: `#movie_player.getPlayerResponse().videoDetails.isLive === true`.
+
+> ⚠️ **All three live pages were loaded with `Page.navigate` — i.e. full loads. No VOD↔LIVE SPA transition was ever performed.** Every "SPA" property below is therefore unmeasured for live detection specifically.
+
+1. **ISOLATED reachability measured; SPA behaviour NOT measured** — `getComputedStyle(document.querySelector('.ytp-live-badge')).display !== 'none'` (or `offsetWidth > 0`). The ISOLATED read was verified (identical `"inline-block"` / `51` in both worlds). Whether the badge's visibility updates correctly when navigating VOD→live or live→VOD in-page is **unknown**. It is a computed style on a live player element, so it *plausibly* updates — but that is inference. **This is the highest-risk recommendation in this document**, because it is ranked first and Task 5 is likely to implement it verbatim. Verify it across a real SPA transition first.
+2. ISOLATED, full-load only: `meta[itemprop="duration"] === null` on an otherwise-valid watch page. (Known stale after any SPA transition — the `<head>` staleness result applies.)
+3. MAIN, measured fresh after SPA transitions for other fields: `#movie_player.getPlayerResponse().videoDetails.isLive === true`. The player-response object was verified fresh post-SPA; the `isLive` field specifically was only read on full loads.
 
 ---
 
 ## What I could not determine
 
-- **A duration source that is simultaneously ISOLATED-reachable, SPA-safe, and ad-immune.** `video.duration` and `.ytp-time-duration` report the *pre-roll ad's* length while an ad plays — measured `.ytp-time-duration === "0:30"` and `"1:13"` on pages whose real lengths are ~52 min and ~60 min. `meta[itemprop="duration"]` is ad-immune but stale after an SPA transition. I did not find or test a workaround (e.g. waiting for `#movie_player` to lose the `ad-showing` class, or reading `.ytp-progress-bar[aria-valuemax]`); Task 5/6 will need to solve this. I also did not verify how `.ytp-time-duration` formats videos over 24 h beyond seeing `"137:04:50:27"` on a live DVR window.
+- **The equivalence of `Page.createIsolatedWorld` and a real content-script ISOLATED world.** This is the single assumption the whole document rests on, and it was **not verified** — doing so requires registering a content script, which requires reloading the extension, which the task forbade. Everything labelled "ISOLATED-reachable" should be confirmed once against a trivial real content script before Tasks 5–8 build on it.
+- **A duration source that is simultaneously ISOLATED-reachable, SPA-safe, and ad-immune.** `video.duration` and `.ytp-time-duration` report the *pre-roll ad's* length while an ad plays — observed `.ytp-time-duration === "0:30"` and `"1:13"` at moments when an ad was running. **I did not measure the true runtime of those pages**, so the size of the error is unquantified. `meta[itemprop="duration"]` is ad-immune but stale after an SPA transition. I did not find or test a workaround (e.g. gating on `#movie_player` losing the `ad-showing` class, reading `.ytp-progress-bar[aria-valuemax]`, or reading `lengthSeconds` off `getPlayerResponse()`); Task 5/6 will need to solve this. I also did not verify how `.ytp-time-duration` formats videos over 24 h beyond seeing `"137:04:50:27"` on a live DVR window.
+- **Channel extraction across a transition between two *different* channels.** The one SPA transition measured (`zjkBMFhNj_g` → `7xTGNNLPyMI`) stayed on the same channel, so the post-transition `"Andrej Karpathy"` reading cannot distinguish fresh from stale. The owner `href` and the avatar `src` were not read after the transition at all.
+- **Whether live detection survives an SPA transition.** All three live URL shapes were loaded with `Page.navigate` (full loads). **No VOD↔LIVE in-page transition was performed.** The `.ytp-live-badge` visibility check — the document's first-ranked live recommendation — has verified ISOLATED reachability but entirely unverified SPA behaviour.
+- **The reverse caption direction (captions → no captions) across an SPA transition.** Only no-captions → captions was tested. Whether `data-tooltip-title` reverts, and whether `ytd-video-description-transcript-section-renderer` is genuinely unmounted rather than left over from the previous video, is unknown. A stale leftover would misreport a no-caption video as captioned, silently.
+- **Whether `aria-pressed` on the CC button tracks caption *availability* or the user's caption *preference*.** Across the three samples taken it discriminated perfectly (`true`/`true`/`false`). I labelled it unusable on the conventional reading of `aria-pressed` on a toggle button, but never ran the settling experiment (toggle CC off on a captioned video, re-read).
+- **Whether the `attributeFilter: ['video-id']` MutationObserver reliably fires at all.** Its measured callback lagged 14 ms *behind* a value that was already observable, which suggests `ytd-watch-flexy` is replaced rather than mutated — in which case some transitions would produce no callback. Not investigated.
+- **Whether the constructed thumbnail URLs actually resolve.** Zero HTTP requests were issued during this research. The `hqdefault.jpg`-always-exists / `maxresdefault.jpg`-sometimes-404s claim is general knowledge, not measurement.
+- **The exact instant `document.title` changes after an SPA transition.** The "~90 ms" figure is an upper bound from a 25 ms poll plus event timestamps, not a direct measurement. Only the *ordering* (old at `yt-navigate-finish`, new at `yt-page-data-updated`) is measured.
 - **Whether `data-tooltip-title` / `aria-label` values differ under an English UI.** Everything here was observed with `document.documentElement.lang === "ko-KR"`. I did not switch the dev profile's locale, so I cannot state the English strings. The **presence/absence of `ytd-video-description-transcript-section-renderer`** is the locale-independent alternative — but I only observed it on three videos and did not test whether it is lazily rendered (it could be `false` transiently right after navigation, before the description section mounts).
 - **Whether `ytd-video-description-transcript-section-renderer` is reliable on videos with manual-only captions and no ASR track.** Both captioned videos I tested happened to include an `asr` track.
 - **A `/watch?v=` → SPA → `/shorts/` transition.** No `/shorts/` anchors existed in the fixture's related rail (`NO_SHORTS_LINK_ON_PAGE`); I measured home→shorts instead. The watch→shorts path may behave differently.
@@ -406,3 +465,26 @@ Three URL shapes were measured, all resolving to the same live stream `YDvsBbKfL
 - **Live-stream caption behaviour.** The live stream I tested (`YDvsBbKfLPA`) had `captionTracks: []` and `data-tooltip-title: "자막 사용 불가"`. I did not find a live stream *with* live captions, so I cannot say what that shape looks like.
 - **`playabilityStatus` values other than `"OK"` and `"ERROR"`.** `"ERROR"` was seen only on a bare `/shorts/` redirect, not on a genuinely unplayable video. Age-gated / members-only / region-blocked shapes were not measured.
 - **How any of this behaves while signed out.** The dev profile has a signed-in session (a `accounts.google.com` sign-in iframe target is present); I did not test a logged-out page.
+
+---
+
+## Claims that rest on inference — re-verify before relying on these
+
+Everything in this document was produced from real CDP measurements against a real page, and no value quoted here was invented. But not every *claim* is a measurement — some are readings of the data, some are extrapolations, and one is a load-bearing assumption. Tasks 5–8 cite this document, so the distinction is recorded explicitly.
+
+| # | Where | Claim | Evidence grade | What to do |
+|---|---|---|---|---|
+| 1 | "How world-reachability was determined" | `Page.createIsolatedWorld` ≡ a content script's ISOLATED world | **Inference. The premise the entire document rests on.** | Confirm once with a trivial real content script (Task 4) |
+| 2 | Channel, rows 1 / 1b / 1c + avatar | Channel name, `/@handle`, avatar survive an SPA transition | **Confounded measurement** (same channel both sides) for row 1; **not measured at all** for 1b/1c/avatar | Re-test across two different channels |
+| 3 | Live detection #1 | `.ytp-live-badge` visibility is SPA-safe | **Not measured.** ISOLATED reachability *was* measured; SPA behaviour was not | Perform a VOD↔LIVE in-page transition |
+| 4 | Caption attribute table, `disabled` row | No `disabled` attribute on the CC button | **Measured on the fixture only** (n=1); other two cells now marked *not measured* | Measure on the no-caption video if it matters |
+| 5 | Caption attribute table, `aria-pressed` row | Reflects user CC on/off preference, not availability | **Interpretation.** Raw data (`true`/`true`/`false`) actually discriminates perfectly | Toggle CC off on a captioned video and re-read |
+| 6 | Video ID, row 1 | `new URL(location.href).searchParams.get('v')` | `location.href` measured in both worlds; the `searchParams` derivation was **never executed** | Trivial — but it is a derivation, not a reading |
+| 7 | Thumbnail recommendation | `hqdefault.jpg` always exists, `maxresdefault.jpg` does not | **General knowledge. Zero HTTP requests issued.** | Handle a 404 rather than assuming |
+| 8 | `document.title` / SPA section | `document.title` updates "~90 ms" after `yt-navigate-finish` | **Upper bound** from a 25 ms poll + event timestamps, not the true change instant | Ordering is measured and sufficient; ignore the number |
+| 9 | Caption section intro | CC button always `display:block` / `offsetWidth:48` | **n=2** — fixture and no-caption video; the manual-caption video was not measured | Low risk |
+| 10 | Caption 3f test | ISOLATED caption signals flip correctly across SPA | **Measured, but one direction only** (no-captions → captions) | Test captions → no-captions |
+| 11 | Duration, row F | `getPlayerResponse().videoDetails.lengthSeconds` is fresh + ad-immune post-SPA | **Inference** from other fields of the same object being fresh; this field was never read | Most promising untested candidate |
+| 12 | MutationObserver backup | `attributeFilter: ['video-id']` observer is a reliable backup | **Contradicted by its own timing data** — likely misses replaced elements | Observe `childList` too |
+
+**Measured, despite looking like they might not be** (listed so nobody re-checks them unnecessarily): `link[rel=canonical]` freshness after an SPA transition; the `h1.ytd-watch-metadata yt-formatted-string` title selector; `ytd-shorts` absence on a watch page (`false`, both worlds, measured on the baseline watch page alongside the Shorts comparison).
