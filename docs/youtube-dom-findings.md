@@ -44,7 +44,8 @@ Verified by clicking a related-video anchor on the fixture (`/watch?v=zjkBMFhNj_
 | `document.title` | ✅ yes | `Deep Dive into LLMs like ChatGPT - YouTube` |
 | `link[rel=canonical]` | ✅ yes | `https://www.youtube.com/watch?v=7xTGNNLPyMI` |
 | `ytd-watch-flexy[video-id]` | ✅ yes | `7xTGNNLPyMI` |
-| DOM `#title h1` / `#owner #channel-name a` | ✅ yes | `Deep Dive into LLMs like ChatGPT` / `Andrej Karpathy` |
+| DOM `#title h1` | ✅ yes | `Deep Dive into LLMs like ChatGPT` |
+| DOM `#owner #channel-name a` | ⚠️ **confounded — cannot tell** | `Andrej Karpathy` — but **both videos are on the same channel**, so this reading is equally consistent with fresh and with stale. See the caveat in [Channel](#channel). |
 | **`meta[property="og:*"]`** | ❌ **NO — stale** | `[1hr Talk] Intro to Large Language Models` |
 | **`meta[itemprop="duration"]`** | ❌ **NO — stale** | `PT59M48S` (the *old* video) |
 | **JSON-LD `application/ld+json`** | ❌ **NO — stale** | `[1hr Talk] Intro to Large Language Models` |
@@ -62,12 +63,14 @@ This means **`og:*`, JSON-LD and `ytInitialPlayerResponse` are only trustworthy 
 
 | Priority | Expression | Observed | World | SPA-safe |
 |---|---|---|---|---|
-| 1 | `new URL(location.href).searchParams.get('v')` | `zjkBMFhNj_g` | **both** | ✅ |
+| 1 | `new URL(location.href).searchParams.get('v')` | `zjkBMFhNj_g` | **both** | ⚠️ ✅ derived |
 | 2 | `document.querySelector('ytd-watch-flexy')?.getAttribute('video-id')` | `"zjkBMFhNj_g"` | **both** | ✅ |
 | 3 | `document.querySelector('link[rel="canonical"]')?.href` | `https://www.youtube.com/watch?v=zjkBMFhNj_g` | **both** | ✅ |
 | 4 | `window.ytInitialPlayerResponse.videoDetails.videoId` | `"zjkBMFhNj_g"` | MAIN only | ❌ stale |
 
 **Recommended chain:** URL param → `ytd-watch-flexy[video-id]` → `link[rel=canonical]`.
+
+> ⚠️ Row 1 is marked "derived" because `location.href` itself was measured fresh in both worlds after an SPA transition, but the `new URL(...).searchParams.get('v')` derivation on top of it was **never actually executed** during this research. The underlying reading is solid; the one-line extraction is untested. See item 6 of the inference table.
 
 Note: `meta[itemprop="videoId"]` and `meta[itemprop="channelId"]` do **not** exist (both returned `undefined`). There *is* `<meta itemprop="identifier" content="zjkBMFhNj_g">`, but it is part of the stale `<head>` block.
 
@@ -364,7 +367,7 @@ Two further traps in that table:
 
 Reasons, all measured above:
 
-- **It is the only signal at which `ytd-watch-flexy[video-id]` and `document.title` already hold the new video's values, in every case observed.** This is the whole reason to pick it. `yt-navigate-finish` and `yt-player-updated` also fire on both a full load and an SPA transition (see the table above) — firing on both is *necessary* but not sufficient, and `yt-navigate-finish` fails the DOM-readiness test.
+- **It is the only signal at which `ytd-watch-flexy[video-id]` and `document.title` already hold the new video's values, in every case observed.** This is the whole reason to pick it. `yt-navigate-finish` also fires on both a full load and an SPA transition (see the comparison table above), and so does `yt-player-updated` (not in that table — its evidence is in the raw event logs: full load t=1424.9, SPA transition t=1208.4). Firing on both is *necessary* but not sufficient, and `yt-navigate-finish` fails the DOM-readiness test.
 - It is fully **ISOLATED-reachable**: the ISOLATED log recorded it at t=1459.8 vs the MAIN log's t=1460.9 — a ~1 ms difference, and the `detail` object was readable from the isolated world too (`detailKind: "object:pageType"`).
 
 Belt-and-braces, if extra robustness is wanted:
