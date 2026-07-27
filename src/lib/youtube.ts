@@ -49,8 +49,8 @@ export function parseVideoId(url: string | undefined): string | null {
     const parsed = new URL(url);
 
     if (parsed.hostname === 'youtu.be' || parsed.hostname === 'www.youtu.be') {
-      const id = parsed.pathname.slice(1);
-      return id || null;
+      const youtuBeMatch = parsed.pathname.match(/^\/([^/]+)/);
+      return youtuBeMatch ? youtuBeMatch[1] : null;
     }
 
     if (!isYoutubeHostname(parsed.hostname)) return null;

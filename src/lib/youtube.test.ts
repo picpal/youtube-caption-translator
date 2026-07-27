@@ -56,6 +56,10 @@ describe('parseVideoId', () => {
     expect(parseVideoId('https://youtu.be/YDvsBbKfLPA')).toBe('YDvsBbKfLPA');
   });
 
+  it('stops at the next slash for a youtu.be link with a trailing path segment', () => {
+    expect(parseVideoId('https://youtu.be/YDvsBbKfLPA/extra')).toBe('YDvsBbKfLPA');
+  });
+
   it('extracts the id from a shorts url', () => {
     expect(parseVideoId('https://www.youtube.com/shorts/3cRnRfPT7mM')).toBe('3cRnRfPT7mM');
   });
