@@ -1,6 +1,10 @@
 import { defineContentScript } from 'wxt/sandbox';
 import { classifyYoutubeUrl, parseVideoId } from '~/lib/youtube';
-import { extractVideoMeta, type ExtractedVideoMeta } from '~/lib/video-meta';
+import {
+  extractVideoMeta,
+  isDurationAdBlocked,
+  type ExtractedVideoMeta,
+} from '~/lib/video-meta';
 
 // ISOLATED world (the default — no `world` option needed), and Task 4's ruling
 // stands, but not for the reason it gave. Task 4 assumed MAIN world would be
@@ -174,7 +178,23 @@ export default defineContentScript({
         // again. `'unknown'` is the opposite — a real verdict, terminal for
         // this document — so it must NOT be retried, or every post-SPA
         // captioned video would spin through the whole schedule.
-        const readable = meta !== null && meta.captionAvailability !== null;
+        const captionReadable = meta !== null && meta.captionAvailability !== null;
+        // The same "ask again later" idea for duration, but only for the ONE
+        // null that a wait can fix: a pre-roll ad poisoning the player clock on
+        // the SPA path. Measured live (`t7j-before.log`): read #0 caught the
+        // real 1519s, read #1 with the ad up read `null`, read #2 matched it,
+        // and the loop settled `durationSeconds: null` at +250ms — stamped
+        // `settled`, i.e. cacheable — while the real length was seconds away.
+        // `isDurationAdBlocked` reuses the pure function's own ad/live
+        // predicates so it cannot drift, and it excludes live: a live stream's
+        // `null` is permanent, and retrying it would spin the whole schedule
+        // every navigation. See `isDurationAdBlocked` in src/lib/video-meta.ts.
+        const durationPending =
+          meta !== null && meta.durationSeconds === null && isDurationAdBlocked(document);
+        // Title/channel/captions are ad-independent, so they still go out as
+        // `provisional` on the very first read (below); `durationPending` only
+        // withholds the `settled` STATUS, it never withholds the record.
+        const readable = captionReadable && !durationPending;
         // Stability, not just readability. The caption refusal covers the
         // description-panel transient, but nothing covers the other measured
         // ones: `channelName` is `null` until `#owner` hydrates, and Task 5

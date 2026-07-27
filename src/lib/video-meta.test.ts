@@ -2,7 +2,12 @@ import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { extractVideoMeta, parseIsoDuration, parseClockDuration } from '~/lib/video-meta';
+import {
+  extractVideoMeta,
+  isDurationAdBlocked,
+  parseIsoDuration,
+  parseClockDuration,
+} from '~/lib/video-meta';
 
 // Resolved from this file's own location, not `process.cwd()`, so the suite
 // still works when vitest is invoked from a subdirectory.
@@ -218,6 +223,55 @@ describe('extractVideoMeta — post-SPA document with a pre-roll ad playing', ()
       durationSeconds: null,
       captionAvailability: null,
     });
+  });
+});
+
+describe('isDurationAdBlocked — retryable (ad) vs terminal (live) null duration', () => {
+  it('is true for a pre-roll ad on the SPA path, whose null duration a wait can fix', () => {
+    const doc = loadFixture(SPA_STALE_AD);
+    // Guard the fixture's premises: stale microdata + ad-showing, not live.
+    expect(doc.querySelector('meta[itemprop="identifier"]')?.getAttribute('content')).toBe(
+      'zjkBMFhNj_g',
+    );
+    expect(doc.querySelector('#movie_player')?.classList.contains('ad-showing')).toBe(true);
+    expect(doc.querySelector('.ytp-time-display')?.classList.contains('ytp-live') ?? false).toBe(
+      false,
+    );
+    // The duration really is null here (proven by the sibling describe), and
+    // it is null only because of the ad — so the settle loop should retry.
+    expect(extractVideoMeta(doc, SPA_URL)?.durationSeconds).toBeNull();
+    expect(isDurationAdBlocked(doc)).toBe(true);
+  });
+
+  it('is false for a live stream, whose null duration is permanent — never retried', () => {
+    // The critical exclusion. A live stream's duration is legitimately absent
+    // forever; treating it as ad-blocked would spin the settle schedule on
+    // every navigation into a live stream.
+    const doc = loadFixture(LIVE);
+    expect(doc.querySelector('.ytp-time-display')?.classList.contains('ytp-live')).toBe(true);
+    expect(isDurationAdBlocked(doc)).toBe(false);
+  });
+
+  it('is false for a VOD with no ad playing', () => {
+    // A settled post-SPA VOD: no ad, so a null duration here (if any) is not
+    // the loop's business — nothing about waiting would change it.
+    const doc = loadFixture(SPA_STALE);
+    expect(doc.querySelector('#movie_player')?.classList.contains('ad-showing') ?? false).toBe(
+      false,
+    );
+    expect(isDurationAdBlocked(doc)).toBe(false);
+  });
+
+  it('lets the live flag win over the ad flag when both are somehow set', () => {
+    // Belt-and-braces on the `&& !isLivePlayback` guard: if a document ever
+    // presents as both live AND ad-showing, it is treated as live (terminal),
+    // never as a retryable ad. (In practice a live stream DROPS ytp-live while
+    // its own pre-roll plays — measured — so this exact shape is synthetic;
+    // the assertion pins the boolean, not a captured state.)
+    const doc = loadFixture(SPA_STALE_AD);
+    expect(doc.querySelector('#movie_player')?.classList.contains('ad-showing')).toBe(true);
+    doc.querySelector('.ytp-time-display')?.classList.add('ytp-live');
+    expect(isDurationAdBlocked(doc)).toBe(false);
   });
 });
 

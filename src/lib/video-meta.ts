@@ -223,6 +223,42 @@ function resolveDurationSeconds(doc: Document, videoId: string): number | null {
   return parseClockDuration(doc.querySelector('.ytp-time-duration')?.textContent);
 }
 
+/**
+ * Whether a `durationSeconds` that came back `null` is null *only because a
+ * pre-roll/mid-roll ad is poisoning the player clock* — meaning the real
+ * length will appear once the ad ends, and a caller that settles on the `null`
+ * now would cache a value it is seconds away from being able to improve.
+ *
+ * This is the duration analogue of the caption `null`-vs-`'unknown'` split.
+ * `resolveDurationSeconds` collapses three very different situations to the
+ * same `null`: a live stream whose duration is legitimately absent forever, a
+ * pre-roll ad that clears in seconds, and a document read before the media
+ * loaded. The content script's settle loop must retry the ad case WITHOUT
+ * retrying the live case — retrying a live stream would spin the whole settle
+ * schedule on every navigation, the exact failure the caption split avoids.
+ *
+ * The distinction lives here, beside the `isAdShowing`/`isLivePlayback`
+ * predicates it is built from, so the content script never re-derives fragile
+ * live/ad state and cannot drift from what `resolveDurationSeconds` saw. It is
+ * exported for that one caller; `extractVideoMeta` does not use it and stays
+ * pure over its `doc`.
+ *
+ * Two deliberate properties:
+ * - It is asked only when duration is already `null`. On a full load the
+ *   microdata is fresh and ad-immune, so duration is not null and the loop
+ *   never asks — this is purely the SPA / stale-microdata concern.
+ * - `!isLivePlayback` is what protects the live case. A *plain* live stream
+ *   (no ad) has `ytp-live` set and returns `false` here, so it settles on its
+ *   permanent `null` immediately. A live stream *with* a pre-roll ad drops
+ *   `ytp-live` for the ad (measured, see `isLivePlayback`), so this returns
+ *   `true` and the loop retries — but only until the ad ends, at which point
+ *   `ytp-live` returns and this flips to `false`, settling. It self-terminates
+ *   and never spins the schedule on a bare live stream.
+ */
+export function isDurationAdBlocked(doc: Document): boolean {
+  return isAdShowing(doc) && !isLivePlayback(doc);
+}
+
 const PLAYER_RESPONSE_ASSIGNMENT = 'var ytInitialPlayerResponse = ';
 
 /**
