@@ -43,13 +43,18 @@ function deleteDb(): Promise<void> {
 }
 
 let sendMessageMock: ReturnType<typeof vi.fn>;
+let tabsSendMessageMock: ReturnType<typeof vi.fn>;
 
 beforeEach(async () => {
   await deleteDb();
   sendMessageMock = vi.fn().mockResolvedValue({ ok: true });
+  tabsSendMessageMock = vi.fn().mockResolvedValue(undefined);
   (globalThis as any).chrome = {
     runtime: {
       sendMessage: sendMessageMock,
+    },
+    tabs: {
+      sendMessage: tabsSendMessageMock,
     },
   };
 });
@@ -186,6 +191,31 @@ describe('GET_CURRENT_VIDEO', () => {
 
     expect(resA).toEqual({ status: 'settled', meta: SETTLED_META });
     expect(resB).toEqual({ status: 'settled', meta: metaB });
+  });
+});
+
+describe('REQUEST_VIDEO_REEMIT', () => {
+  it('asks the tab\'s content script to re-emit via chrome.tabs.sendMessage', async () => {
+    const tabId = freshTabId();
+
+    const res = await handle(
+      { type: 'REQUEST_VIDEO_REEMIT', payload: { tabId } },
+      senderFor(undefined),
+    );
+
+    expect(res).toEqual({ ok: true });
+    expect(tabsSendMessageMock).toHaveBeenCalledWith(tabId, { type: 'REEMIT_VIDEO' });
+  });
+
+  it('does not throw out of handle() when the tab has no content script to receive it', async () => {
+    const tabId = freshTabId();
+    tabsSendMessageMock.mockRejectedValueOnce(
+      new Error('Could not establish connection. Receiving end does not exist.'),
+    );
+
+    await expect(
+      handle({ type: 'REQUEST_VIDEO_REEMIT', payload: { tabId } }, senderFor(undefined)),
+    ).resolves.toEqual({ ok: true });
   });
 });
 

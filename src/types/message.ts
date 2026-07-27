@@ -41,7 +41,17 @@ export type AppMessage =
   // own `handle()` switch — which sees every `chrome.runtime.onMessage`
   // delivery, including this broadcast if it is ever redelivered to the
   // sender — stays exhaustive instead of throwing on an unrecognised type.
-  | { type: 'CURRENT_VIDEO_UPDATED'; payload: { tabId: number; video: CurrentVideoState } };
+  | { type: 'CURRENT_VIDEO_UPDATED'; payload: { tabId: number; video: CurrentVideoState } }
+  // panel -> background: "ask the content script on this tab to push its
+  // current report again". Exists because `latestByTab` (background.ts) is
+  // an in-memory `Map` that an MV3 service-worker eviction wipes clean — a
+  // panel opened after eviction would otherwise see `GET_CURRENT_VIDEO`
+  // answer `null` forever, since nothing re-triggers the content script's
+  // settle loop on its own. Tab-scoped for the same reason `GET_CURRENT_VIDEO`
+  // is: background has no "tabs" permission to resolve "the active tab"
+  // itself, so the caller (which already knows via its own `chrome.tabs`
+  // query) supplies it.
+  | { type: 'REQUEST_VIDEO_REEMIT'; payload: { tabId: number } };
 
 export type AppResponseMap = {
   SAVE_API_KEY: { ok: true; status: ApiKeyStatus } | { ok: false; error: string };
@@ -54,6 +64,25 @@ export type AppResponseMap = {
   // video page". Callers must not conflate the two.
   GET_CURRENT_VIDEO: CurrentVideoState | null;
   CURRENT_VIDEO_UPDATED: { ok: true };
+  // Always `{ ok: true }`, even when the tab has no content script to
+  // reach (non-YouTube tab, or the tab closed) — that is an expected,
+  // silently-swallowed outcome (see the handler in entrypoints/background.ts),
+  // not a caller-visible failure.
+  REQUEST_VIDEO_REEMIT: { ok: true };
 };
 
 export type AppResponse<T extends AppMessage['type']> = AppResponseMap[T];
+
+/**
+ * background -> content only, delivered via `chrome.tabs.sendMessage`
+ * (never `chrome.runtime.sendMessage`, which a service worker cannot use to
+ * reach a content script). Deliberately NOT part of `AppMessage`: that union
+ * is exactly the shapes `entrypoints/background.ts`'s `handle()` dispatches
+ * on, and this message is dispatched TO the content script, not through
+ * `handle()`. The content script's own `chrome.runtime.onMessage` listener
+ * (entrypoints/content.ts) is the only consumer, and it needs no response —
+ * the result comes back through the normal `VIDEO_DETECTED` broadcast.
+ */
+export interface ReemitVideoMessage {
+  type: 'REEMIT_VIDEO';
+}

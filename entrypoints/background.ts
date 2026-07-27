@@ -3,7 +3,7 @@ import { saveApiKey, getApiKey, getApiKeyStatus, deleteApiKey } from '~/lib/stor
 import { testGeminiKey } from '~/lib/gemini';
 import { putVideo } from '~/lib/db';
 import { sendMessage } from '~/lib/messaging';
-import type { AppMessage, AppResponseMap, CurrentVideoState } from '~/types/message';
+import type { AppMessage, AppResponseMap, CurrentVideoState, ReemitVideoMessage } from '~/types/message';
 
 // Latest known state per tab, keyed by the tab the content script's message
 // arrived FROM (`sender.tab.id`) — never by the panel's notion of "the
@@ -123,6 +123,25 @@ export async function handle<T extends AppMessage['type']>(
       const { payload } = msg as Extract<AppMessage, { type: 'GET_CURRENT_VIDEO' }>;
       return (latestByTab.get(payload.tabId) ?? null) as AppResponseMap[T];
     }
+    case 'REQUEST_VIDEO_REEMIT': {
+      const { payload } = msg as Extract<AppMessage, { type: 'REQUEST_VIDEO_REEMIT' }>;
+      // `chrome.runtime.sendMessage` from a service worker never reaches a
+      // content script — only `chrome.tabs.sendMessage` does. This needs no
+      // "tabs" permission: host_permissions for youtube.com already covers
+      // messaging a youtube.com tab.
+      //
+      // Expected to reject whenever there is no content script to receive
+      // it — a non-YouTube tab, or one that has since closed/navigated away
+      // — so swallow rather than throw; the caller only cares that it tried.
+      try {
+        const reemit: ReemitVideoMessage = { type: 'REEMIT_VIDEO' };
+        await chrome.tabs.sendMessage(payload.tabId, reemit);
+      } catch {
+        // "Could not establish connection. Receiving end does not exist." —
+        // not an error, see above.
+      }
+      return { ok: true } as AppResponseMap[T];
+    }
     case 'CURRENT_VIDEO_UPDATED':
       // Only ever produced by this file's own broadcast above. Handled here
       // solely so the switch — and `errorResponseFor`'s below — stay
@@ -148,6 +167,8 @@ function errorResponseFor(msg: AppMessage, err: unknown): AppResponseMap[AppMess
       return { ok: true };
     case 'GET_CURRENT_VIDEO':
       return null;
+    case 'REQUEST_VIDEO_REEMIT':
+      return { ok: true };
     case 'CURRENT_VIDEO_UPDATED':
       return { ok: true };
   }

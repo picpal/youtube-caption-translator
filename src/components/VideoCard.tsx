@@ -38,9 +38,10 @@ export function VideoCard({ video, loading }: VideoCardProps) {
     return (
       <>
         <div className="flex gap-3 px-4 pb-3.5 pt-4">
-          <div className="h-[54px] w-24 flex-none rounded-[5px] bg-[repeating-linear-gradient(135deg,#eceef0_0_6px,#e3e6e9_6px_12px)] dark:bg-[repeating-linear-gradient(135deg,#2a2d31_0_6px,#23262a_6px_12px)]" />
+          <div className="h-[54px] w-24 flex-none animate-pulse rounded-[5px] bg-[repeating-linear-gradient(135deg,#eceef0_0_6px,#e3e6e9_6px_12px)] dark:bg-[repeating-linear-gradient(135deg,#2a2d31_0_6px,#23262a_6px_12px)]" />
           <div className="flex min-w-0 flex-col gap-1">
-            <span className="text-[13px] font-semibold leading-snug text-neutral-500 dark:text-neutral-400">
+            <span className="flex items-center gap-1.5 text-[13px] font-semibold leading-snug text-neutral-500 dark:text-neutral-400">
+              <Spinner />
               영상 정보 로딩 중
             </span>
             <span className="text-[11px] text-neutral-400 dark:text-neutral-500">—</span>
@@ -113,7 +114,8 @@ function Thumbnail({
           {formatDuration(durationSeconds)}
         </span>
       ) : durationPending ? (
-        <span className="absolute bottom-1 right-1 rounded bg-black/70 px-1 py-px font-mono text-[9px] text-white/80">
+        <span className="absolute bottom-1 right-1 flex items-center gap-1 rounded bg-black/70 px-1 py-px font-mono text-[9px] text-white/80">
+          <Spinner className="h-2 w-2 text-white/80" />
           확인 중
         </span>
       ) : null}
@@ -138,9 +140,42 @@ function CaptionBar({ availability }: { availability: CaptionAvailability | null
   const { label, dotClass } = captionDisplay(availability);
   return (
     <div className="mx-4 mb-4 flex items-center gap-1.5 rounded-md border border-neutral-200 bg-neutral-50 px-3 py-2 dark:border-neutral-800 dark:bg-neutral-900">
-      <span className={`block h-1.5 w-1.5 flex-none rounded-full ${dotClass}`} />
+      {availability === null ? (
+        // `null` always means "not settled yet, ask again later" (see
+        // captionDisplay's doc comment) — never a final answer, so it is the
+        // one case that gets the spinner instead of the static dot.
+        <Spinner className="h-2.5 w-2.5" />
+      ) : (
+        <span className={`block h-1.5 w-1.5 flex-none rounded-full ${dotClass}`} />
+      )}
       <span className="font-mono text-[11px] text-neutral-500 dark:text-neutral-400">{label}</span>
     </div>
+  );
+}
+
+/**
+ * Subtle in-progress indicator for the loading/provisional states — without
+ * it, the loading treatment was a static striped thumbnail + static text,
+ * which reads as stuck rather than working (M1 acceptance finding). Not
+ * rendered once real data settles: every call site above only mounts it
+ * behind a `null`/pending check, so it disappears the moment that check
+ * flips.
+ */
+function Spinner({ className = '' }: { className?: string }) {
+  return (
+    <svg
+      className={`h-3 w-3 flex-none animate-spin text-neutral-400 dark:text-neutral-500 ${className}`}
+      viewBox="0 0 24 24"
+      fill="none"
+      aria-hidden
+    >
+      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+      <path
+        className="opacity-75"
+        fill="currentColor"
+        d="M4 12a8 8 0 0 1 8-8V0C5.373 0 0 5.373 0 12h4Z"
+      />
+    </svg>
   );
 }
 

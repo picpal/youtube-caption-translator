@@ -6,6 +6,7 @@ import {
   type ExtractedVideoMeta,
 } from '~/lib/video-meta';
 import { sendMessage } from '~/lib/messaging';
+import type { ReemitVideoMessage } from '~/types/message';
 
 // ISOLATED world (the default — no `world` option needed), and Task 4's ruling
 // stands, but not for the reason it gave. Task 4 assumed MAIN world would be
@@ -282,5 +283,25 @@ export default defineContentScript({
     //   The `url-changed` check inside the cycle is the cheap half of that
     //   safety net and is kept.
     document.addEventListener('yt-page-data-updated', () => startCycle('yt-page-data-updated'));
+
+    // Answers `REQUEST_VIDEO_REEMIT` (panel -> background -> here, see
+    // entrypoints/background.ts). Needed because this script otherwise only
+    // ever emits on its own triggers (load, `yt-page-data-updated`) — there is
+    // no other way for a freshly-opened panel to recover the current video
+    // after the service worker's in-memory cache has been evicted. Reuses
+    // `startCycle` rather than re-emitting `lastEmitted` directly so the
+    // response goes through the exact same read/settle/cache path as any
+    // other trigger — an evicted worker also lost whatever it had cached, so
+    // a fresh settle (not just a repeat of the last emission) is what is
+    // actually needed here.
+    //
+    // No response is sent back: the result arrives through the normal
+    // VIDEO_DETECTED broadcast this triggers, same as every other trigger.
+    chrome.runtime.onMessage.addListener((msg: unknown) => {
+      if ((msg as Partial<ReemitVideoMessage>)?.type === 'REEMIT_VIDEO') {
+        startCycle('reemit');
+      }
+      return false;
+    });
   },
 });

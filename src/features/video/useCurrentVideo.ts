@@ -107,6 +107,21 @@ export function useCurrentVideo(): UseCurrentVideoResult {
     // screen while the new tab's state loads.
     setState(null);
 
+    // Ask the content script to push its current report again. This is what
+    // recovers a freshly-opened panel from an evicted service worker: the
+    // background's `latestByTab` map (entrypoints/background.ts) is
+    // in-memory only and does not survive an MV3 idle eviction, and nothing
+    // else re-triggers the content script's settle loop. Fire-and-forget and
+    // harmless to send unconditionally (not gated on `kind`): a non-video
+    // YouTube tab's content script answers `settled`/`meta: null` via its own
+    // `isVideoPage` gate, and a non-YouTube tab has no content script to
+    // reach at all — background already swallows that "no receiving end"
+    // case (see its `REQUEST_VIDEO_REEMIT` handler), so nothing here needs to
+    // special-case it either. One send per `tabId` change, not a loop.
+    void sendMessage({ type: 'REQUEST_VIDEO_REEMIT', payload: { tabId } }).catch(() => {
+      // Background unreachable — same "nothing to do" outcome as below.
+    });
+
     sendMessage({ type: 'GET_CURRENT_VIDEO', payload: { tabId } })
       .then((res) => {
         if (!cancelled) setState(res);
