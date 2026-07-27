@@ -379,28 +379,55 @@ const DESCRIPTION_CONTAINER = 'ytd-structured-description-content-renderer';
  * transcript section appeared in the SAME sample, so a mounted container with
  * no transcript section inside it is a genuine absence.
  *
- * KNOWN TRANSIENT, measured and not fixed here. During an in-page navigation
- * YouTube briefly keeps the PREVIOUS video's engagement panel mounted next to
- * the new one. Sampled synchronously inside a `yt-page-data-updated` handler
- * while arriving at a caption-free video from a captioned one, the document
- * held TWO transcript sections and THREE description containers; 100ms later
- * it held zero and two. So a caller that reads at `yt-page-data-updated` can
- * still see the previous video's captions. Nothing in the document identifies
- * which panel belongs to which video — unlike the duration case, there is no
- * identifier to build a sentinel from — so this function cannot tell, and a
- * caller must read after the DOM settles (Task 7) and must not cache a value
- * read inside that window (Task 8). See task-6-report.md.
+ * ## Why the containers are compared instead of queried once
+ *
+ * During an in-page navigation YouTube mounts the NEW video's description
+ * panel before unmounting the PREVIOUS one, so for a while the document
+ * describes two videos at once. A single `querySelector` finds whichever comes
+ * first in document order, which is the stale one — measured live, that made
+ * the content script report captions on a caption-free video.
+ *
+ * Measured settled shape (4 full loads incl. a Short, plus SPA arrivals):
+ * every description container holds exactly 0 or 1 transcript section and they
+ * always AGREE — 2 containers / 2 transcript sections on a captioned video,
+ * 2 / 0 on a caption-free one, 1 / 0 on a Short. Measured transient shape
+ * (captioned -> caption-free, sampled synchronously in a `yt-page-data-updated`
+ * handler and still true 2.5s later): 3 containers, the fresh one holding 0 and
+ * the two stale ones holding 1 each — they DISAGREE.
+ *
+ * So disagreement is a measured ambiguity detector, and the honest response to
+ * it is to refuse: return `null`, "ask again later". This is not an ownership
+ * heuristic — it never guesses which panel is current, only whether the
+ * document is self-consistent.
+ *
+ * Two other candidates were measured and rejected, recorded so nobody
+ * re-derives them:
+ * - Duplicated `ytd-engagement-panel-section-list-renderer[target-id=
+ *   "engagement-panel-structured-description"]`. It does duplicate sometimes,
+ *   but sampled at the same instant across 6 consecutive SPA transitions the
+ *   count was 1 every time, including transitions the container comparison
+ *   correctly flagged. As a detector it is all false negatives.
+ * - A raw container COUNT (settled 2, transient 3). It works, but only by
+ *   hardcoding the settled count, which any YouTube layout experiment
+ *   invalidates silently. The comparison needs no magic number.
  *
  * What this cannot do: tell 'available' from 'auto-only'. That distinction
  * exists nowhere in the DOM, so captions-that-exist collapse to 'unknown'.
  */
-function captionsFromDom(doc: Document): CaptionAvailability {
-  if (doc.querySelector(TRANSCRIPT_SECTION)) return 'unknown';
-  if (doc.querySelector(DESCRIPTION_CONTAINER)) return 'none';
-  // Neither signal is present: the description subtree has not mounted, or
-  // this is a page shape with no description at all. Nothing was observed, so
-  // nothing is claimed — 'none' would assert an absence never measured.
-  return 'unknown';
+function captionsFromDom(doc: Document): CaptionAvailability | null {
+  const containers = Array.from(doc.querySelectorAll(DESCRIPTION_CONTAINER));
+  // Nothing has mounted (pre-hydration, or a page with no description at all).
+  // 'none' would assert an absence that was never observed.
+  if (containers.length === 0) return null;
+
+  const withTranscript = containers.filter(
+    (container) => container.querySelector(TRANSCRIPT_SECTION) !== null,
+  );
+  if (withTranscript.length === 0) return 'none';
+  if (withTranscript.length === containers.length) return 'unknown';
+
+  // The containers disagree, so at least one belongs to another video.
+  return null;
 }
 
 /**
@@ -419,14 +446,13 @@ function captionsFromDom(doc: Document): CaptionAvailability {
  *               'none'.
  * - mismatch
  *   or absent-> stale. Fall back to the DOM, which can only answer has/hasn't:
- *               'unknown' | 'none'.
+ *               'unknown' | 'none' | `null`.
  *
- * Note 'unknown' is therefore also the value when nothing could be determined
- * at all, which is slightly wider than the "captions exist, kind undetermined"
- * reading in src/types/video.ts. It is the only one of the four that asserts
- * nothing false in that case; see task-6-report.md.
+ * `null` is not one of the four verdicts — it means nothing about captions
+ * could be read, and the caller should ask again after the next event. See
+ * the `captionAvailability` field in src/types/video.ts.
  */
-export function resolveCaptionAvailability(doc: Document, videoId: string): CaptionAvailability {
+function resolveCaptionAvailability(doc: Document, videoId: string): CaptionAvailability | null {
   const response = parseInlinePlayerResponse(doc);
   const scriptVideoId = (response?.videoDetails as { videoId?: unknown } | undefined)?.videoId;
 

@@ -20,7 +20,10 @@ export default defineContentScript({
         `[ypa] ${reason} kind:`,
         kind,
         'captions:',
-        meta?.captionAvailability ?? '(no meta)',
+        // Distinguished on purpose: `null` is a real value meaning "nothing
+        // readable yet, ask again", and `??` would hide it behind the
+        // no-record case.
+        meta ? (meta.captionAvailability ?? 'null (ask again later)') : '(no meta)',
         'meta:',
         meta,
       );

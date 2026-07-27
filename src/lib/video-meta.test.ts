@@ -157,9 +157,9 @@ describe('extractVideoMeta — post-SPA document (stale microdata, different cha
       durationSeconds: 600,
       // This fixture was captured for Task 5 and carries no caption nodes at
       // all — no inline script, no description subtree — so nothing about
-      // captions can be determined from it. See the dedicated caption
-      // fixtures below for the SPA caption cases.
-      captionAvailability: 'unknown',
+      // captions can be read and the honest answer is `null`, "ask again
+      // later". See the dedicated caption fixtures below for the SPA cases.
+      captionAvailability: null,
     });
   });
 
@@ -216,7 +216,7 @@ describe('extractVideoMeta — post-SPA document with a pre-roll ad playing', ()
       channelName: 'IBM Technology',
       thumbnailUrl: 'https://i.ytimg.com/vi/qYNweeDHiyU/hqdefault.jpg',
       durationSeconds: null,
-      captionAvailability: 'unknown',
+      captionAvailability: null,
     });
   });
 });
@@ -345,7 +345,7 @@ describe('extractVideoMeta — live stream (no honest duration exists)', () => {
       channelName: 'Sky News',
       thumbnailUrl: 'https://i.ytimg.com/vi/yq2ozBAd4MI/hqdefault.jpg',
       durationSeconds: null,
-      captionAvailability: 'unknown',
+      captionAvailability: null,
     });
   });
 
@@ -384,7 +384,7 @@ describe('extractVideoMeta — Shorts (behaviour pinned, not accidental)', () =>
       channelName: null,
       thumbnailUrl: 'https://i.ytimg.com/vi/3cRnRfPT7mM/hqdefault.jpg',
       durationSeconds: 71,
-      captionAvailability: 'unknown',
+      captionAvailability: null,
     });
   });
 
@@ -470,16 +470,61 @@ describe('caption availability — the inline player-response script (full loads
     expect(extractVideoMeta(doc, VVV_URL)?.captionAvailability).toBe('available');
   });
 
-  it('survives a player response whose strings contain a literal };', () => {
-    // A non-greedy /(\{[\s\S]*?\});/ regex would truncate here and throw. The
-    // real scripts measured on Chrome 150 were 34KB-671KB with exactly one
-    // "};" in them, so this never fired in practice — but a video description
-    // is free text and one day it will.
+  it('survives a BALANCED brace pair inside a string (kills the non-greedy regex)', () => {
+    // A non-greedy /(\{[\s\S]*?\});/ regex truncates at the "};" inside the
+    // description and throws. The real scripts measured on Chrome 150 were
+    // 34KB-671KB with exactly one "};" in them, so this never fired in
+    // practice — but a video description is free text and one day it will.
+    //
+    // NOTE this case alone does NOT prove string awareness: the braces here
+    // are balanced, so a naive counter that ignores string literals gets the
+    // same answer. The next two tests are the ones that pin that.
     const doc = docWithPlayerResponse(
       'var ytInitialPlayerResponse = {"videoDetails":{"videoId":"vvvvvvvvvvv",' +
         '"shortDescription":"code sample: if (x) {y();};  and more"},' +
         '"captions":{"playerCaptionsTracklistRenderer":{"captionTracks":' +
         '[{"vssId":".en","languageCode":"en"}]}}};var meta = 1;',
+    );
+    expect(extractVideoMeta(doc, VVV_URL)?.captionAvailability).toBe('available');
+  });
+
+  it('survives an UNBALANCED brace inside a string literal', () => {
+    // A counter that does not track string literals sees this lone "}" as the
+    // close of the outer object, slices a prefix, and fails to parse.
+    const doc = docWithPlayerResponse(
+      'var ytInitialPlayerResponse = {"videoDetails":{"videoId":"vvvvvvvvvvv",' +
+        '"shortDescription":"a lone } brace"},"captions":{"playerCaptionsTracklistRenderer":' +
+        '{"captionTracks":[{"vssId":".en"}]}}};',
+    );
+    expect(extractVideoMeta(doc, VVV_URL)?.captionAvailability).toBe('available');
+  });
+
+  it('survives an ODD number of escaped quotes before an unbalanced brace', () => {
+    // Exactly one escaped quote, deliberately. Without escape handling the
+    // scanner treats it as the string's closing quote, so the following } is
+    // read as structural and closes the object early.
+    //
+    // An earlier draft of this test used TWO escaped quotes and did not kill
+    // that mutant: the parity error flipped twice and cancelled out. Odd is
+    // what discriminates.
+    const doc = docWithPlayerResponse(
+      'var ytInitialPlayerResponse = {"videoDetails":{"videoId":"vvvvvvvvvvv",' +
+        '"shortDescription":"he said \\" then } left"},' +
+        '"captions":{"playerCaptionsTracklistRenderer":{"captionTracks":' +
+        '[{"vssId":".en"}]}}};',
+    );
+    expect(extractVideoMeta(doc, VVV_URL)?.captionAvailability).toBe('available');
+  });
+
+  it('survives an ESCAPED BACKSLASH ending a string value', () => {
+    // `\\` is a literal backslash, so the quote that follows it really does
+    // close the string. A scanner that sets `escaped` without ever clearing it
+    // would swallow that quote, never close the string, and give up.
+    const doc = docWithPlayerResponse(
+      'var ytInitialPlayerResponse = {"videoDetails":{"videoId":"vvvvvvvvvvv",' +
+        '"shortDescription":"ends with a backslash \\\\"},' +
+        '"captions":{"playerCaptionsTracklistRenderer":{"captionTracks":' +
+        '[{"vssId":".en"}]}}};',
     );
     expect(extractVideoMeta(doc, VVV_URL)?.captionAvailability).toBe('available');
   });
@@ -497,24 +542,42 @@ describe('caption availability — the inline player-response script (full loads
     expect(result).not.toBe('available');
   });
 
-  it('degrades to the DOM path instead of throwing when the JSON is malformed', () => {
+  it('degrades to the DOM path when the braces never balance', () => {
+    // This payload is brace-UNBALANCED, so the scanner returns null and
+    // JSON.parse is never reached. It pins the scanner's give-up path, not
+    // the try/catch — the next test covers that.
     const doc = loadFixture(CAP_NONE);
     const script = doc.querySelector('script')!;
     script.textContent = 'var ytInitialPlayerResponse = {"videoDetails":{"videoId": ,,,};';
-    // CAP_NONE's DOM has a mounted description subtree and no transcript
-    // section, so the DOM path can still answer.
     expect(() => extractVideoMeta(doc, CAP_NONE_URL)).not.toThrow();
     expect(extractVideoMeta(doc, CAP_NONE_URL)?.captionAvailability).toBe('none');
   });
 
+  it('degrades to the DOM path when the JSON is balanced but invalid', () => {
+    // Balanced braces, so the scanner hands a slice to JSON.parse, which
+    // throws. Without the try/catch that throw escapes extractVideoMeta and
+    // takes the title, channel and duration down with it.
+    const doc = loadFixture(CAP_NONE);
+    doc.querySelector('script')!.textContent =
+      'var ytInitialPlayerResponse = {"videoDetails":{"videoId":,}};';
+    expect(() => extractVideoMeta(doc, CAP_NONE_URL)).not.toThrow();
+    expect(extractVideoMeta(doc, CAP_NONE_URL)?.captionAvailability).toBe('none');
+    // The rest of the record must survive the malformed script untouched.
+    expect(extractVideoMeta(doc, CAP_NONE_URL)?.title).toBe(
+      '[ 8K resolution ] - 10 Hours Black Screen - No Sound',
+    );
+  });
+
   it('degrades to the DOM path when the object never closes', () => {
     const doc = docWithPlayerResponse('var ytInitialPlayerResponse = {"videoDetails": {"videoId": "vvv');
-    expect(extractVideoMeta(doc, VVV_URL)?.captionAvailability).toBe('unknown');
+    // No description subtree on this minimal document either, so nothing at
+    // all is readable: `null`, not a verdict.
+    expect(extractVideoMeta(doc, VVV_URL)?.captionAvailability).toBeNull();
   });
 
   it('ignores a script that merely mentions the variable without assigning it', () => {
     const doc = docWithPlayerResponse('if (window.ytInitialPlayerResponse) { boot(); }');
-    expect(extractVideoMeta(doc, VVV_URL)?.captionAvailability).toBe('unknown');
+    expect(extractVideoMeta(doc, VVV_URL)?.captionAvailability).toBeNull();
   });
 });
 
@@ -539,14 +602,14 @@ describe('caption availability — the DOM fallback (post-SPA, no usable script)
     expect(extractVideoMeta(doc, CAP_NONE_URL)?.captionAvailability).toBe('none');
   });
 
-  it('reports unknown, not none, while the description subtree is still mounting', () => {
+  it('reports null, not none, while the description subtree is still mounting', () => {
     // Measured lazy mount: on a captioned video the transcript section read
     // absent 947ms after load and present at 1599ms. Reading "absent" as "no
     // captions" during that window would be a confident lie, so the mounted
     // container is required as corroboration.
     const doc = loadFixture(SPA_CAP_NONE);
     doc.querySelector('ytd-structured-description-content-renderer')?.remove();
-    expect(extractVideoMeta(doc, CAP_NONE_URL)?.captionAvailability).toBe('unknown');
+    expect(extractVideoMeta(doc, CAP_NONE_URL)?.captionAvailability).toBeNull();
   });
 
   it('never reads data-tooltip-title, which is locale-dependent AND transiently wrong', () => {
@@ -585,49 +648,132 @@ describe('caption availability — the DOM fallback (post-SPA, no usable script)
     expect(extractVideoMeta(doc, FULL_URL)?.captionAvailability).toBe('unknown');
   });
 
-  it('reports unknown when the page carries no caption signal whatsoever', () => {
+  it('reports null when the page carries no caption signal whatsoever', () => {
     // A watch document read before the player or the description exists.
-    // 'none' would assert an absence that was never observed.
+    // 'none' would assert an absence that was never observed, and 'unknown'
+    // would assert that captions exist. Neither was observed.
     const doc = docWithPlayerResponse('/* nothing */');
-    expect(extractVideoMeta(doc, VVV_URL)?.captionAvailability).toBe('unknown');
+    expect(extractVideoMeta(doc, VVV_URL)?.captionAvailability).toBeNull();
   });
 });
 
 describe('caption availability — the measured mid-SPA-transition transient', () => {
-  it('still sees the previous video\'s panel while both are mounted', () => {
-    // Measured synchronously inside a yt-page-data-updated handler, arriving
-    // at the caption-free I_6ZcOo6pnk from a captioned video: the document
-    // held 2 transcript sections and 3 description containers; at +100ms it
-    // held 0 and 2. Nothing in the markup says which panel belongs to which
-    // video, so the pure function cannot tell them apart and reports the
-    // previous video's captions.
-    //
-    // This test does not endorse that answer — it pins it, so the day a
-    // caller starts reading at yt-page-data-updated the failure is a visible
-    // expectation rather than a silent wrong label in the panel.
-    const doc = loadFixture(SPA_CAP_NONE);
-    const stalePanel = doc.createElement('ytd-structured-description-content-renderer');
-    stalePanel.appendChild(
-      doc.createElement('ytd-video-description-transcript-section-renderer'),
+  /**
+   * Rebuilds the shape measured synchronously inside a `yt-page-data-updated`
+   * handler while arriving at the caption-free video from a captioned one:
+   * THREE description containers, the fresh one holding no transcript section
+   * and the two stale ones holding one each. (The settled shape on every
+   * measured page is 2 containers that agree — 2/2 transcript sections on a
+   * captioned video, 2/0 on a caption-free one — so 3 containers that
+   * disagree is the transient, not the resting state.)
+   */
+  function withStalePanels(fixture: string): Document {
+    const doc = loadFixture(fixture);
+    const flexy = doc.querySelector('ytd-watch-flexy')!;
+    const fresh = doc.querySelector('ytd-structured-description-content-renderer');
+    for (let i = 0; i < 2; i += 1) {
+      const stale = doc.createElement('ytd-structured-description-content-renderer');
+      stale.appendChild(doc.createElement('ytd-video-description-transcript-section-renderer'));
+      flexy.insertBefore(stale, fresh);
+    }
+    return doc;
+  }
+
+  it('refuses to answer while the previous video\'s panels are still mounted', () => {
+    const doc = withStalePanels(SPA_CAP_NONE);
+
+    // Guard the premise against the measurement, not against a round number.
+    const containers = doc.querySelectorAll('ytd-structured-description-content-renderer');
+    expect(containers).toHaveLength(3);
+    const holdingTranscript = Array.from(containers).filter((c) =>
+      c.querySelector('ytd-video-description-transcript-section-renderer'),
     );
-    doc.querySelector('ytd-watch-flexy')?.insertBefore(
-      stalePanel,
+    expect(holdingTranscript).toHaveLength(2);
+
+    // A plain querySelector finds the FIRST container in document order, which
+    // is stale, and would report captions on a caption-free video — the exact
+    // wrong answer observed live before this check existed.
+    expect(
+      doc.querySelector('ytd-video-description-transcript-section-renderer'),
+    ).not.toBeNull();
+
+    const result = extractVideoMeta(doc, CAP_NONE_URL)?.captionAvailability;
+    expect(result).toBeNull();
+    expect(result).not.toBe('unknown');
+  });
+
+  it('refuses in the opposite direction too, where the stale panel has no transcript', () => {
+    // Arriving at a CAPTIONED video from a caption-free one. Measured live
+    // this direction happened to resolve correctly (the new panel mounts
+    // before the old one is removed, so a positive leads rather than lags),
+    // but the ambiguity is identical and must not be answered from.
+    const doc = loadFixture(SPA_CAP_UNKNOWN);
+    const stale = doc.createElement('ytd-structured-description-content-renderer');
+    doc.querySelector('ytd-watch-flexy')!.insertBefore(
+      stale,
       doc.querySelector('ytd-structured-description-content-renderer'),
     );
+    expect(extractVideoMeta(doc, FULL_URL)?.captionAvailability).toBeNull();
+  });
 
+  it('answers normally once the containers agree again', () => {
+    // The settled shape: two containers, neither holding a transcript section.
+    const doc = loadFixture(SPA_CAP_NONE);
+    doc.querySelector('ytd-watch-flexy')!.appendChild(
+      doc.createElement('ytd-structured-description-content-renderer'),
+    );
     expect(doc.querySelectorAll('ytd-structured-description-content-renderer')).toHaveLength(2);
-    expect(extractVideoMeta(doc, CAP_NONE_URL)?.captionAvailability).toBe('unknown');
+    expect(extractVideoMeta(doc, CAP_NONE_URL)?.captionAvailability).toBe('none');
   });
 
   it('is unreachable when the inline script is fresh, which is why full loads are safe', () => {
-    // The same stale panel on a full load changes nothing: the sentinel
+    // The same stale panels on a full load change nothing: the sentinel
     // matches, so the player response answers and the DOM is never consulted.
-    const doc = loadFixture(CAP_NONE);
-    const stalePanel = doc.createElement('ytd-structured-description-content-renderer');
-    stalePanel.appendChild(
-      doc.createElement('ytd-video-description-transcript-section-renderer'),
-    );
-    doc.querySelector('ytd-watch-flexy')?.appendChild(stalePanel);
+    const doc = withStalePanels(CAP_NONE);
     expect(extractVideoMeta(doc, CAP_NONE_URL)?.captionAvailability).toBe('none');
+  });
+});
+
+describe('caption availability — watch -> watch via the related rail (stale script present)', () => {
+  const STALE_SCRIPT = 'watch-spa-stale-script.html';
+  const STALE_SCRIPT_URL = 'https://www.youtube.com/watch?v=wDfqXR_5yyQ';
+
+  it('rejects a surviving script that names the PREVIOUS video', () => {
+    const doc = loadFixture(STALE_SCRIPT);
+    // Guard the fixture's premises, all measured on the live transition.
+    const text = doc.querySelector('script')?.textContent ?? '';
+    expect(text).toContain('"videoId":"I_6ZcOo6pnk"');
+    expect(text).not.toContain('"captions"');
+    expect(doc.querySelector('ytd-watch-flexy')?.getAttribute('video-id')).toBe('wDfqXR_5yyQ');
+
+    // Trusting the stale script would report 'none' for a video that has
+    // captions — the exact failure the videoId sentinel exists to prevent.
+    const result = extractVideoMeta(doc, STALE_SCRIPT_URL)?.captionAvailability;
+    expect(result).toBe('unknown');
+    expect(result).not.toBe('none');
+  });
+
+  it('reads the two settled description containers as agreeing', () => {
+    // The settled shape measured on every watch page: two containers, one an
+    // engagement panel and one the inline #structured-description, each
+    // holding exactly one transcript section.
+    const doc = loadFixture(STALE_SCRIPT);
+    const containers = doc.querySelectorAll('ytd-structured-description-content-renderer');
+    expect(containers).toHaveLength(2);
+    expect(
+      Array.from(containers).every((c) =>
+        c.querySelector('ytd-video-description-transcript-section-renderer'),
+      ),
+    ).toBe(true);
+    expect(extractVideoMeta(doc, STALE_SCRIPT_URL)?.captionAvailability).toBe('unknown');
+  });
+
+  it('also rejects the stale microdata duration on the same document', () => {
+    // Task 5's sentinel and Task 6's are independent but must agree that this
+    // document is stale: 36000s is the previous video's ten hours.
+    const meta = extractVideoMeta(loadFixture(STALE_SCRIPT), STALE_SCRIPT_URL);
+    expect(meta?.durationSeconds).toBe(1103); // the fresh clock, 18:23
+    expect(meta?.durationSeconds).not.toBe(36000);
+    expect(meta?.channelName).toBe('딩고 뮤직 / dingo music');
   });
 });

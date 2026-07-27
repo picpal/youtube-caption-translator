@@ -77,6 +77,18 @@ describe('putVideo / getVideo', () => {
     expect(count).toBe(1);
   });
 
+  it('round-trips a null captionAvailability as null, not undefined', async () => {
+    // `null` means "nothing about captions could be read, ask again later",
+    // which is a different instruction to a caller than any of the four
+    // verdicts. If structured clone or the store dropped it to `undefined`,
+    // a consumer using `?? 'none'` would silently invent a negative.
+    const meta = makeMeta({ captionAvailability: null });
+    await putVideo(meta);
+    const result = await getVideo(meta.videoId);
+    expect(result?.captionAvailability).toBeNull();
+    expect('captionAvailability' in (result as object)).toBe(true);
+  });
+
   it('preserves fetchedAt through the round trip', async () => {
     const meta = makeMeta({ fetchedAt: '2026-07-27T12:34:56.789Z' });
     await putVideo(meta);

@@ -1,0 +1,86 @@
+<!-- CAPTURED, not hand-written. THE ONE WHERE THE STALE SCRIPT DISAGREES.
+     How    : full-loaded the caption-free https://www.youtube.com/watch?v=I_6ZcOo6pnk,
+              then genuinely CLICKED a related-rail anchor (CDP
+              Runtime.evaluate -> a.click()), producing a real in-page
+              transition to a CAPTIONED video on a different channel:
+                Matthias Lang / I_6ZcOo6pnk  ->  딩고 뮤직 / wDfqXR_5yyQ
+              Chrome 150.0.7871.184, dev profile, ko-KR, 2026-07-27.
+              A `window.__ypaMarker` set before the click survived it, so this
+              is one document throughout.
+     Why    : the other two SPA fixtures came from a search-results page, which
+              carries NO `var ytInitialPlayerResponse` script at all, so they
+              only exercise the "script absent" branch. This is the common
+              watch -> watch-via-rail shape, where the script SURVIVES and
+              names the PREVIOUS video. Here it says `captions` is absent —
+              trusting it would report 'none' for a video that plainly has
+              captions. Only the videoId sentinel prevents that.
+     State  : STALE inline script (videoDetails.videoId == I_6ZcOo6pnk,
+              measured `'captions' in response === false`) and STALE microdata
+              (meta[itemprop="identifier"] == I_6ZcOo6pnk,
+              meta[itemprop="duration"] == PT600M0S, i.e. the previous video's
+              10 hours) alongside a FRESH ytd-watch-flexy[video-id],
+              #title h1, #owner and .ytp-time-duration (18:23 = 1103s).
+              Both description containers are present and AGREE (one transcript
+              section each), which is the settled shape.
+
+              Note the two containers are genuinely different elements, which
+              is why the settled count is 2 rather than 1: one lives in the
+              engagement panel, the other is the inline `#structured-description`
+              inside ytd-watch-metadata. Both are verbatim below.
+     Reduced: only the nodes the parser reads, plus the CC button (never read,
+              kept so the trap tests can mutate it). The microdata block was
+              trimmed to the itemprops the parser reads. The <script> element
+              is COMPOSED, and this is the disclosure: the real one was 35,251
+              characters; the shape is faithful (assignment at character 0, the
+              real trailing referrer-meta epilogue, the real `nonce=""`, in
+              <body>) and the absence of a `captions` key is verbatim — it was
+              absent in the capture. The ytd-watch-flexy inline `style`
+              attribute was dropped. -->
+<html lang="ko-KR">
+<head>
+<title>아이유(IU)의 킬링보이스를 라이브로! ㅣ 딩고뮤직 - YouTube</title>
+<link rel="canonical" href="https://www.youtube.com/watch?v=wDfqXR_5yyQ">
+</head>
+<body>
+
+<!-- STALE: still the previous video. -->
+<div id="watch7-content" class="watch-main-col" itemscope="" itemid="https://www.youtube.com/watch?v=I_6ZcOo6pnk" itemtype="http://schema.org/VideoObject"><link itemprop="url" href="https://www.youtube.com/watch?v=I_6ZcOo6pnk"><meta itemprop="name" content="[ 8K resolution ] - 10 Hours Black Screen - No Sound"><meta itemprop="identifier" content="I_6ZcOo6pnk"><meta itemprop="duration" content="PT600M0S"><span itemprop="author" itemscope="" itemtype="http://schema.org/Person"><link itemprop="url" href="http://www.youtube.com/@matzelang"><link itemprop="name" content="Matthias Lang"></span></div>
+
+<ytd-watch-flexy class="style-scope ytd-page-manager watch-root-element hide-skeleton" video-id="wDfqXR_5yyQ" reduced-top-margin="" view-transition-enabled="" is-dark-theme="" respect-aspect-ratio="" is-four-three-to-sixteen-nine-video_="" hidden-action-button-target-ids="[]" is-single-column="" full-bleed-player="" role="main" cinematic-light-theme="" watch-metadata-refresh="" has-metadata="" cinematics-active="" response-has-comments="" should-stamp-chat="" should-collapse-donation-shelf="">
+
+  <div id="title" class="style-scope ytd-watch-metadata">
+    <h1 class="style-scope ytd-watch-metadata">
+      <yt-formatted-string force-default-style="" class="style-scope ytd-watch-metadata" title="아이유(IU)의 킬링보이스를 라이브로! ㅣ 딩고뮤직">아이유(IU)의 킬링보이스를 라이브로! ㅣ 딩고뮤직</yt-formatted-string>
+    </h1>
+  </div>
+
+  <div id="owner" class="item style-scope ytd-watch-metadata">
+    <ytd-video-owner-renderer watch-metadata-refresh="" class="style-scope ytd-watch-metadata">
+      <ytd-channel-name id="channel-name" class="style-scope ytd-video-owner-renderer">
+        <a class="yt-simple-endpoint style-scope yt-formatted-string" spellcheck="false" href="/@DingoMusic">딩고 뮤직 / dingo music</a>
+      </ytd-channel-name>
+    </ytd-video-owner-renderer>
+  </div>
+
+  <div id="movie_player" class="html5-video-player ytp-transparent ytp-modern-caption ad-created playing-mode">
+    <div class="ytp-time-display notranslate">
+      <span class="ytp-time-current">0:02</span>
+      <span class="ytp-time-separator"> / </span>
+      <span class="ytp-time-duration">18:23</span>
+    </div>
+    <button class="ytp-subtitles-button ytp-button" aria-keyshortcuts="c" data-priority="5" data-tooltip-title="자막(c)" data-title-no-tooltip="자막" aria-pressed="true" aria-label="자막 사용 불가"></button>
+  </div>
+
+  <ytd-structured-description-content-renderer class="style-scope ytd-engagement-panel-section-list-renderer" engagement-panel="" panel-target-id="engagement-panel-structured-description">
+    <ytd-video-description-transcript-section-renderer class="style-scope ytd-structured-description-content-renderer"></ytd-video-description-transcript-section-renderer>
+  </ytd-structured-description-content-renderer>
+
+  <ytd-structured-description-content-renderer id="structured-description" inline-structured-description="" class="style-scope ytd-watch-metadata" hidden="">
+    <ytd-video-description-transcript-section-renderer class="style-scope ytd-structured-description-content-renderer"></ytd-video-description-transcript-section-renderer>
+  </ytd-structured-description-content-renderer>
+
+</ytd-watch-flexy>
+
+<script nonce="">var ytInitialPlayerResponse = {"responseContext":{},"playabilityStatus":{"status":"OK"},"videoDetails":{"videoId":"I_6ZcOo6pnk","lengthSeconds":"36000"},"microformat":{}};var meta = document.createElement('meta'); meta.name = 'referrer'; meta.content = 'origin-when-cross-origin'; document.getElementsByTagName('head')[0].appendChild(meta);</script>
+</body>
+</html>
