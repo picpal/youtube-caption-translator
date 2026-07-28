@@ -5,6 +5,7 @@ import { putVideo, getTranslation, putTranslation, upsertBatch } from '~/lib/db'
 import { sendMessage } from '~/lib/messaging';
 import { runTranslationPipeline } from '~/features/translation/pipeline';
 import { broadcastToPorts } from '~/features/translation/progress-broadcast';
+import { RefCount } from '~/features/translation/keepalive-refcount';
 import { TRANSLATION_PROGRESS_PORT } from '~/types/message';
 import type {
   AppMessage,
@@ -61,6 +62,51 @@ function broadcastProgress(progress: TranslationProgress): void {
 // exists; see the `START_TRANSLATION` handler below for the add/delete.
 const inFlightTranslations = new Set<string>();
 
+// Task R4 — MV3 service-worker keepalive spanning a translation pipeline's
+// ENTIRE run. Root cause (real-Chrome DoD): Chrome's ~30s SW idle-eviction
+// timer is reset by chrome.* API activity and messaging, but NOT by an
+// in-flight `fetch()` sitting there awaiting a response — a single large
+// Gemini request (the glossary call in particular: one shot at the whole
+// transcript, thinking can't be disabled for this model per R2's revert,
+// and it can legitimately take several minutes) can leave the SW looking
+// idle from Chrome's perspective long enough to be evicted mid-request,
+// silently losing it with no error ever recorded (confirmed: a record stuck
+// at `status:'analyzing'`, empty glossary, no `error` at all). Chunked
+// translation (50 segs/request, ~15s, per-chunk `onProgress` broadcasts —
+// see the `onConnect` comment below) usually stays under that window; one
+// giant glossary call does not.
+//
+// This is deliberately NOT `chrome.alarms` (forbidden by the M2 plan) — a
+// plain `setInterval` calling a cheap chrome.* API (`getPlatformInfo`, which
+// needs no extra permission) every 20s, comfortably under the ~30s idle
+// window, is the standard MV3 SW-keepalive pattern. `RefCount`
+// (keepalive-refcount.ts) makes this safe for CONCURRENT pipelines (two
+// videos translating at once, or a resumed job for one video racing a
+// fresh START_TRANSLATION for another — both track independently in
+// `inFlightTranslations` above): the interval starts on the first pipeline
+// to launch (refcount 0->1) and is only cleared once the LAST active
+// pipeline finishes (refcount 1->0), so one job completing early can never
+// kill the keepalive out from under another still running.
+const pipelineKeepalive = new RefCount();
+let keepaliveIntervalId: ReturnType<typeof setInterval> | null = null;
+
+function acquireKeepalive(): void {
+  if (pipelineKeepalive.acquire()) {
+    keepaliveIntervalId = setInterval(() => {
+      // Return value/promise deliberately ignored — this call's only job is
+      // to touch a chrome.* API so Chrome resets the SW's idle timer.
+      void chrome.runtime.getPlatformInfo();
+    }, 20_000);
+  }
+}
+
+function releaseKeepalive(): void {
+  if (pipelineKeepalive.release() && keepaliveIntervalId !== null) {
+    clearInterval(keepaliveIntervalId);
+    keepaliveIntervalId = null;
+  }
+}
+
 export default defineBackground(() => {
   chrome.sidePanel
     ?.setPanelBehavior?.({ openPanelOnActionClick: true })
@@ -79,16 +125,22 @@ export default defineBackground(() => {
   );
 
   // Registers/deregisters a panel's translation-progress Port. A connected
-  // Port is also what keeps this service worker alive for the duration of a
-  // streaming job — Chrome resets a service worker's idle timer on Port
-  // activity, and every batch's `onProgress` call (`broadcastProgress`
-  // above) posts a message on this same channel while a job is actually
-  // running. No separate keepalive ping is added on top of that: Task 6's
-  // per-batch persistence + resume already makes a worker eviction
-  // recoverable regardless (the Port is the belt, persist+resume is the
-  // suspenders) — an eviction mid-job just means progress streaming pauses
-  // until the panel's next reconnect, not that the job's work is lost, and
-  // `chrome.alarms` is deliberately not used to paper over that (M2 scope).
+  // Port also helps keep this service worker alive — Chrome resets a
+  // service worker's idle timer on Port activity, and every chunk's
+  // `onProgress` call (`broadcastProgress` above) posts a message on this
+  // same channel while a job is running. That alone is NOT sufficient,
+  // though (Task R4): it only covers the gaps BETWEEN progress events, and
+  // a single long-running Gemini request (the glossary call especially) can
+  // sit idle from the SW's perspective for longer than one progress event's
+  // spacing, with no panel Port even required to be connected at all (a
+  // pipeline can be launched — and must keep running — with no panel open).
+  // See the `acquireKeepalive`/`releaseKeepalive` calls in the
+  // `START_TRANSLATION` handler below for the explicit keepalive that now
+  // spans the whole pipeline regardless of Port activity. Task 6's
+  // per-chunk persistence + resume is still the suspenders underneath both:
+  // an eviction that slips through anyway just means the next
+  // START_TRANSLATION (auto-resume or a retry) picks up from the last
+  // persisted chunk, not that the job's work is lost outright.
   chrome.runtime.onConnect.addListener((port) => {
     if (port.name !== TRANSLATION_PROGRESS_PORT) return;
     progressPorts.add(port);
@@ -231,15 +283,20 @@ export async function handle<T extends AppMessage['type']>(
       // pipeline.
       if (!inFlightTranslations.has(payload.videoId)) {
         inFlightTranslations.add(payload.videoId);
+        // Task R4: acquire the keepalive BEFORE the pipeline's first await,
+        // so there is no window where a slow first step (e.g. the initial
+        // `getTranslation` IndexedDB read) runs without it.
+        acquireKeepalive();
 
         // Fire-and-forget: START_TRANSLATION acks "accepted", not
         // "finished". The promise is intentionally not awaited/returned to
         // the caller; its rejection is only logged (there is no one left to
         // answer by the time it could reject — the ack below has already
         // gone out). `.finally` removes this video from the in-flight set
-        // regardless of outcome, so a later START_TRANSLATION (a real
-        // retry, or a future resume) is never dedup'd against a job that
-        // has already settled.
+        // AND releases the keepalive regardless of outcome, so a later
+        // START_TRANSLATION (a real retry, or a future resume) is never
+        // dedup'd against a job that has already settled, and the shared
+        // interval is torn down once nothing needs it anymore.
         void runTranslationPipeline(
           { videoId: payload.videoId, tabId: payload.tabId, key },
           {
@@ -262,6 +319,7 @@ export async function handle<T extends AppMessage['type']>(
           })
           .finally(() => {
             inFlightTranslations.delete(payload.videoId);
+            releaseKeepalive();
           });
       }
 

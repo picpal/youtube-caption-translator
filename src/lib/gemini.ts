@@ -42,6 +42,31 @@ export function classifyFetchError(err: unknown): { reason: 'network'; message: 
   return { reason: 'network', message };
 }
 
+// Task R4 — hard timeout on every Gemini fetch. entrypoints/background.ts's
+// SW keepalive now spans a translation pipeline's whole run specifically so
+// a legitimately slow-but-eventually-successful request survives — but
+// without an upper bound, a genuinely HUNG request (network black hole, a
+// server that never responds at all) would keep the service worker alive
+// forever right along with it. `AbortController.abort()` past this many ms
+// rejects the fetch, which flows through the SAME `classifyFetchError` path
+// as any other network failure — callers never see anything special, just
+// an ordinary `reason:'network'` result (non-fatal for the glossary call
+// via its retry+fallback; recorded as a non-retryable chunk failure for
+// translation, same as any other `'network'` reason — `'network'` isn't
+// `'rate_limit'`, so `callWithRateLimitRetry`, pipeline.ts, does not retry
+// it, and the chunk simply stays pending for a future resume).
+export const GEMINI_FETCH_TIMEOUT_MS = 120_000;
+
+async function fetchWithTimeout(fetchImpl: typeof fetch, url: string, init: RequestInit): Promise<Response> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), GEMINI_FETCH_TIMEOUT_MS);
+  try {
+    return await fetchImpl(url, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
 export async function testGeminiKey(
   key: string,
   opts: GeminiCallOptions = {},
@@ -56,7 +81,7 @@ export async function testGeminiKey(
   const started = performance.now();
   let response: Response;
   try {
-    response = await fetchImpl(url, {
+    response = await fetchWithTimeout(fetchImpl, url, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body,
@@ -146,7 +171,7 @@ async function callGeminiJson(
   const url = `${ENDPOINT}?key=${encodeURIComponent(key)}`;
   let response: Response;
   try {
-    response = await fetchImpl(url, {
+    response = await fetchWithTimeout(fetchImpl, url, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(requestBody),

@@ -1,5 +1,5 @@
-import { describe, expect, it, vi } from 'vitest';
-import { analyzeGlossary, parseRetryDelayMs, testGeminiKey, translateBatch, MODEL_ID } from './gemini';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { GEMINI_FETCH_TIMEOUT_MS, analyzeGlossary, parseRetryDelayMs, testGeminiKey, translateBatch, MODEL_ID } from './gemini';
 import type { GlossaryEntry, TranscriptSegment } from '~/types/transcript';
 
 describe('parseRetryDelayMs', () => {
@@ -484,5 +484,74 @@ describe('translateBatch', () => {
     const result = await translateBatch(SEGS, GLOSSARY, 'AIzaFAKE', { fetchImpl });
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.reason).toBe('unknown');
+  });
+});
+
+// Task R4 — a hung fetch (network black hole, a server that never responds)
+// must not be allowed to keep the SW-keepalive-covered pipeline (and the SW
+// itself) alive forever. `fetchImpl` here deliberately mimics a REAL fetch's
+// abort behavior — it never resolves on its own, only rejecting once the
+// `AbortController`'s signal actually fires — rather than a bare
+// `new Promise(() => {})`, which would hang this test too.
+function neverResolvingAbortableFetch() {
+  return vi.fn((_url: string, init?: RequestInit) => {
+    return new Promise<Response>((_resolve, reject) => {
+      init?.signal?.addEventListener('abort', () => {
+        reject(new DOMException('The operation was aborted.', 'AbortError'));
+      });
+    });
+  });
+}
+
+describe('fetch timeout (Task R4)', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('translateBatch: aborts a hung request at GEMINI_FETCH_TIMEOUT_MS and returns a classified error, not a throw', async () => {
+    vi.useFakeTimers();
+    const fetchImpl = neverResolvingAbortableFetch();
+
+    const resultPromise = translateBatch(SEGS, GLOSSARY, 'AIzaFAKE', { fetchImpl: fetchImpl as unknown as typeof fetch });
+    await vi.advanceTimersByTimeAsync(GEMINI_FETCH_TIMEOUT_MS);
+    const result = await resultPromise;
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toBe('network');
+  });
+
+  it('analyzeGlossary: aborts a hung request at GEMINI_FETCH_TIMEOUT_MS and returns a classified error', async () => {
+    vi.useFakeTimers();
+    const fetchImpl = neverResolvingAbortableFetch();
+
+    const resultPromise = analyzeGlossary('...', 'AIzaFAKE', { fetchImpl: fetchImpl as unknown as typeof fetch });
+    await vi.advanceTimersByTimeAsync(GEMINI_FETCH_TIMEOUT_MS);
+    const result = await resultPromise;
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toBe('network');
+  });
+
+  it('testGeminiKey: aborts a hung request at GEMINI_FETCH_TIMEOUT_MS and returns a classified error', async () => {
+    vi.useFakeTimers();
+    const fetchImpl = neverResolvingAbortableFetch();
+
+    const resultPromise = testGeminiKey('AIzaFAKE', { fetchImpl: fetchImpl as unknown as typeof fetch });
+    await vi.advanceTimersByTimeAsync(GEMINI_FETCH_TIMEOUT_MS);
+    const result = await resultPromise;
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toBe('network');
+  });
+
+  it('does not abort a request that resolves well before the timeout', async () => {
+    vi.useFakeTimers();
+    const fetchImpl = vi.fn().mockResolvedValue(
+      jsonResponse({ candidates: [{ content: { parts: [{ text: '[]' }] } }] }),
+    );
+
+    const result = await translateBatch(SEGS, GLOSSARY, 'AIzaFAKE', { fetchImpl });
+
+    expect(result.ok).toBe(true);
   });
 });
