@@ -1,23 +1,32 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   applyGlossaryConsistency,
-  BACKOFF_MS,
-  BATCH_SIZE,
-  MAX_CONCURRENCY,
+  DEFAULT_RETRY_DELAY_MS,
+  MAX_RATE_LIMIT_RETRIES,
+  MAX_RETRY_DELAY_MS,
+  MAX_SEGMENTS_PER_REQUEST,
   runTranslationPipeline,
   type TranslationPipelineDeps,
 } from './pipeline';
 import { captionHash, dedupeRows, reconstructSentences, rowsToSegments } from '~/lib/transcript-parse';
 import type { RawTranscriptRow } from '~/types/message';
-import type { GlossaryEntry, TranscriptSegment, TranslationRecord } from '~/types/transcript';
+import type { GlossaryEntry, TranscriptSegment, TranslationProgress, TranslationRecord } from '~/types/transcript';
 
 // Everything here drives the REAL `runTranslationPipeline` against injected
 // mocks — no real Gemini, no real IndexedDB, no real chrome.*, no real
-// timers (backoff waits go through the injected `sleep`, asserted on
+// timers (rate-limit waits go through the injected `sleep`, asserted on
 // directly rather than timed). `dedupeRows`/`reconstructSentences`/
 // `rowsToSegments`/`captionHash` ARE the real Task 4 functions: using them
 // (instead of hand-built segment fixtures) is what makes the resume test's
 // captionHash actually line up with what the pipeline computes internally.
+//
+// M2 refactor (single large request + stage progress): the old 8-segment/
+// concurrency-3/fixed-backoff suite below is replaced with tests for
+// MAX_SEGMENTS_PER_REQUEST-sized SEQUENTIAL chunks, retryDelay-honoring 429
+// handling, the truncation guard, and stage-based (not segment-count)
+// progress. The per-chunk persistence/resume behavior itself (deriving
+// pending work from `translatedText === null`, out-of-order-safe failure
+// collection) is unchanged and still covered below.
 
 function pad2(n: number): string {
   return String(n).padStart(2, '0');
@@ -25,7 +34,7 @@ function pad2(n: number): string {
 
 // Each row's text ends in '.', so reconstructSentences (sentence-punctuation
 // flush) turns every row into exactly one segment, 1:1 — the simplest
-// possible fixture for batch-count/index-math assertions.
+// possible fixture for chunk-count/index-math assertions.
 function makeRows(n: number): RawTranscriptRow[] {
   return Array.from({ length: n }, (_, i) => {
     const totalSec = i * 5;
@@ -65,9 +74,13 @@ function makeDeps(overrides: Partial<TranslationPipelineDeps> = {}): Translation
 }
 
 describe('runTranslationPipeline', () => {
-  describe('batch splitting', () => {
-    it('splits N segments into ceil(N/BATCH_SIZE) batches of BATCH_SIZE', async () => {
-      const rows = makeRows(20); // BATCH_SIZE=8 -> 8, 8, 4
+  describe('chunk splitting', () => {
+    it('has MAX_SEGMENTS_PER_REQUEST = 300 (brief: fits a 1hr talk in one request)', () => {
+      expect(MAX_SEGMENTS_PER_REQUEST).toBe(300);
+    });
+
+    it('splits N segments into ceil(N/MAX_SEGMENTS_PER_REQUEST) chunks of at most that size', async () => {
+      const rows = makeRows(350); // -> chunks of [300, 50]
       const translateBatch = vi.fn(async (segs: TranscriptSegment[]) => ({
         ok: true as const,
         translations: segs.map((s) => ({ index: s.index, translatedText: `t${s.index}` })),
@@ -76,24 +89,43 @@ describe('runTranslationPipeline', () => {
 
       const result = await runTranslationPipeline({ videoId: 'v1', tabId: 1, key: 'k' }, deps);
 
-      expect(translateBatch).toHaveBeenCalledTimes(3);
-      const sizes = translateBatch.mock.calls.map(([segs]) => segs.length).sort((a, b) => b - a);
-      expect(sizes).toEqual([8, 8, 4]);
+      expect(translateBatch).toHaveBeenCalledTimes(2);
+      const sizes = translateBatch.mock.calls.map(([segs]) => segs.length);
+      expect(sizes).toEqual([300, 50]);
       expect(result.status).toBe('done');
-      expect(result.segments).toHaveLength(20);
+      expect(result.segments).toHaveLength(350);
       expect(result.segments.every((s) => s.translatedText !== null)).toBe(true);
+      expect(result.totalBatches).toBe(2);
+      expect(result.completedBatches).toBe(2);
+    });
+
+    it('fits a 1hr-talk-sized transcript (247 segments) in exactly one request', async () => {
+      const rows = makeRows(247);
+      const translateBatch = vi.fn(async (segs: TranscriptSegment[]) => ({
+        ok: true as const,
+        translations: segs.map((s) => ({ index: s.index, translatedText: `t${s.index}` })),
+      }));
+      const deps = makeDeps({ requestTranscript: async () => rows, translateBatch });
+
+      const result = await runTranslationPipeline({ videoId: 'v1', tabId: 1, key: 'k' }, deps);
+
+      expect(translateBatch).toHaveBeenCalledTimes(1);
+      expect(result.status).toBe('done');
+      expect(result.totalBatches).toBe(1);
     });
   });
 
-  describe('concurrency cap', () => {
-    it('never has more than MAX_CONCURRENCY translateBatch calls in flight at once', async () => {
-      const rows = makeRows(40); // 5 batches, > MAX_CONCURRENCY
+  describe('sequential execution (never concurrent)', () => {
+    it('never starts the next chunk before the previous one resolves', async () => {
+      const rows = makeRows(700); // 3 chunks: [300, 300, 100]
       const releasers: Array<() => void> = [];
       let active = 0;
       let maxActive = 0;
+      const callOrder: number[][] = [];
       const translateBatch = vi.fn((segs: TranscriptSegment[]) => {
         active += 1;
         maxActive = Math.max(maxActive, active);
+        callOrder.push(segs.map((s) => s.index));
         return new Promise((resolve) => {
           releasers.push(() => {
             active -= 1;
@@ -108,34 +140,45 @@ describe('runTranslationPipeline', () => {
 
       const resultPromise = runTranslationPipeline({ videoId: 'v1', tabId: 1, key: 'k' }, deps);
 
-      // Flush the microtask queue (extract/resume-decision/glossary awaits,
-      // all resolved promises) so the concurrency pool reaches steady state
-      // — poolSize calls made, all awaiting our still-unresolved promises.
+      // Flush the microtask queue (extract/resume-decision/glossary awaits)
+      // so the first chunk's request has actually been sent.
       await new Promise((resolve) => setTimeout(resolve, 0));
-
-      expect(translateBatch).toHaveBeenCalledTimes(MAX_CONCURRENCY);
-      expect(maxActive).toBeLessThanOrEqual(MAX_CONCURRENCY);
+      expect(translateBatch).toHaveBeenCalledTimes(1);
+      expect(maxActive).toBe(1);
 
       while (releasers.length > 0) {
+        const before = translateBatch.mock.calls.length;
         releasers.shift()!();
         // eslint-disable-next-line no-await-in-loop
         await new Promise((resolve) => setTimeout(resolve, 0));
+        // Never more than one in flight, and the next call (if any) only
+        // happens after the previous one's promise was released.
+        expect(maxActive).toBe(1);
+        if (translateBatch.mock.calls.length > before) {
+          expect(active).toBeLessThanOrEqual(1);
+        }
       }
 
       const result = await resultPromise;
       expect(result.status).toBe('done');
-      expect(maxActive).toBeLessThanOrEqual(MAX_CONCURRENCY);
-      expect(translateBatch).toHaveBeenCalledTimes(5);
+      expect(translateBatch).toHaveBeenCalledTimes(3);
+      expect(callOrder).toEqual([
+        Array.from({ length: 300 }, (_, i) => i),
+        Array.from({ length: 300 }, (_, i) => i + 300),
+        Array.from({ length: 100 }, (_, i) => i + 600),
+      ]);
     });
   });
 
-  describe('429 backoff', () => {
-    it('retries a rate-limited batch with the documented exponential schedule, then succeeds', async () => {
-      const rows = makeRows(5); // 1 batch
+  describe('rate-limit (429) retry — honors the server retryDelay', () => {
+    it('sleeps for the parsed "retry in Ns" delay, then succeeds', async () => {
+      const rows = makeRows(5); // 1 chunk
       let calls = 0;
       const translateBatch = vi.fn(async (segs: TranscriptSegment[]) => {
         calls += 1;
-        if (calls <= 2) return { ok: false as const, reason: 'rate_limit' as const, message: 'quota' };
+        if (calls <= 2) {
+          return { ok: false as const, reason: 'rate_limit' as const, message: 'Please retry in 2.5s.' };
+        }
         return {
           ok: true as const,
           translations: segs.map((s) => ({ index: s.index, translatedText: `t${s.index}` })),
@@ -149,26 +192,71 @@ describe('runTranslationPipeline', () => {
 
       const result = await runTranslationPipeline({ videoId: 'v1', tabId: 1, key: 'k' }, deps);
 
-      expect(sleepCalls).toEqual([BACKOFF_MS[0], BACKOFF_MS[1]]);
+      expect(sleepCalls).toEqual([2500, 2500]);
       expect(translateBatch).toHaveBeenCalledTimes(3);
       expect(result.status).toBe('done');
     });
 
-    it('gives up after exhausting the retry budget and records a failure', async () => {
+    it('falls back to DEFAULT_RETRY_DELAY_MS when the message has no parseable delay', async () => {
+      const rows = makeRows(5);
+      let calls = 0;
+      const translateBatch = vi.fn(async (segs: TranscriptSegment[]) => {
+        calls += 1;
+        if (calls === 1) return { ok: false as const, reason: 'rate_limit' as const, message: 'Quota exceeded.' };
+        return {
+          ok: true as const,
+          translations: segs.map((s) => ({ index: s.index, translatedText: `t${s.index}` })),
+        };
+      });
+      const sleepCalls: number[] = [];
+      const sleep = vi.fn(async (ms: number) => {
+        sleepCalls.push(ms);
+      });
+      const deps = makeDeps({ requestTranscript: async () => rows, translateBatch, sleep });
+
+      const result = await runTranslationPipeline({ videoId: 'v1', tabId: 1, key: 'k' }, deps);
+
+      expect(sleepCalls).toEqual([DEFAULT_RETRY_DELAY_MS]);
+      expect(result.status).toBe('done');
+    });
+
+    it('caps the delay at MAX_RETRY_DELAY_MS even when the server asks for longer', async () => {
+      const rows = makeRows(5);
+      let calls = 0;
+      const translateBatch = vi.fn(async (segs: TranscriptSegment[]) => {
+        calls += 1;
+        if (calls === 1) return { ok: false as const, reason: 'rate_limit' as const, message: 'Please retry in 120s.' };
+        return {
+          ok: true as const,
+          translations: segs.map((s) => ({ index: s.index, translatedText: `t${s.index}` })),
+        };
+      });
+      const sleepCalls: number[] = [];
+      const sleep = vi.fn(async (ms: number) => {
+        sleepCalls.push(ms);
+      });
+      const deps = makeDeps({ requestTranscript: async () => rows, translateBatch, sleep });
+
+      await runTranslationPipeline({ videoId: 'v1', tabId: 1, key: 'k' }, deps);
+
+      expect(sleepCalls).toEqual([MAX_RETRY_DELAY_MS]);
+    });
+
+    it('gives up after MAX_RATE_LIMIT_RETRIES and records a failure, never persisting a partial batch as done', async () => {
       const rows = makeRows(5);
       const translateBatch = vi.fn(async () => ({
         ok: false as const,
         reason: 'rate_limit' as const,
-        message: 'quota',
+        message: 'Please retry in 1s.',
       }));
       const sleep = vi.fn(async () => {});
       const deps = makeDeps({ requestTranscript: async () => rows, translateBatch, sleep });
 
       const result = await runTranslationPipeline({ videoId: 'v1', tabId: 1, key: 'k' }, deps);
 
-      // 1 initial attempt + BACKOFF_MS.length retries.
-      expect(translateBatch).toHaveBeenCalledTimes(BACKOFF_MS.length + 1);
-      expect(sleep).toHaveBeenCalledTimes(BACKOFF_MS.length);
+      // 1 initial attempt + MAX_RATE_LIMIT_RETRIES retries.
+      expect(translateBatch).toHaveBeenCalledTimes(MAX_RATE_LIMIT_RETRIES + 1);
+      expect(sleep).toHaveBeenCalledTimes(MAX_RATE_LIMIT_RETRIES);
       expect(result.status).toBe('failed');
       expect(result.error?.step).toBe('translating');
       expect(result.error?.reason).toContain('rate_limit');
@@ -176,21 +264,60 @@ describe('runTranslationPipeline', () => {
     });
   });
 
-  describe('resume under concurrency', () => {
-    it('retranslates only batches with a pending (null) segment, leaving already-done batches untouched', async () => {
-      const rows = makeRows(24); // 3 batches of 8: [0-7], [8-15], [16-23]
+  describe('truncation guard', () => {
+    it('marks a chunk failed (not retried, not persisted as done) when translateBatch reports reason:truncated', async () => {
+      const rows = makeRows(5);
+      const translateBatch = vi.fn(async () => ({
+        ok: false as const,
+        reason: 'truncated' as const,
+        message: 'Response truncated at the model output token limit (finishReason: MAX_TOKENS)',
+      }));
+      const sleep = vi.fn(async () => {});
+      const upsertBatch = vi.fn(async () => {});
+      const deps = makeDeps({ requestTranscript: async () => rows, translateBatch, sleep, upsertBatch });
+
+      const result = await runTranslationPipeline({ videoId: 'v1', tabId: 1, key: 'k' }, deps);
+
+      expect(translateBatch).toHaveBeenCalledTimes(1); // no retry for a truncation
+      expect(sleep).not.toHaveBeenCalled();
+      expect(upsertBatch).not.toHaveBeenCalled();
+      expect(result.status).toBe('failed');
+      expect(result.error?.reason).toContain('truncated');
+      expect(result.segments.every((s) => s.translatedText === null)).toBe(true);
+    });
+
+    it('marks a chunk failed when translateBatch reports reason:bad_json', async () => {
+      const rows = makeRows(5);
+      const translateBatch = vi.fn(async () => ({
+        ok: false as const,
+        reason: 'bad_json' as const,
+        message: 'Could not parse translation response',
+      }));
+      const deps = makeDeps({ requestTranscript: async () => rows, translateBatch });
+
+      const result = await runTranslationPipeline({ videoId: 'v1', tabId: 1, key: 'k' }, deps);
+
+      expect(translateBatch).toHaveBeenCalledTimes(1);
+      expect(result.status).toBe('failed');
+      expect(result.error?.reason).toContain('bad_json');
+    });
+  });
+
+  describe('resume', () => {
+    it('retranslates only chunks with a pending (null) segment, leaving already-done chunks untouched', async () => {
+      const rows = makeRows(900); // 3 chunks of 300: [0-299], [300-599], [600-899]
       const parsedSegments = rowsToSegments(reconstructSentences(dedupeRows(rows)), 'v1');
       const fullText = parsedSegments.map((s) => s.sourceText).join('\n');
       const hash = captionHash(fullText);
 
-      // Batch 1 (indices 8-15) is already fully translated from a prior
-      // run; batches 0 and 2 are not. `completedBatches: 2` is deliberately
+      // Chunk 1 (indices 300-599) is already fully translated from a prior
+      // run; chunks 0 and 2 are not. `completedBatches: 2` is deliberately
       // MISLEADING — a naive "resume from completedBatches" implementation
-      // would read this as "batches 0 and 1 are done, only batch 2 is
-      // pending" and wrongly skip batch 0.
+      // would read this as "chunks 0 and 1 are done, only chunk 2 is
+      // pending" and wrongly skip chunk 0.
       const seededSegments = parsedSegments.map((s, i) => ({
         ...s,
-        translatedText: i >= 8 && i < 16 ? `seeded-${i}` : null,
+        translatedText: i >= 300 && i < 600 ? `seeded-${i}` : null,
       }));
 
       const existing: TranslationRecord = {
@@ -225,15 +352,10 @@ describe('runTranslationPipeline', () => {
       // be re-analyzed on resume.
       expect(analyzeGlossary).not.toHaveBeenCalled();
 
-      // Only batch 0 and batch 2 were pending.
+      // Only chunk 0 and chunk 2 were pending.
       expect(translateBatch).toHaveBeenCalledTimes(2);
-      const requestedIndexRanges = translateBatch.mock.calls
-        .map(([segs]) => (segs as TranscriptSegment[]).map((s) => s.index))
-        .sort((a, b) => a[0] - b[0]);
-      expect(requestedIndexRanges).toEqual([
-        [0, 1, 2, 3, 4, 5, 6, 7],
-        [16, 17, 18, 19, 20, 21, 22, 23],
-      ]);
+      const requestedIndexRanges = translateBatch.mock.calls.map(([segs]) => (segs as TranscriptSegment[])[0].index);
+      expect(requestedIndexRanges).toEqual([0, 600]); // sequential, ascending order
 
       expect(deps.upsertBatch).toHaveBeenCalledWith('v1', 0, expect.any(Array));
       expect(deps.upsertBatch).toHaveBeenCalledWith('v1', 2, expect.any(Array));
@@ -241,9 +363,9 @@ describe('runTranslationPipeline', () => {
 
       expect(result.status).toBe('done');
       expect(result.segments.every((s) => s.translatedText !== null)).toBe(true);
-      for (let i = 0; i < 8; i += 1) expect(result.segments[i].translatedText).toBe(`new-${i}`);
-      for (let i = 8; i < 16; i += 1) expect(result.segments[i].translatedText).toBe(`seeded-${i}`);
-      for (let i = 16; i < 24; i += 1) expect(result.segments[i].translatedText).toBe(`new-${i}`);
+      for (let i = 0; i < 300; i += 1) expect(result.segments[i].translatedText).toBe(`new-${i}`);
+      for (let i = 300; i < 600; i += 1) expect(result.segments[i].translatedText).toBe(`seeded-${i}`);
+      for (let i = 600; i < 900; i += 1) expect(result.segments[i].translatedText).toBe(`new-${i}`);
       expect(result.completedBatches).toBe(3);
     });
 
@@ -477,21 +599,50 @@ describe('runTranslationPipeline', () => {
     });
   });
 
-  describe('onProgress step sequence', () => {
-    it('emits extract -> analyze -> translate -> done, with correct done/total', async () => {
-      const rows = makeRows(5); // 1 batch, deterministic ordering
-      const progress: Array<{ step: number; status: string; done: number; total: number }> = [];
-      const onProgress = vi.fn((p) => progress.push(p));
+  describe('onProgress stage sequence', () => {
+    it('emits extract -> analyze -> translate(sending/receiving/parsing) -> chunk-done -> done for a single-chunk job', async () => {
+      const rows = makeRows(5); // 1 chunk, deterministic ordering
+      const progress: TranslationProgress[] = [];
+      const onProgress = vi.fn((p: TranslationProgress) => progress.push(p));
       const deps = makeDeps({ requestTranscript: async () => rows, onProgress });
 
       await runTranslationPipeline({ videoId: 'v1', tabId: 1, key: 'k' }, deps);
 
-      expect(progress.map((p) => p.step)).toEqual([1, 2, 3, 3, 4]);
-      expect(progress[0]).toMatchObject({ status: 'extracting', done: 0, total: 0 });
-      expect(progress[1]).toMatchObject({ status: 'analyzing', done: 0, total: 5 });
-      expect(progress[2]).toMatchObject({ status: 'translating', done: 0, total: 5 });
-      expect(progress[3]).toMatchObject({ status: 'translating', done: 5, total: 5 });
-      expect(progress[4]).toMatchObject({ status: 'done', done: 5, total: 5 });
+      expect(progress.map((p) => p.step)).toEqual([1, 2, 3, 3, 3, 3, 3, 4]);
+      expect(progress.map((p) => p.phase)).toEqual([
+        undefined,
+        undefined,
+        undefined,
+        'sending',
+        'receiving',
+        'parsing',
+        undefined,
+        undefined,
+      ]);
+      expect(progress[0]).toMatchObject({ status: 'extracting', chunkIndex: 0, totalChunks: 0 });
+      expect(progress[1]).toMatchObject({ status: 'analyzing', chunkIndex: 0, totalChunks: 1 });
+      expect(progress[2]).toMatchObject({ status: 'translating', chunkIndex: 0, totalChunks: 1 });
+      expect(progress[3]).toMatchObject({ status: 'translating', chunkIndex: 0, totalChunks: 1 });
+      expect(progress[4]).toMatchObject({ status: 'translating', chunkIndex: 0, totalChunks: 1 });
+      expect(progress[5]).toMatchObject({ status: 'translating', chunkIndex: 0, totalChunks: 1 });
+      expect(progress[6]).toMatchObject({ status: 'translating', chunkIndex: 1, totalChunks: 1 });
+      expect(progress[7]).toMatchObject({ status: 'done', chunkIndex: 1, totalChunks: 1 });
+    });
+
+    it('reports a monotonically non-decreasing chunkIndex across a multi-chunk job', async () => {
+      const rows = makeRows(350); // 2 chunks: [300, 50]
+      const progress: TranslationProgress[] = [];
+      const onProgress = vi.fn((p: TranslationProgress) => progress.push(p));
+      const deps = makeDeps({ requestTranscript: async () => rows, onProgress });
+
+      await runTranslationPipeline({ videoId: 'v1', tabId: 1, key: 'k' }, deps);
+
+      const chunkIndices = progress.map((p) => p.chunkIndex);
+      for (let i = 1; i < chunkIndices.length; i += 1) {
+        expect(chunkIndices[i]).toBeGreaterThanOrEqual(chunkIndices[i - 1]);
+      }
+      expect(chunkIndices[0]).toBe(0);
+      expect(chunkIndices.at(-1)).toBe(2);
     });
   });
 });

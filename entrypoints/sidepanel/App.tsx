@@ -5,7 +5,7 @@ import { TranscriptList } from '~/components/TranscriptList';
 import { UnsupportedBanner } from '~/components/UnsupportedBanner';
 import { VideoCard } from '~/components/VideoCard';
 import { useApiKey } from '~/features/api-key/useApiKey';
-import { progressPercent, stepForStatus, type ProcessingStep } from '~/features/translation/progress-display';
+import { progressPercent, stepForStatus, translatePhaseLabel, type ProcessingStep } from '~/features/translation/progress-display';
 import { useTranslation, type TranslationProgressState } from '~/features/translation/useTranslation';
 import { useCurrentVideo } from '~/features/video/useCurrentVideo';
 import { formatTimestamp } from '~/lib/transcript-parse';
@@ -421,15 +421,20 @@ function processingLabel(
 ): string {
   if (status === 'extracting') return 'Transcript 추출 중…';
   if (status === 'analyzing') return '용어 분석 중…';
-  // 'translating' is the only step whose progress event actually streams
-  // (pipeline.ts emits one `onProgress` per completed batch), so it is the
-  // only label worth a live percent. `progress` can still briefly be `null`
-  // here — e.g. a panel reopened onto an already-`translating` record whose
-  // status came from the initial GET_TRANSLATION fetch, before this
-  // session's own Port has delivered a first message for the resumed job —
-  // so this guards on more than just `total === 0`.
+  // 'translating' is the only step whose progress event carries a live
+  // sub-phase (pipeline.ts emits `sending`/`receiving`/`parsing` per chunk,
+  // M2 refactor §4 — no more per-segment counter). `progress` can still
+  // briefly be `null` here — e.g. a panel reopened onto an already-
+  // `translating` record whose status came from the initial GET_TRANSLATION
+  // fetch, before this session's own Port has delivered a first message for
+  // the resumed job.
   if (progress === null) return '한국어 번역 중…';
-  return `한국어 번역 중… ${progressPercent(progress.done, progress.total)}%`;
+  const phaseLabel = translatePhaseLabel(progress.phase);
+  // Multi-chunk videos (2hr+) additionally show which chunk is in progress;
+  // most videos are a single chunk, where this suffix would just be a
+  // redundant "1/1" — omitted in that case.
+  const chunkSuffix = progress.totalChunks > 1 ? ` (${progress.chunkIndex}/${progress.totalChunks})` : '';
+  return phaseLabel ? `한국어 번역 중… ${phaseLabel}${chunkSuffix}` : `한국어 번역 중…${chunkSuffix}`;
 }
 
 const STEP_LABELS = ['Transcript 추출', '용어 분석', '한국어 번역', '자막 적용'] as const;
@@ -457,10 +462,11 @@ function stepVisualState(
   return 'pending';
 }
 
-// The idle-state hint is the original static copy; while a job is actively
-// processing it is replaced with a live `done / total` count — guarded the
-// same way `progressPercent` is (a `total` of 0, or no `progress` at all
-// yet, just omits the count rather than rendering a bogus "0 / 0").
+// The idle-state hint is the original static copy; while a translate-step
+// job is actively processing it is replaced with the live sending/
+// receiving/parsing phase label (M2 refactor §4 — no more per-segment
+// counter). `translatePhaseLabel` returning `null` (no phase yet, or a step
+// other than translating) just omits the phase clause.
 function stepperCaption(
   status: TranslationStatus | 'idle',
   progress: TranslationProgressState | null,
@@ -468,9 +474,8 @@ function stepperCaption(
   if (status === 'failed') return '실패한 단계부터 다시 시도할 수 있습니다';
   if (status === 'done') return '번역이 완료되었습니다';
   if (status === 'idle') return '약 40초 소요 · 처리 중에도 영상은 계속 재생됩니다';
-  if (progress && progress.total > 0) {
-    return `${progress.done} / ${progress.total} · 처리 중에도 영상은 계속 재생됩니다`;
-  }
+  const phaseLabel = status === 'translating' ? translatePhaseLabel(progress?.phase) : null;
+  if (phaseLabel) return `${phaseLabel} · 처리 중에도 영상은 계속 재생됩니다`;
   return '처리 중에도 영상은 계속 재생됩니다';
 }
 
@@ -508,9 +513,12 @@ function ProcessingStepper({
           const stepNum = i + 1;
           const state = stepVisualState(stepNum, activeStep, status);
           const marker = state === 'done' ? '✓' : state === 'failed' ? '!' : String(stepNum);
+          // Chunk-based percent (M2 refactor §4) — monotonic across the
+          // job: `chunkIndex` only ever advances forward as chunks complete,
+          // never regresses on a same-chunk retry.
           const percent =
             state === 'active' && status === 'translating' && progress
-              ? ` ${progressPercent(progress.done, progress.total)}%`
+              ? ` ${progressPercent(progress.chunkIndex, progress.totalChunks)}%`
               : '';
           return (
             <Fragment key={label}>

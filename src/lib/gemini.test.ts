@@ -1,6 +1,24 @@
 import { describe, expect, it, vi } from 'vitest';
-import { analyzeGlossary, testGeminiKey, translateBatch, MODEL_ID } from './gemini';
+import { analyzeGlossary, parseRetryDelayMs, testGeminiKey, translateBatch, MODEL_ID } from './gemini';
 import type { GlossaryEntry, TranscriptSegment } from '~/types/transcript';
+
+describe('parseRetryDelayMs', () => {
+  it('parses a whole-second "retry in Ns" hint to milliseconds', () => {
+    expect(parseRetryDelayMs('Please retry in 55s.')).toBe(55_000);
+  });
+
+  it('parses a fractional-second hint', () => {
+    expect(parseRetryDelayMs('Please retry in 55.5s.')).toBe(55_500);
+  });
+
+  it('is case-insensitive and tolerant of surrounding text', () => {
+    expect(parseRetryDelayMs('Quota exceeded. RETRY IN 3s to continue.')).toBe(3_000);
+  });
+
+  it('returns undefined when the message has no parseable delay', () => {
+    expect(parseRetryDelayMs('Quota exceeded for this project.')).toBeUndefined();
+  });
+});
 
 function jsonResponse(body: unknown, init: ResponseInit = {}): Response {
   return new Response(JSON.stringify(body), {
@@ -327,13 +345,47 @@ describe('translateBatch', () => {
     });
   });
 
-  it('returns ok:false reason:unknown on broken JSON, without throwing', async () => {
+  it('returns ok:false reason:bad_json on broken JSON, without throwing', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(
       jsonResponse({ candidates: [{ content: { parts: [{ text: 'not json[[[' }] } }] }),
     );
     const result = await translateBatch(SEGS, GLOSSARY, 'AIzaFAKE', { fetchImpl });
     expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.reason).toBe('unknown');
+    if (!result.ok) expect(result.reason).toBe('bad_json');
+  });
+
+  // M2 refactor §2 — a chunk that hit the model's MAX_TOKENS output cap must
+  // be a clean failure, never a silently-accepted partial result, even when
+  // the truncated text happens to still parse as valid JSON for whichever
+  // segments landed before the cutoff.
+  it('returns ok:false reason:truncated when finishReason is MAX_TOKENS, even if the partial JSON parses', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(
+      jsonResponse({
+        candidates: [{
+          content: { parts: [{ text: JSON.stringify([{ index: 0, translatedText: '오늘은...' }]) }] },
+          finishReason: 'MAX_TOKENS',
+        }],
+      }),
+    );
+    const result = await translateBatch(SEGS, GLOSSARY, 'AIzaFAKE', { fetchImpl });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.reason).toBe('truncated');
+      expect(result.message).toMatch(/MAX_TOKENS/);
+    }
+  });
+
+  it('does not flag a normal STOP finish as truncated', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(
+      jsonResponse({
+        candidates: [{
+          content: { parts: [{ text: JSON.stringify([{ index: 0, translatedText: '번역됨' }]) }] },
+          finishReason: 'STOP',
+        }],
+      }),
+    );
+    const result = await translateBatch([SEGS[0]], GLOSSARY, 'AIzaFAKE', { fetchImpl });
+    expect(result).toEqual({ ok: true, translations: [{ index: 0, translatedText: '번역됨' }] });
   });
 
   it('returns ok:false reason:unknown when there are no candidates', async () => {

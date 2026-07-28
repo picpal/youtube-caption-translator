@@ -1,4 +1,5 @@
 import { captionHash, dedupeRows, reconstructSentences, rowsToSegments } from '~/lib/transcript-parse';
+import { parseRetryDelayMs } from '~/lib/gemini';
 import type { AnalyzeGlossaryResult, TranslateBatchResult } from '~/lib/gemini';
 import type { RequestTranscriptResponse } from '~/types/message';
 import type {
@@ -12,28 +13,51 @@ import type {
 // M2 Task 6 — the translation pipeline orchestrator. Wires Task 4's pure
 // parser, Task 5's Gemini client, and Task 3's IndexedDB store into one
 // async job: extract -> (cache/resume decision) -> analyze glossary ->
-// translate in concurrency-capped batches with 429 backoff -> consistency
-// post-process -> done. Every side-effecting collaborator is INJECTED via
-// `deps` so this file never touches real Gemini/IndexedDB/Chrome/timers —
-// `pipeline.test.ts` drives it entirely with mocks and an injectable
-// `sleep`, and `entrypoints/background.ts` assembles the real `deps`.
+// translate SEQUENTIALLY in a few large chunks with retryDelay-honoring 429
+// handling -> consistency post-process -> done. Every side-effecting
+// collaborator is INJECTED via `deps` so this file never touches real
+// Gemini/IndexedDB/Chrome/timers — `pipeline.test.ts` drives it entirely
+// with mocks and an injectable `sleep`, and `entrypoints/background.ts`
+// assembles the real `deps`.
+//
+// Refactor note (see .superpowers/sdd/2026-07-28-m2-caption-translation/
+// refactor-single-request-brief.md): this SUPERSEDES the original plan §4
+// "8-segment batches at concurrency 3" design, which fanned out into ~30+
+// requests for a 1hr video and blew straight through the free-tier ~RPM 5
+// limit. User-authorized switch (2026-07-28) to as-few-as-possible large
+// sequential requests + stage-based progress instead. The per-chunk
+// persistence/resume machinery below (`upsertBatch`, deriving pending work
+// from `translatedText === null`, out-of-order-safe failure collection) is
+// UNCHANGED from the original design — only the request SHAPE (chunk size,
+// sequential instead of concurrent) and the retry/progress reporting around
+// it changed.
 
-/** Segments per Gemini `translateBatch` call. Plan §4 calls for 5-10; picked
- * the middle of that range as a default with no measured reason to prefer
- * either edge yet — revisit with real-Chrome timing if it turns out to be
- * wrong in either direction. */
-export const BATCH_SIZE = 8;
+/** Segments packed into a single `translateBatch` call ("chunk"). Sized so
+ * a 1hr talk (~247 merged segments) fits in exactly ONE request: at a
+ * worst-case ~90 output tokens/segment, 300 segments ≈ 27k output tokens,
+ * ~40% of `gemini-3.6-flash`'s 65,536 output-token cap — 2x headroom against
+ * truncation. Only 2hr+ videos split into 2-3 sequential chunks. */
+export const MAX_SEGMENTS_PER_REQUEST = 300;
 
-/** Max simultaneously in-flight `translateBatch` calls (plan §4: "동시성
- * ≤3"). Enforced by `runWithConcurrencyLimit` below, a small fixed-size
- * worker pool — never `Promise.all` over every batch at once. */
-export const MAX_CONCURRENCY = 3;
+/** Bounded retry count for a `rate_limit` (429) chunk result (brief §3:
+ * "2-3"). Picked the lower end deliberately: each retry now waits out the
+ * SERVER'S OWN reported delay (often 40-60s on the free tier, see
+ * `parseRetryDelayMs`/`MAX_RETRY_DELAY_MS` below), so 2 retries already
+ * means a chunk can spend up to ~2 minutes waiting before it is recorded as
+ * a failure — 3 would risk the pipeline stalling even longer for no better
+ * odds of success once the free-tier quota is genuinely exhausted. */
+export const MAX_RATE_LIMIT_RETRIES = 2;
 
-/** Exponential backoff schedule (ms) for a `rate_limit` (429) batch result,
- * per plan §4 ("예: 1s,2s,4s,최대 3~4회"). `BACKOFF_MS.length` (3) retries
- * are attempted after the first try, so a batch gets up to 4 attempts total
- * before it is recorded as a failure. */
-export const BACKOFF_MS = [1000, 2000, 4000];
+/** Upper bound on how long a single rate-limit wait is allowed to be, even
+ * if the server's own message asks for longer (brief §3: "capped at a sane
+ * max, e.g. 65s"). */
+export const MAX_RETRY_DELAY_MS = 65_000;
+
+/** Fallback wait when a `rate_limit` result's message has no parseable
+ * "retry in Ns" hint (`parseRetryDelayMs` returns `undefined`) — still a
+ * real wait rather than an immediate retry, just without server-provided
+ * guidance on how long. */
+export const DEFAULT_RETRY_DELAY_MS = 5_000;
 
 export interface TranslationPipelineDeps {
   /** Asks the content script on `tabId` for the raw transcript rows of
@@ -48,12 +72,13 @@ export interface TranslationPipelineDeps {
   getTranslation: (videoId: string) => Promise<TranslationRecord | null>;
   putTranslation: (rec: TranslationRecord) => Promise<void>;
   upsertBatch: (videoId: string, batchIdx: number, segs: TranscriptSegment[]) => Promise<void>;
-  /** Injectable so backoff waits are instant in tests — never a bare
-   * `setTimeout` call inside this file. */
+  /** Injectable so retry/rate-limit waits are instant in tests — never a
+   * bare `setTimeout` call inside this file. */
   sleep: (ms: number) => Promise<void>;
-  /** Fired at least once per pipeline step (1-4) and once per completed
-   * batch during step 3. Fire-and-forget from this file's point of view —
-   * the pipeline does not await or react to it. */
+  /** Fired at every stage transition (step 1-4), plus, during step 3, once
+   * per chunk sub-phase (`sending`/`receiving`/`parsing`) and once more when
+   * a chunk finishes persisting. Fire-and-forget from this file's point of
+   * view — the pipeline does not await or react to it. */
   onProgress: (progress: TranslationProgress) => void;
 }
 
@@ -61,10 +86,6 @@ export interface RunTranslationPipelineParams {
   videoId: string;
   tabId: number;
   key: string;
-}
-
-function countDone(segments: TranscriptSegment[]): number {
-  return segments.filter((seg) => seg.translatedText !== null).length;
 }
 
 /**
@@ -83,14 +104,14 @@ function glossaryResolved(record: TranslationRecord): boolean {
   return false;
 }
 
-interface BatchFailure {
-  batchIdx: number;
+interface ChunkFailure {
+  chunkIdx: number;
   reason: string;
   message: string;
 }
 
-function summarizeFailures(failures: BatchFailure[]): string {
-  return failures.map((f) => `batch ${f.batchIdx}: ${f.reason} (${f.message})`).join('; ');
+function summarizeFailures(failures: ChunkFailure[]): string {
+  return failures.map((f) => `chunk ${f.chunkIdx}: ${f.reason} (${f.message})`).join('; ');
 }
 
 function errorMessage(err: unknown): string {
@@ -142,42 +163,16 @@ async function failPipeline(
   deps.onProgress({
     videoId,
     status: 'failed',
-    done: countDone(rec.segments),
-    total: rec.segments.length,
     step: progressStep,
+    // Best-effort chunk counts for a step-1/2 failure: `rec.totalBatches` is
+    // only meaningfully nonzero here when `base` (a preserved prior record)
+    // already had chunk progress from an earlier attempt — a fresh failure
+    // has nothing chunk-level to report yet, which is exactly what 0/0 (and
+    // progressPercent's divide-by-zero guard) conveys.
+    chunkIndex: rec.completedBatches,
+    totalChunks: rec.totalBatches,
   });
   return rec;
-}
-
-/**
- * Runs `worker` over `items` with at most `limit` calls in flight at once —
- * a fixed-size pool of `limit` runners each pulling the next item off a
- * shared cursor, rather than `Promise.all(items.map(worker))` (unbounded
- * concurrency) or one-at-a-time (no concurrency). Order of START is by
- * `items` order; order of COMPLETION is whatever each `worker` call takes,
- * which is exactly why batch persistence (`upsertBatch`) must be
- * self-contained per call rather than relying on completion order.
- */
-async function runWithConcurrencyLimit<T>(
-  items: T[],
-  limit: number,
-  worker: (item: T) => Promise<void>,
-): Promise<void> {
-  let cursor = 0;
-  const poolSize = Math.max(0, Math.min(limit, items.length));
-  const runners: Promise<void>[] = [];
-  for (let i = 0; i < poolSize; i += 1) {
-    runners.push(
-      (async () => {
-        while (cursor < items.length) {
-          const item = items[cursor];
-          cursor += 1;
-          await worker(item);
-        }
-      })(),
-    );
-  }
-  await Promise.all(runners);
 }
 
 function escapeRegExp(term: string): string {
@@ -250,7 +245,7 @@ export async function runTranslationPipeline(
   const { videoId, tabId, key } = params;
 
   // --- Step 1: extract -------------------------------------------------
-  deps.onProgress({ videoId, status: 'extracting', done: 0, total: 0, step: 1 });
+  deps.onProgress({ videoId, status: 'extracting', step: 1, chunkIndex: 0, totalChunks: 0 });
 
   // Read whatever is currently persisted for this video FIRST, before any
   // extraction work — moved up front (final-review fix) specifically so a
@@ -335,7 +330,11 @@ export async function runTranslationPipeline(
 
   const fullText = segments.map((seg) => seg.sourceText).join('\n');
   const hash = captionHash(fullText);
-  const totalBatches = segments.length === 0 ? 0 : Math.ceil(segments.length / BATCH_SIZE);
+  // Named `totalChunks` (not `totalBatches`) at this call site on purpose —
+  // this IS the same number as the persisted record's `totalBatches` field
+  // (schema unchanged, brief §5), just under the name this refactor uses for
+  // it everywhere outside the record shape itself.
+  const totalChunks = segments.length === 0 ? 0 : Math.ceil(segments.length / MAX_SEGMENTS_PER_REQUEST);
 
   // --- Step 2: cache/resume decision ------------------------------------
   if (existing && existing.captionHash === hash && existing.status === 'done') {
@@ -343,9 +342,9 @@ export async function runTranslationPipeline(
     deps.onProgress({
       videoId,
       status: 'done',
-      done: existing.segments.length,
-      total: existing.segments.length,
       step: 4,
+      chunkIndex: existing.totalBatches,
+      totalChunks: existing.totalBatches,
     });
     return existing;
   }
@@ -370,7 +369,7 @@ export async function runTranslationPipeline(
       segments,
       glossary: [],
       completedBatches: 0,
-      totalBatches,
+      totalBatches: totalChunks,
       createdAt: now,
       updatedAt: now,
     };
@@ -389,9 +388,9 @@ export async function runTranslationPipeline(
   deps.onProgress({
     videoId,
     status: 'analyzing',
-    done: countDone(record.segments),
-    total: record.segments.length,
     step: 2,
+    chunkIndex: record.completedBatches,
+    totalChunks: record.totalBatches,
   });
 
   let glossary: GlossaryEntry[];
@@ -411,58 +410,75 @@ export async function runTranslationPipeline(
     }
   }
 
-  // --- Step 3: translate in concurrency-capped, backoff-retried batches -
-  const total = record.segments.length;
+  // --- Step 3: translate SEQUENTIALLY in large chunks, honoring the
+  // server's own retry-after delay on a 429 ------------------------------
   // `liveSegments` is this run's in-memory mirror of the record's segments,
   // kept index-aligned with `record.segments` (rowsToSegments assigns
   // contiguous `index` 0..n-1 in array order, and upsertBatch/db.ts's merge
   // preserves that order, so `liveSegments[i].index === i` holds). Mutating
   // this array (rather than re-reading `deps.getTranslation` after every
-  // batch) is safe because JS has no true parallelism — concurrent batch
-  // workers below only interleave at `await` points, never mid-statement.
+  // chunk) is safe now for an even simpler reason than before: chunks run
+  // one at a time, so there is no interleaving to reason about at all.
   const liveSegments = record.segments.slice();
-  let doneCount = countDone(liveSegments);
-  let completedBatches = record.completedBatches;
+  let completedChunks = record.completedBatches;
 
-  deps.onProgress({ videoId, status: 'translating', done: doneCount, total, step: 3 });
+  deps.onProgress({ videoId, status: 'translating', step: 3, chunkIndex: completedChunks, totalChunks });
 
-  function batchRange(batchIdx: number): [number, number] {
-    return [batchIdx * BATCH_SIZE, Math.min((batchIdx + 1) * BATCH_SIZE, liveSegments.length)];
+  function chunkRange(chunkIdx: number): [number, number] {
+    return [
+      chunkIdx * MAX_SEGMENTS_PER_REQUEST,
+      Math.min((chunkIdx + 1) * MAX_SEGMENTS_PER_REQUEST, liveSegments.length),
+    ];
   }
 
-  // ⚠️ RESUME UNDER CONCURRENCY: batches complete out of order, so
-  // `completedBatches` (a `max`-advanced hint, Task 3) is never used to
-  // decide what to (re)send — it would treat a later batch that raced ahead
-  // of an earlier still-pending one as "already covered". Instead, pending
-  // work is derived fresh from the ACTUAL stored segment state: a batch is
-  // pending iff ANY segment in its index range still has
-  // `translatedText === null`, checked directly against `liveSegments`
-  // (which starts as a snapshot of `record.segments`, i.e. whatever a prior
-  // run's upsertBatch calls already persisted). An already-fully-translated
-  // batch is never re-dispatched at all — cheaper than relying solely on
-  // upsertBatch's idempotency, though that idempotency is still what makes
-  // a partial-response batch (some segments filled, some still null) safe
-  // to retry on a later run without corrupting the segments upsertBatch
-  // already wrote.
-  const pendingBatchIndices: number[] = [];
-  for (let b = 0; b < totalBatches; b += 1) {
-    const [start, end] = batchRange(b);
+  // Pending work is derived fresh from the ACTUAL stored segment state (not
+  // from `completedBatches`, a `max`-advanced hint): a chunk is pending iff
+  // ANY segment in its index range still has `translatedText === null`,
+  // checked directly against `liveSegments` (a snapshot of `record.segments`,
+  // i.e. whatever a prior run's upsertBatch calls already persisted). An
+  // already-fully-translated chunk is never re-sent at all — cheaper than
+  // relying solely on upsertBatch's idempotency, though that idempotency is
+  // still what makes a partial-response chunk (some segments filled, some
+  // still null) safe to retry on a later run without corrupting the
+  // segments upsertBatch already wrote. (Chunks now run strictly in order,
+  // one at a time, but pending indices can still be non-contiguous on a
+  // resume — e.g. chunk 0 pending, chunk 1 already done from a prior run.)
+  const pendingChunkIndices: number[] = [];
+  for (let c = 0; c < totalChunks; c += 1) {
+    const [start, end] = chunkRange(c);
     if (liveSegments.slice(start, end).some((seg) => seg.translatedText === null)) {
-      pendingBatchIndices.push(b);
+      pendingChunkIndices.push(c);
     }
   }
 
-  const failures: BatchFailure[] = [];
+  const failures: ChunkFailure[] = [];
 
-  async function runBatch(batchIdx: number): Promise<void> {
-    const [start, end] = batchRange(batchIdx);
+  async function runChunk(chunkIdx: number): Promise<void> {
+    const [start, end] = chunkRange(chunkIdx);
     const segs = liveSegments.slice(start, end);
 
     let attempt = 0;
     for (;;) {
+      deps.onProgress({
+        videoId,
+        status: 'translating',
+        step: 3,
+        phase: 'sending',
+        chunkIndex: completedChunks,
+        totalChunks,
+      });
       const result = await deps.translateBatch(segs, glossary, key);
 
       if (result.ok) {
+        deps.onProgress({
+          videoId,
+          status: 'translating',
+          step: 3,
+          phase: 'receiving',
+          chunkIndex: completedChunks,
+          totalChunks,
+        });
+
         const byIndex = new Map(result.translations.map((t) => [t.index, t.translatedText]));
         // A translatedText the model omitted for THIS call falls back to
         // whatever `seg` already had (possibly still null, possibly a
@@ -473,49 +489,74 @@ export async function runTranslationPipeline(
           translatedText: byIndex.get(seg.index) ?? seg.translatedText,
         }));
 
+        deps.onProgress({
+          videoId,
+          status: 'translating',
+          step: 3,
+          phase: 'parsing',
+          chunkIndex: completedChunks,
+          totalChunks,
+        });
+
         try {
-          await deps.upsertBatch(videoId, batchIdx, translatedSegs);
+          await deps.upsertBatch(videoId, chunkIdx, translatedSegs);
         } catch (err) {
-          // The batch's own durability guarantee failed — do NOT mirror the
+          // The chunk's own durability guarantee failed — do NOT mirror the
           // translated result into `liveSegments` as if it were safely
           // saved (it may not be, if the DB is genuinely broken). Recorded
-          // as a batch failure via the SAME mechanism as a translateBatch
+          // as a chunk failure via the SAME mechanism as a translateBatch
           // error, so it surfaces through the existing "any failure ->
           // overall status:'failed'" path below rather than rejecting this
           // function (and with it, the whole pipeline promise).
-          failures.push({ batchIdx, reason: 'unknown', message: `upsertBatch rejected: ${errorMessage(err)}` });
+          failures.push({ chunkIdx, reason: 'unknown', message: `upsertBatch rejected: ${errorMessage(err)}` });
           return;
         }
 
         for (const seg of translatedSegs) {
           liveSegments[seg.index] = seg;
         }
-        doneCount = countDone(liveSegments);
-        completedBatches = Math.max(completedBatches, batchIdx + 1);
-        deps.onProgress({ videoId, status: 'translating', done: doneCount, total, step: 3 });
+        // `Math.max`, not a plain increment: on a resume, `pendingChunkIndices`
+        // can be a non-contiguous subset (e.g. chunk 1 already done, only
+        // chunks 0 and 2 pending) — a plain `+= 1` would double-count past
+        // whatever the seeded `record.completedBatches` hint already
+        // credited. This mirrors the pre-refactor batch loop's own
+        // resume-safe formula, just walked sequentially instead of by
+        // out-of-order completion.
+        completedChunks = Math.max(completedChunks, chunkIdx + 1);
+        // Chunk fully done and persisted — no `phase` (nothing is
+        // in-flight right now), `chunkIndex` advanced.
+        deps.onProgress({ videoId, status: 'translating', step: 3, chunkIndex: completedChunks, totalChunks });
         return;
       }
 
-      if (result.reason === 'rate_limit' && attempt < BACKOFF_MS.length) {
-        await deps.sleep(BACKOFF_MS[attempt]);
+      if (result.reason === 'rate_limit' && attempt < MAX_RATE_LIMIT_RETRIES) {
+        const delayMs = Math.min(parseRetryDelayMs(result.message) ?? DEFAULT_RETRY_DELAY_MS, MAX_RETRY_DELAY_MS);
+        await deps.sleep(delayMs);
         attempt += 1;
         continue;
       }
 
-      // Either a non-retryable error, or a rate_limit that exhausted its
-      // retry budget. Policy: record the failure and CONTINUE processing
-      // the other batches (one stuck batch should not stall/abort every
-      // other segment's translation) — the pipeline as a whole is marked
-      // failed below only after every batch has had its chance, and the
-      // segments this batch would have covered simply stay untranslated
+      // Either a non-retryable error (including the truncation guard's
+      // `'truncated'`/`'bad_json'` reasons — never retried, brief §2: "no
+      // auto re-split required"), or a rate_limit that exhausted its retry
+      // budget. Policy: record the failure and CONTINUE processing the
+      // other chunks (one stuck chunk should not abort every other
+      // segment's translation) — the pipeline as a whole is marked failed
+      // below only after every chunk has had its chance, and the segments
+      // this chunk would have covered simply stay untranslated
       // (translatedText: null), which is exactly what makes them "pending"
       // again for a future resume run.
-      failures.push({ batchIdx, reason: result.reason, message: result.message });
+      failures.push({ chunkIdx, reason: result.reason, message: result.message });
       return;
     }
   }
 
-  await runWithConcurrencyLimit(pendingBatchIndices, MAX_CONCURRENCY, runBatch);
+  // Sequential, one chunk at a time (never concurrent) — the free-tier RPM
+  // limit that motivated this refactor never has more than one translate
+  // request in flight at once.
+  for (const chunkIdx of pendingChunkIndices) {
+    await runChunk(chunkIdx);
+  }
 
   const allTranslated = liveSegments.every((seg) => seg.translatedText !== null);
   if (!allTranslated || failures.length > 0) {
@@ -523,14 +564,14 @@ export async function runTranslationPipeline(
       ...record,
       segments: liveSegments,
       glossary,
-      completedBatches,
-      totalBatches,
+      completedBatches: completedChunks,
+      totalBatches: totalChunks,
       status: 'failed',
       error: { step: 'translating', reason: summarizeFailures(failures) || 'Some segments did not translate' },
       updatedAt: new Date().toISOString(),
     };
     await persistBestEffort(deps, failedRecord);
-    deps.onProgress({ videoId, status: 'failed', done: doneCount, total, step: 3 });
+    deps.onProgress({ videoId, status: 'failed', step: 3, chunkIndex: completedChunks, totalChunks });
     return failedRecord;
   }
 
@@ -540,13 +581,13 @@ export async function runTranslationPipeline(
     ...record,
     segments: consistentSegments,
     glossary,
-    completedBatches,
-    totalBatches,
+    completedBatches: completedChunks,
+    totalBatches: totalChunks,
     status: 'done',
     updatedAt: new Date().toISOString(),
   };
   delete finalRecord.error;
   await persistBestEffort(deps, finalRecord);
-  deps.onProgress({ videoId, status: 'done', done: total, total, step: 4 });
+  deps.onProgress({ videoId, status: 'done', step: 4, chunkIndex: totalChunks, totalChunks });
   return finalRecord;
 }

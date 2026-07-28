@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { sendMessage } from '~/lib/messaging';
 import { TRANSLATION_PROGRESS_PORT } from '~/types/message';
-import type { TranslationProgress, TranslationRecord, TranslationStatus } from '~/types/transcript';
+import type { TranslatePhase, TranslationProgress, TranslationRecord, TranslationStatus } from '~/types/transcript';
 
 // M2 Task 7 — the panel-side hook that drives/resumes a video's translation
 // job. Mirrors `useCurrentVideo`'s discipline (useEffect + `sendMessage`
@@ -23,9 +23,12 @@ export interface UseTranslationParams {
  * `videoId`/`status` are consumed internally (filtering, and folded into the
  * top-level `status` below) rather than repeated here. */
 export interface TranslationProgressState {
-  done: number;
-  total: number;
   step: 1 | 2 | 3 | 4;
+  /** Only set while `step === 3` and a specific chunk request is actively
+   * in flight — see `TranslationProgress.phase`'s own doc comment. */
+  phase?: TranslatePhase;
+  chunkIndex: number;
+  totalChunks: number;
 }
 
 export interface UseTranslationResult {
@@ -170,7 +173,12 @@ export function useTranslation({ videoId, tabId }: UseTranslationParams): UseTra
       if (message.videoId !== videoId) return;
       sawLiveStatus = true;
       setStatus(message.status);
-      setProgress({ done: message.done, total: message.total, step: message.step });
+      setProgress({
+        step: message.step,
+        phase: message.phase,
+        chunkIndex: message.chunkIndex,
+        totalChunks: message.totalChunks,
+      });
       if (TERMINAL_STATUSES.includes(message.status)) refetchRecord();
     };
     port.onMessage.addListener(handlePortMessage);

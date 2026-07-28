@@ -1,4 +1,4 @@
-import type { TranslationStatus } from '~/types/transcript';
+import type { TranslatePhase, TranslationStatus } from '~/types/transcript';
 
 // M2 Task 8 — pure, framework-agnostic helpers for the panel's live
 // `AI 자막 생성` button + 처리 단계 stepper (entrypoints/sidepanel/App.tsx).
@@ -46,4 +46,21 @@ export function stepForStatus(status: TranslationStatus | 'idle'): ProcessingSte
 export function progressPercent(done: number, total: number): number {
   if (total === 0) return 0;
   return Math.round((done / total) * 100);
+}
+
+// M2 refactor (single large request + stage progress) — Korean labels for
+// step 3's request/response sub-phases (요청 전송 → 응답 수신 → 파싱·정합성),
+// replacing the dropped per-segment "N / total" counter.
+const TRANSLATE_PHASE_LABELS: Record<TranslatePhase, string> = {
+  sending: '요청 전송',
+  receiving: '응답 수신',
+  parsing: '파싱·정합성',
+};
+
+/** `undefined`/`null` (no phase — outside step 3, or step 3's own
+ * "entering this step"/"chunk just completed" events) renders as no label
+ * at all, letting callers omit the phase clause entirely rather than show a
+ * placeholder. */
+export function translatePhaseLabel(phase: TranslatePhase | undefined): string | null {
+  return phase ? TRANSLATE_PHASE_LABELS[phase] : null;
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { progressPercent, stepForStatus } from './progress-display';
+import { progressPercent, stepForStatus, translatePhaseLabel } from './progress-display';
 
 describe('progressPercent', () => {
   it('returns 0 when total is 0 (the first onProgress event) rather than NaN/Infinity', () => {
@@ -47,5 +47,23 @@ describe('stepForStatus', () => {
 
   it('maps failed to 0 (the status alone carries no step information)', () => {
     expect(stepForStatus('failed')).toBe(0);
+  });
+});
+
+describe('translatePhaseLabel', () => {
+  it('maps sending to 요청 전송', () => {
+    expect(translatePhaseLabel('sending')).toBe('요청 전송');
+  });
+
+  it('maps receiving to 응답 수신', () => {
+    expect(translatePhaseLabel('receiving')).toBe('응답 수신');
+  });
+
+  it('maps parsing to 파싱·정합성', () => {
+    expect(translatePhaseLabel('parsing')).toBe('파싱·정합성');
+  });
+
+  it('returns null when there is no active phase (outside step 3, or a chunk boundary event)', () => {
+    expect(translatePhaseLabel(undefined)).toBeNull();
   });
 });

@@ -43,12 +43,31 @@ export interface TranslationRecord {
   updatedAt: string;
 }
 
+// M2 refactor (single large request + stage progress) — sub-phase of the
+// CURRENT in-flight translate request during step 3 (`요청 전송 → 응답 수신
+// → 파싱·정합성`). There is no per-segment counter anymore: a translation
+// "chunk" is now up to `MAX_SEGMENTS_PER_REQUEST` segments sent as one
+// sequential `translateBatch` call, so segment-level granularity within a
+// chunk isn't meaningfully observable from the pipeline's own point of view.
+export type TranslatePhase = 'sending' | 'receiving' | 'parsing';
+
 // background -> panel Port event (channel `TRANSLATION_PROGRESS_PORT` in
-// src/types/message.ts), streamed once per batch/step during the pipeline.
+// src/types/message.ts), streamed at each stage transition during the
+// pipeline (extract -> analyze -> translate[per chunk: sending/receiving/
+// parsing, then chunk-complete] -> done).
 export interface TranslationProgress {
   videoId: string;
   status: TranslationStatus;
-  done: number;               // segment-based progress
-  total: number;
-  step: 1 | 2 | 3 | 4;        // extract / analyze / translate / apply
+  step: 1 | 2 | 3 | 4;         // extract / analyze / translate / apply
+  /** Only set while `step === 3` and a specific chunk request is actively
+   * in flight — absent for every other step, and absent for step 3's own
+   * "entering this step" / "chunk just completed" events (see pipeline.ts).
+   */
+  phase?: TranslatePhase;
+  /** Chunks completed so far / total chunk count for this job — replaces
+   * the old per-segment `done`/`total` counter. Both are `0` outside step 3
+   * (nothing chunk-level to report yet), and `chunkIndex === totalChunks`
+   * once step 4 (`done`) is reached. */
+  chunkIndex: number;
+  totalChunks: number;
 }
