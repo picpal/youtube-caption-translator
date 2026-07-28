@@ -74,6 +74,44 @@ export const MAX_RETRY_DELAY_MS = 65_000;
  * guidance on how long. */
 export const DEFAULT_RETRY_DELAY_MS = 5_000;
 
+/**
+ * Task R6 — real-Chrome DoD: `gemini-3.5-flash-lite` occasionally OMITS a
+ * few indices from a large chunk's JSON response even though the call
+ * itself succeeded (`ok:true`, no error) — a 247-segment video came back
+ * 244/247 on an otherwise-flawless first attempt, hard-failing the whole
+ * job with "Some segments did not translate" and forcing a manual retry.
+ * That is a soft, benign gap (see `ChunkFailure`'s doc comment below for
+ * the HARD-error case this is deliberately NOT for), so after the main
+ * chunk loop, up to this many extra passes re-translate ONLY the
+ * still-null segments that came from an otherwise-OK chunk — re-chunked by
+ * `MAX_SEGMENTS_PER_REQUEST`, sequential, the same
+ * `callWithRateLimitRetry`. Bounded (not "until it's perfect") because a
+ * model that keeps omitting the SAME index pass after pass is unlikely to
+ * suddenly stop on a 3rd/4th try, and this must stay a small tolerance
+ * mechanism, not a new unbounded retry loop.
+ */
+export const MAX_COMPLETENESS_PASSES = 2;
+
+/**
+ * Task R6 — fraction of segments that must have a non-null
+ * `translatedText` for the job to be reported `done` even if the
+ * completeness passes above didn't fully close the gap. "95%+ translated
+ * is a usable result; punishing the user with a full failure + manual
+ * retry for 3 dropped segments is wrong" (brief). A `TranslationRecord`
+ * with a translatedText of `null` on a few segments already renders
+ * correctly — `TranscriptList` shows the English-only line for those, the
+ * same fallback already used for a genuinely `failed` job's partial
+ * progress.
+ *
+ * This threshold ONLY applies when there were NO hard chunk errors
+ * (`failures.length === 0` — see `ChunkFailure` below): a hard error (rate
+ * limit exhausted, network, truncated, bad_json) always fails the job
+ * regardless of how high the completeness ratio happens to be otherwise —
+ * it is a real problem, not model noise, and deserves the visible
+ * fail+retry affordance rather than being silently tolerated.
+ */
+export const COMPLETENESS_THRESHOLD = 0.95;
+
 export interface TranslationPipelineDeps {
   /** Asks the content script on `tabId` for the raw transcript rows of
    * `videoId` (background -> content `REQUEST_TRANSCRIPT`, Task 4). */
@@ -119,6 +157,15 @@ function glossaryResolved(record: TranslationRecord): boolean {
   return false;
 }
 
+/** A HARD failure only — a whole `translateBatch` call for `chunkIdx` came
+ * back `ok:false` (rate limit exhausted, network, truncated, bad_json) or
+ * its `upsertBatch` durability write rejected. Deliberately does NOT cover
+ * a chunk that came back `ok:true` but simply omitted an index from its
+ * response array (Task R6's "soft omission") — that case is handled
+ * separately by the completeness passes (`MAX_COMPLETENESS_PASSES` above),
+ * and a segment left null for THAT reason must never end up counted here:
+ * this array's mere non-emptiness is what forces the job to `status:
+ * 'failed'` regardless of how few segments it actually affects. */
 interface ChunkFailure {
   chunkIdx: number;
   reason: string;
@@ -633,8 +680,79 @@ export async function runTranslationPipeline(
     await runChunk(chunkIdx);
   }
 
-  const allTranslated = liveSegments.every((seg) => seg.translatedText !== null);
-  if (!allTranslated || failures.length > 0) {
+  // --- Task R6: bounded completeness passes for SOFT-omitted segments ---
+  // A segment can still be null here for two very different reasons: its
+  // chunk hard-failed (already in `failures`, tracked by chunk INDEX
+  // RANGE), or its chunk came back `ok:true` but the model just dropped
+  // that one index. Only the latter is worth retrying — re-attempting a
+  // hard-failed chunk's segments here would blur `failures`' meaning (see
+  // its own doc comment) and duplicate work the main loop's resume path
+  // already owns.
+  const hardFailedSegmentIndices = new Set<number>();
+  for (const failure of failures) {
+    const [start, end] = chunkRange(failure.chunkIdx);
+    for (let i = start; i < end; i += 1) hardFailedSegmentIndices.add(i);
+  }
+
+  function softOmittedSegments(): TranscriptSegment[] {
+    return liveSegments.filter(
+      (seg) => seg.translatedText === null && !hardFailedSegmentIndices.has(seg.index),
+    );
+  }
+
+  for (let pass = 0; pass < MAX_COMPLETENESS_PASSES; pass += 1) {
+    const pending = softOmittedSegments();
+    if (pending.length === 0) break; // fully caught up — stop early, no wasted calls
+
+    // Re-chunked by MAX_SEGMENTS_PER_REQUEST like any other translate call,
+    // but over the (usually tiny) set of leftover indices rather than a
+    // contiguous range — `translateBatch`/`upsertBatch` don't care that
+    // these indices may be non-contiguous, only `db.ts`'s upsertBatch's
+    // by-`index` merge, which already works this way for every chunk.
+    for (let i = 0; i < pending.length; i += MAX_SEGMENTS_PER_REQUEST) {
+      const segs = pending.slice(i, i + MAX_SEGMENTS_PER_REQUEST);
+
+      const result = await callWithRateLimitRetry(deps, () => deps.translateBatch(segs, glossary, key));
+      if (!result.ok) continue; // still not translated — left null; NOT added to `failures` (see R6 doc comments above)
+
+      const byIndex = new Map(result.translations.map((t) => [t.index, t.translatedText]));
+      const translatedSegs = segs.map((seg) => ({
+        ...seg,
+        translatedText: byIndex.get(seg.index) ?? seg.translatedText,
+      }));
+
+      try {
+        // `totalChunks + pass`: an out-of-range, pass-distinguishing
+        // batchIdx — safe because upsertBatch (db.ts) merges `segs` by
+        // segment `index`, never by batchIdx position; batchIdx only ever
+        // feeds `completedBatches`, itself just a resume HINT (see the
+        // main loop's own comment on this).
+        await deps.upsertBatch(videoId, totalChunks + pass, translatedSegs);
+      } catch {
+        continue; // durability failure — do not mirror into liveSegments as saved
+      }
+
+      for (const seg of translatedSegs) {
+        liveSegments[seg.index] = seg;
+      }
+    }
+  }
+
+  const translatedCount = liveSegments.filter((seg) => seg.translatedText !== null).length;
+  const totalSegments = liveSegments.length;
+  // Vacuously complete for an empty transcript, matching the pre-R6
+  // behavior of `liveSegments.every(...)` on an empty array.
+  const completeness = totalSegments === 0 ? 1 : translatedCount / totalSegments;
+  const hasHardFailures = failures.length > 0;
+
+  if (hasHardFailures || completeness < COMPLETENESS_THRESHOLD) {
+    // A hard failure's reason is always the authoritative one when present
+    // (brief: hard errors force `failed` regardless of completeness); only
+    // when there ISN'T one does the completeness shortfall get its own,
+    // clearer message instead of the generic fallback.
+    const reason = hasHardFailures
+      ? summarizeFailures(failures) || 'Some segments did not translate'
+      : `Only ${translatedCount}/${totalSegments} segments translated (${Math.round(completeness * 100)}%) — below the ${Math.round(COMPLETENESS_THRESHOLD * 100)}% completeness threshold`;
     const failedRecord: TranslationRecord = {
       ...record,
       segments: liveSegments,
@@ -642,7 +760,7 @@ export async function runTranslationPipeline(
       completedBatches: completedChunks,
       totalBatches: totalChunks,
       status: 'failed',
-      error: { step: 'translating', reason: summarizeFailures(failures) || 'Some segments did not translate' },
+      error: { step: 'translating', reason },
       updatedAt: new Date().toISOString(),
     };
     await persistBestEffort(deps, failedRecord);
@@ -651,6 +769,10 @@ export async function runTranslationPipeline(
   }
 
   // --- Step 4: consistency post-process + done --------------------------
+  // R6: `done` here can still carry a handful of `translatedText: null`
+  // segments (≤5% of the total) — TranscriptList already renders those as
+  // English-only, the same fallback a genuinely `failed` job's partial
+  // progress uses.
   const consistentSegments = applyGlossaryConsistency(liveSegments, glossary);
   const finalRecord: TranslationRecord = {
     ...record,

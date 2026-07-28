@@ -1,7 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   applyGlossaryConsistency,
+  COMPLETENESS_THRESHOLD,
   DEFAULT_RETRY_DELAY_MS,
+  MAX_COMPLETENESS_PASSES,
   MAX_RATE_LIMIT_RETRIES,
   MAX_RETRY_DELAY_MS,
   MAX_SEGMENTS_PER_REQUEST,
@@ -473,6 +475,121 @@ describe('runTranslationPipeline', () => {
       expect(translateBatch).toHaveBeenCalledTimes(1);
       expect(result.status).toBe('failed');
       expect(result.error?.reason).toContain('bad_json');
+    });
+  });
+
+  // Task R6 — real-Chrome DoD: gemini-3.5-flash-lite occasionally OMITS a
+  // few indices from a large chunk's otherwise-successful (`ok:true`) JSON
+  // response (a 247-segment video came back 244/247 on the first attempt),
+  // which used to hard-fail the whole job. These tests cover the bounded
+  // completeness passes that re-translate soft-omitted segments, and the
+  // completeness-threshold tolerance that lets the job still finish `done`
+  // when a small residual gap remains — while confirming a genuine HARD
+  // chunk error still fails the job regardless of coverage.
+  describe('completeness passes (Task R6)', () => {
+    it('re-translates soft-omitted segments in a completeness pass, reaching done with full coverage', async () => {
+      const rows = makeRows(10); // 1 chunk
+      let calls = 0;
+      const translateBatch = vi.fn(async (segs: TranscriptSegment[]) => {
+        calls += 1;
+        if (calls === 1) {
+          // The model omits indices 2 and 5 from its response entirely.
+          const omitted = new Set([2, 5]);
+          return {
+            ok: true as const,
+            translations: segs
+              .filter((s) => !omitted.has(s.index))
+              .map((s) => ({ index: s.index, translatedText: `t${s.index}` })),
+          };
+        }
+        // Completeness pass: whatever it's asked for, it now translates.
+        return {
+          ok: true as const,
+          translations: segs.map((s) => ({ index: s.index, translatedText: `fixed-${s.index}` })),
+        };
+      });
+      const deps = makeDeps({ requestTranscript: async () => rows, translateBatch });
+
+      const result = await runTranslationPipeline({ videoId: 'v1', tabId: 1, key: 'k' }, deps);
+
+      expect(translateBatch).toHaveBeenCalledTimes(2); // main chunk + 1 completeness pass
+      const completenessCallSegs = translateBatch.mock.calls[1][0] as TranscriptSegment[];
+      expect(completenessCallSegs.map((s) => s.index)).toEqual([2, 5]);
+      expect(result.status).toBe('done');
+      expect(result.error).toBeUndefined();
+      expect(result.segments.every((s) => s.translatedText !== null)).toBe(true);
+      expect(result.segments[2].translatedText).toBe('fixed-2');
+      expect(result.segments[5].translatedText).toBe('fixed-5');
+    });
+
+    it('reaches done at >=95% coverage even when the same omission persists through every completeness pass', async () => {
+      const rows = makeRows(25); // 24/25 = 96% >= COMPLETENESS_THRESHOLD (95%)
+      const translateBatch = vi.fn(async (segs: TranscriptSegment[]) => ({
+        ok: true as const,
+        translations: segs
+          .filter((s) => s.index !== 24)
+          .map((s) => ({ index: s.index, translatedText: `t${s.index}` })),
+      }));
+      const deps = makeDeps({ requestTranscript: async () => rows, translateBatch });
+
+      const result = await runTranslationPipeline({ videoId: 'v1', tabId: 1, key: 'k' }, deps);
+
+      // 1 main chunk call + MAX_COMPLETENESS_PASSES extra attempts, all
+      // omitting the same index — bounded, not retried forever.
+      expect(translateBatch).toHaveBeenCalledTimes(1 + MAX_COMPLETENESS_PASSES);
+      expect(result.status).toBe('done');
+      expect(result.error).toBeUndefined();
+      expect(result.segments[24].translatedText).toBeNull();
+      const translatedCount = result.segments.filter((s) => s.translatedText !== null).length;
+      expect(translatedCount / result.segments.length).toBeGreaterThanOrEqual(COMPLETENESS_THRESHOLD);
+    });
+
+    it('stays failed on a genuine hard chunk error, even though coverage would otherwise clear the completeness threshold', async () => {
+      const rows = makeRows(52); // chunk 0: indices 0-49 (50 segs), chunk 1: indices 50-51 (2 segs)
+      const translateBatch = vi.fn(async (segs: TranscriptSegment[]) => {
+        if (segs[0].index === 50) {
+          // chunk 1 always rate-limits, exhausting its retry budget.
+          return { ok: false as const, reason: 'rate_limit' as const, message: 'Please retry in 1s.' };
+        }
+        return {
+          ok: true as const,
+          translations: segs.map((s) => ({ index: s.index, translatedText: `t${s.index}` })),
+        };
+      });
+      const sleep = vi.fn(async () => {});
+      const deps = makeDeps({ requestTranscript: async () => rows, translateBatch, sleep });
+
+      const result = await runTranslationPipeline({ videoId: 'v1', tabId: 1, key: 'k' }, deps);
+
+      // chunk 0 (1 call) + chunk 1 (1 initial + MAX_RATE_LIMIT_RETRIES retries).
+      expect(translateBatch).toHaveBeenCalledTimes(1 + (MAX_RATE_LIMIT_RETRIES + 1));
+      expect(result.status).toBe('failed');
+      expect(result.error?.reason).toContain('rate_limit');
+      // Coverage alone (50/52 ≈ 96%) would have cleared the threshold — the
+      // hard chunk error must force `failed` regardless.
+      const translatedCount = result.segments.filter((s) => s.translatedText !== null).length;
+      expect(translatedCount / result.segments.length).toBeGreaterThanOrEqual(COMPLETENESS_THRESHOLD);
+    });
+
+    it('fails when completeness stays below the threshold with no hard chunk errors at all', async () => {
+      const rows = makeRows(20);
+      const alwaysOmitted = new Set([0, 1, 2]); // 17/20 = 85%, below the 95% threshold
+      const translateBatch = vi.fn(async (segs: TranscriptSegment[]) => ({
+        ok: true as const,
+        translations: segs
+          .filter((s) => !alwaysOmitted.has(s.index))
+          .map((s) => ({ index: s.index, translatedText: `t${s.index}` })),
+      }));
+      const deps = makeDeps({ requestTranscript: async () => rows, translateBatch });
+
+      const result = await runTranslationPipeline({ videoId: 'v1', tabId: 1, key: 'k' }, deps);
+
+      expect(translateBatch).toHaveBeenCalledTimes(1 + MAX_COMPLETENESS_PASSES);
+      expect(result.status).toBe('failed');
+      expect(result.error?.reason).toContain('below the');
+      expect(result.error?.reason).not.toContain('chunk'); // not the hard-failure message shape
+      const translatedCount = result.segments.filter((s) => s.translatedText !== null).length;
+      expect(translatedCount / result.segments.length).toBeLessThan(COMPLETENESS_THRESHOLD);
     });
   });
 
