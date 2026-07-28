@@ -252,20 +252,63 @@ export async function runTranslationPipeline(
   // --- Step 1: extract -------------------------------------------------
   deps.onProgress({ videoId, status: 'extracting', done: 0, total: 0, step: 1 });
 
+  // Read whatever is currently persisted for this video FIRST, before any
+  // extraction work — moved up front (final-review fix) specifically so a
+  // TRANSIENT failure below (unreachable content script, no transcript
+  // panel on THIS attempt, a malformed timestamp) can pass it as `base` to
+  // `failPipeline` and PRESERVE a prior good record's segments/glossary/
+  // captionHash instead of clobbering it with an empty one.
+  //
+  // This matters once a `done` video can be re-run at all (Task 10's
+  // "다시 생성" button, or an auto-resume of an in-progress record):
+  // re-running re-scrapes the transcript panel first, and the scraper's own
+  // documented contract (docs/youtube-transcript-findings.md) is that a
+  // post-SPA panel reopen can transiently fail (ghost-cards, 30s timeout ->
+  // `{unavailable:true}`). Without preserving `existing` here, that one
+  // flaky re-scrape would permanently destroy an already-fully-translated
+  // cached record (breaking "revisit -> instant cache load") or wipe an
+  // in-progress record's already-persisted batches. A fresh video
+  // (`existing === null`) is unaffected — `failPipeline` with no `base`
+  // behaves exactly as before.
+  let existing: TranslationRecord | null;
+  try {
+    existing = await deps.getTranslation(videoId);
+  } catch (err) {
+    // Nothing persisted (or unreadable) — no `base` to preserve here, same
+    // as every other base-less failPipeline call below.
+    return failPipeline(deps, videoId, 'analyzing', 2, `Could not read cached translation: ${errorMessage(err)}`);
+  }
+
   let rawResult: RequestTranscriptResponse;
   try {
     rawResult = await deps.requestTranscript(tabId, videoId);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    return failPipeline(deps, videoId, 'extracting', 1, `Could not reach content script: ${message}`);
+    return failPipeline(
+      deps,
+      videoId,
+      'extracting',
+      1,
+      `Could not reach content script: ${message}`,
+      existing ?? undefined,
+    );
   }
 
   if (!Array.isArray(rawResult)) {
     // `{unavailable:true}` — no transcript engagement panel at all (PRD §9
-    // 실패 상태). Clean failure, not a crash: there is nothing to parse or
-    // hash, so this short-circuits before the cache/resume logic below,
-    // which needs a captionHash to key off of.
-    return failPipeline(deps, videoId, 'extracting', 1, 'No transcript panel available for this video');
+    // 실패 상태), or (for a re-run) a transient post-SPA reopen flake — see
+    // the `existing` comment above for why this is passed as `base` rather
+    // than dropped. Clean failure, not a crash: there is nothing new to
+    // parse or hash, so this short-circuits before the cache/resume logic
+    // below, which needs a freshly-computed captionHash to key off of.
+    return failPipeline(
+      deps,
+      videoId,
+      'extracting',
+      1,
+      'No transcript panel available for this video',
+      existing ?? undefined,
+    );
   }
 
   let segments: TranscriptSegment[];
@@ -280,7 +323,14 @@ export async function runTranslationPipeline(
     segments = rowsToSegments(merged, videoId);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    return failPipeline(deps, videoId, 'extracting', 1, `Failed to parse transcript: ${message}`);
+    return failPipeline(
+      deps,
+      videoId,
+      'extracting',
+      1,
+      `Failed to parse transcript: ${message}`,
+      existing ?? undefined,
+    );
   }
 
   const fullText = segments.map((seg) => seg.sourceText).join('\n');
@@ -288,17 +338,6 @@ export async function runTranslationPipeline(
   const totalBatches = segments.length === 0 ? 0 : Math.ceil(segments.length / BATCH_SIZE);
 
   // --- Step 2: cache/resume decision ------------------------------------
-  let existing: TranslationRecord | null;
-  try {
-    existing = await deps.getTranslation(videoId);
-  } catch (err) {
-    // No skeleton exists yet at this point, so there is nothing meaningful
-    // to pass as `base` — same shape failPipeline already produces for
-    // "nothing persisted yet" (the unavailable-transcript / parse-failure
-    // paths above).
-    return failPipeline(deps, videoId, 'analyzing', 2, `Could not read cached translation: ${errorMessage(err)}`);
-  }
-
   if (existing && existing.captionHash === hash && existing.status === 'done') {
     // Same captions, already fully translated — reuse as-is, no re-work.
     deps.onProgress({

@@ -292,9 +292,21 @@ describe('START_TRANSLATION dedup', () => {
     expect(res1).toEqual({ ok: true });
     expect(res2).toEqual({ ok: true });
 
-    // Only ONE of the two calls' pipeline actually reached out to the
-    // content script — the other was a dedup no-op against the still-
-    // running job.
+    // The dedup check itself (`inFlightTranslations.has`/`.add` in
+    // background.ts) is synchronous and already resolved by the time
+    // `Promise.all` above settles — both `handle()` calls only ack
+    // "accepted", they don't await the pipeline. What's still pending is the
+    // WINNING pipeline's own internal work before it reaches
+    // `requestTranscript` (Task 6's final-review fix reads the cached
+    // record via a real — fake-indexeddb-backed — `getTranslation` call
+    // FIRST, which is a genuine async IndexedDB round trip, not a
+    // synchronously-resolving mock), so this waits for that to land rather
+    // than asserting immediately.
+    await vi.waitFor(() => {
+      expect(tabsSendMessageMock).toHaveBeenCalledTimes(1);
+    });
+    // ...and it never grows past 1: the second call's dedup no-op means no
+    // second pipeline is ever going to reach the content script at all.
     expect(tabsSendMessageMock).toHaveBeenCalledTimes(1);
 
     // Let the stuck pipeline finish (requestTranscript resolves to a shape

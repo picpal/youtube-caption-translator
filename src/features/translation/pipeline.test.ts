@@ -394,6 +394,89 @@ describe('runTranslationPipeline', () => {
     });
   });
 
+  // Final branch review, Critical: a transient extract/parse failure on a
+  // RE-RUN (Task 10's "다시 생성" button, or an auto-resume) used to
+  // `putTranslation` a fresh base-less `failed` record (empty segments),
+  // clobbering whatever GOOD record was already persisted for this video —
+  // a `done` video's fully-translated segments, or an in-progress video's
+  // already-upserted batches. `getTranslation` is now read once at the very
+  // top of the pipeline and threaded through as `base` to every early
+  // `failPipeline` call, so these transient failures preserve the prior
+  // record instead of destroying it.
+  describe('preserves a prior good record on a transient extract/parse failure (final review fix)', () => {
+    function makeDoneRecord(): TranslationRecord {
+      return {
+        videoId: 'v1',
+        captionHash: 'prior-hash',
+        sourceLang: 'en',
+        status: 'done',
+        segments: [seg(0, 'Hello world.', '안녕하세요.'), seg(1, 'Second line.', '두 번째 줄.')],
+        glossary: [{ term: 'World', translation: '세계', keepEnglish: false }],
+        completedBatches: 1,
+        totalBatches: 1,
+        createdAt: '2026-01-01T00:00:00.000Z',
+        updatedAt: '2026-01-01T00:00:00.000Z',
+      };
+    }
+
+    it('does not clobber a done record when a re-run transcript request comes back unavailable', async () => {
+      const existingDone = makeDoneRecord();
+      const putTranslation = vi.fn(async (_rec: TranslationRecord) => {});
+      const deps = makeDeps({
+        requestTranscript: async () => ({ unavailable: true }),
+        getTranslation: vi.fn(async () => existingDone),
+        putTranslation,
+      });
+
+      const result = await runTranslationPipeline({ videoId: 'v1', tabId: 1, key: 'k' }, deps);
+
+      expect(result.status).toBe('failed');
+      // Prior good segments/glossary/captionHash carried through, not wiped.
+      expect(result.segments).toEqual(existingDone.segments);
+      expect(result.glossary).toEqual(existingDone.glossary);
+      expect(result.captionHash).toBe(existingDone.captionHash);
+      // No write ever persisted an empty record over the good one.
+      for (const call of putTranslation.mock.calls) {
+        const persisted = call[0] as TranslationRecord;
+        expect(persisted.segments.length).toBeGreaterThan(0);
+      }
+    });
+
+    it('does not clobber a done record when a re-run hits the parseTimestamp guard', async () => {
+      const existingDone = makeDoneRecord();
+      const badRows: RawTranscriptRow[] = [{ tsText: 'not-a-timestamp', text: 'Hello world.' }];
+      const putTranslation = vi.fn(async (_rec: TranslationRecord) => {});
+      const deps = makeDeps({
+        requestTranscript: async () => badRows,
+        getTranslation: vi.fn(async () => existingDone),
+        putTranslation,
+      });
+
+      const result = await runTranslationPipeline({ videoId: 'v1', tabId: 1, key: 'k' }, deps);
+
+      expect(result.status).toBe('failed');
+      expect(result.segments).toEqual(existingDone.segments);
+      expect(result.glossary).toEqual(existingDone.glossary);
+      expect(result.captionHash).toBe(existingDone.captionHash);
+      for (const call of putTranslation.mock.calls) {
+        const persisted = call[0] as TranslationRecord;
+        expect(persisted.segments.length).toBeGreaterThan(0);
+      }
+    });
+
+    it('still persists a base-less (empty-segments) failed record for a fresh video with nothing to preserve', async () => {
+      const deps = makeDeps({
+        requestTranscript: async () => ({ unavailable: true }),
+        getTranslation: vi.fn(async () => null),
+      });
+
+      const result = await runTranslationPipeline({ videoId: 'v1', tabId: 1, key: 'k' }, deps);
+
+      expect(result.status).toBe('failed');
+      expect(result.segments).toEqual([]);
+    });
+  });
+
   describe('onProgress step sequence', () => {
     it('emits extract -> analyze -> translate -> done, with correct done/total', async () => {
       const rows = makeRows(5); // 1 batch, deterministic ordering
