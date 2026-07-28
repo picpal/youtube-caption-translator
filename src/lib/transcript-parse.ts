@@ -39,6 +39,29 @@ export function parseTimestamp(ts: string): number {
 }
 
 /**
+ * Inverse of `parseTimestamp`: whole seconds -> YouTube's own display format
+ * (docs/youtube-transcript-findings.md §3) — `m:ss` under 1h, `h:mm:ss` at or
+ * above 1h, no leading zero on the leftmost unit, zero-padded lower units
+ * (`0` -> `"0:00"`, `3611` -> `"1:00:11"`, never `"01:00:11"`).
+ * `parseTimestamp(formatTimestamp(x)) === x` for every non-negative integer
+ * `x` — see transcript-parse.test.ts for the round-trip assertion. Used by
+ * `TranscriptList` (Task 9) to render `TranscriptSegment.startSec` for
+ * display; `Math.floor` guards a fractional input the same way
+ * `VideoCard.tsx`'s `formatDuration` does, though every caller today passes
+ * an already-integer second count.
+ */
+export function formatTimestamp(totalSeconds: number): string {
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = Math.floor(totalSeconds % 60);
+  const paddedSeconds = String(seconds).padStart(2, '0');
+  if (hours > 0) {
+    return `${hours}:${String(minutes).padStart(2, '0')}:${paddedSeconds}`;
+  }
+  return `${minutes}:${paddedSeconds}`;
+}
+
+/**
  * De-dupes rows by the `(tsText, text)` pair, keeping first-seen order.
  *
  * Exists as a pure, unit-testable counterpart to the dedup the scraper must

@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   parseTimestamp,
+  formatTimestamp,
   dedupeRows,
   reconstructSentences,
   rowsToSegments,
@@ -87,6 +88,27 @@ describe('parseTimestamp', () => {
     expect(() => parseTimestamp('abc')).toThrow();
     expect(() => parseTimestamp('1:2:3:4')).toThrow();
     expect(() => parseTimestamp('1')).toThrow();
+  });
+});
+
+describe('formatTimestamp', () => {
+  it('formats under-1h as m:ss, no leading zero on minutes', () => {
+    expect(formatTimestamp(0)).toBe('0:00');
+    expect(formatTimestamp(6)).toBe('0:06');
+    expect(formatTimestamp(359)).toBe('5:59');
+    expect(formatTimestamp(59 * 60 + 45)).toBe('59:45');
+  });
+
+  it('formats 1h+ as h:mm:ss, no leading zero on hours, zero-padded mm/ss', () => {
+    expect(formatTimestamp(3600)).toBe('1:00:00');
+    expect(formatTimestamp(3611)).toBe('1:00:11');
+    expect(formatTimestamp(1 * 3600 + 56 * 60 + 15)).toBe('1:56:15');
+  });
+
+  it('round-trips with parseTimestamp for representative values', () => {
+    for (const sec of [0, 6, 45, 359, 599, 3599, 3600, 3611, 7025]) {
+      expect(parseTimestamp(formatTimestamp(sec))).toBe(sec);
+    }
   });
 });
 

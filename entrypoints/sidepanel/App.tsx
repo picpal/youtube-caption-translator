@@ -1,12 +1,14 @@
-import { Fragment, useEffect, useState } from 'react';
+import { Fragment, useEffect, useRef, useState } from 'react';
 import { Button } from '~/components/Button';
 import { StatusBadge } from '~/components/StatusBadge';
+import { TranscriptList } from '~/components/TranscriptList';
 import { UnsupportedBanner } from '~/components/UnsupportedBanner';
 import { VideoCard } from '~/components/VideoCard';
 import { useApiKey } from '~/features/api-key/useApiKey';
 import { progressPercent, stepForStatus, type ProcessingStep } from '~/features/translation/progress-display';
 import { useTranslation, type TranslationProgressState } from '~/features/translation/useTranslation';
 import { useCurrentVideo } from '~/features/video/useCurrentVideo';
+import { formatTimestamp } from '~/lib/transcript-parse';
 import { classifyYoutubeUrl, type YoutubePageKind } from '~/lib/youtube';
 import type { TranslationRecord, TranslationStatus } from '~/types/transcript';
 
@@ -176,13 +178,32 @@ function NonYoutubeBody() {
 // The thumbnail/title/channel block and the caption-availability bar are
 // real data as of Task 9, via VideoCard + useCurrentVideo. The
 // `AI 자막 생성` button and the 처리 단계 footer are wired to the live
-// translation state as of M2 Task 8, via useTranslation (below). Only the
-// 자막 표시 selector remains static — M3's display-mode concern, not this
-// task's.
+// translation state as of M2 Task 8, via useTranslation (below). The
+// finished transcript list (M2 Task 9) renders below the stepper once a
+// `done`/`failed` record has segments. Only the 자막 표시 selector remains
+// static — M3's display-mode concern, not this task's.
 function ReadyBody() {
   const { video, loading, tabId } = useCurrentVideo();
   const videoId = video?.videoId ?? null;
   const { status, progress, record, start, error } = useTranslation({ videoId, tabId });
+
+  // DoD #2 — dump the finished transcript to the console once per
+  // completion. Keyed on `videoId` (not a plain boolean) so switching to a
+  // different already-`done` video dumps that video's own transcript too,
+  // but re-rendering the SAME video's `done` state (e.g. a progress-unrelated
+  // re-render, or the stepper's percent ticking on the way there) never
+  // re-logs. A ref rather than state: this is a one-shot side effect with no
+  // corresponding UI, so it doesn't need to trigger a re-render itself.
+  const dumpedVideoIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (status !== 'done' || record === null || videoId === null) return;
+    if (dumpedVideoIdRef.current === videoId) return;
+    dumpedVideoIdRef.current = videoId;
+    const rows = record.segments
+      .map((s) => `${formatTimestamp(s.startSec)} | ${s.sourceText} | ${s.translatedText ?? ''}`)
+      .join('\n');
+    console.log(`[YT Play Assistant] translation done — ${videoId}\n${rows}`);
+  }, [status, record, videoId]);
 
   // `no-metadata`: the pipeline settled for this watch-page tab (`loading`
   // is false — see useCurrentVideo's doc comment on what that requires) and
@@ -198,6 +219,18 @@ function ReadyBody() {
       </div>
     );
   }
+
+  // The list is only meaningful once the job has reached a terminal state
+  // with something to show: `done` (full EN+KO) or `failed` (EN plus
+  // whatever KO batches completed before the failure — Task 9's "실패 →
+  // 원문만이라도 표시", handled row-by-row inside TranscriptList itself via
+  // each segment's own `translatedText`). Never during
+  // `extracting`/`analyzing`/`translating` — the stepper above already owns
+  // that phase, and `record` can still hold a stale prior-video snapshot or
+  // partially-filled segments mid-flight (see useTranslation's `record` doc
+  // comment) that would be misleading to render as if finished.
+  const showTranscriptList =
+    (status === 'done' || status === 'failed') && record !== null && record.segments.length > 0;
 
   return (
     <>
@@ -240,6 +273,17 @@ function ReadyBody() {
       </div>
 
       <ProcessingStepper status={status} progress={progress} record={record} />
+
+      {showTranscriptList && record !== null && (
+        <div className="border-t border-neutral-200 dark:border-neutral-800">
+          <div className="px-4 pt-3.5">
+            <span className="text-[10.5px] font-semibold tracking-wide text-neutral-400 dark:text-neutral-500">
+              번역 결과
+            </span>
+          </div>
+          <TranscriptList segments={record.segments} />
+        </div>
+      )}
     </>
   );
 }
