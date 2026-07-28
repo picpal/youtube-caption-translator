@@ -1,7 +1,7 @@
 import type { GeminiTestResult } from '~/types/message';
 import type { GlossaryEntry, TranscriptSegment } from '~/types/transcript';
 
-export const MODEL_ID = 'gemini-2.5-flash';
+export const MODEL_ID = 'gemini-3.6-flash';
 const ENDPOINT = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL_ID}:generateContent`;
 
 interface GeminiCallOptions {
