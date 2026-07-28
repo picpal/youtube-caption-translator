@@ -1,6 +1,6 @@
 import 'fake-indexeddb/auto';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { DB_NAME, getVideo } from '~/lib/db';
+import { DB_NAME, getVideo, getTranslation } from '~/lib/db';
 import type { AppMessage } from '~/types/message';
 import { handle } from '../entrypoints/background';
 
@@ -45,8 +45,15 @@ function deleteDb(): Promise<void> {
 let sendMessageMock: ReturnType<typeof vi.fn>;
 let tabsSendMessageMock: ReturnType<typeof vi.fn>;
 
+// Minimal in-memory fake of the one `chrome.storage.local` surface
+// `getApiKey`/`saveApiKey` (src/lib/storage.ts) need — only exercised by the
+// START_TRANSLATION dedup suite below, which needs a "present" API key to
+// get past `handle()`'s own key gate before it can assert on dedup.
+let storageData: Record<string, unknown>;
+
 beforeEach(async () => {
   await deleteDb();
+  storageData = {};
   sendMessageMock = vi.fn().mockResolvedValue({ ok: true });
   tabsSendMessageMock = vi.fn().mockResolvedValue(undefined);
   (globalThis as any).chrome = {
@@ -55,6 +62,27 @@ beforeEach(async () => {
     },
     tabs: {
       sendMessage: tabsSendMessageMock,
+    },
+    storage: {
+      local: {
+        get: vi.fn((keys: string | string[]) => {
+          const keyList = Array.isArray(keys) ? keys : [keys];
+          const result: Record<string, unknown> = {};
+          for (const key of keyList) {
+            if (key in storageData) result[key] = storageData[key];
+          }
+          return Promise.resolve(result);
+        }),
+        set: vi.fn((items: Record<string, unknown>) => {
+          Object.assign(storageData, items);
+          return Promise.resolve();
+        }),
+        remove: vi.fn((keys: string | string[]) => {
+          const keyList = Array.isArray(keys) ? keys : [keys];
+          for (const key of keyList) delete storageData[key];
+          return Promise.resolve();
+        }),
+      },
     },
   };
 });
@@ -229,5 +257,87 @@ describe('CURRENT_VIDEO_UPDATED (self-delivery)', () => {
       senderFor(undefined),
     );
     expect(res).toEqual({ ok: true });
+  });
+});
+
+// Task 7 — the in-flight job registry that makes the panel's auto-resume-
+// on-open safe: START_TRANSLATION must be a no-op against an already-
+// running job for the same videoId, not a second pipeline. `runTranslationPipeline`
+// itself calls `chrome.tabs.sendMessage` (via `requestTranscript`) as the
+// very first thing it does after its synchronous initial `onProgress` call —
+// before any `await` inside `handle()`'s own START_TRANSLATION case runs
+// again — so `tabsSendMessageMock`'s call count is a reliable proxy for "did
+// a second pipeline actually start", with no polling/timing needed for the
+// dedup assertion itself (only the cleanup below needs `vi.waitFor`, to let
+// the stuck first pipeline settle before the next test).
+describe('START_TRANSLATION dedup', () => {
+  it('does not start a second pipeline for a videoId with one already in-flight', async () => {
+    const tabId = freshTabId();
+    await chrome.storage.local.set({ geminiApiKey: 'test-key', geminiApiKeySavedAt: new Date().toISOString() });
+
+    let releaseTranscript!: (value: unknown) => void;
+    const stuckTranscript = new Promise((resolve) => {
+      releaseTranscript = resolve;
+    });
+    tabsSendMessageMock.mockReturnValueOnce(stuckTranscript);
+
+    const res1 = await handle(
+      { type: 'START_TRANSLATION', payload: { videoId: 'dedup-video', tabId } },
+      senderFor(undefined),
+    );
+    expect(res1).toEqual({ ok: true });
+
+    const res2 = await handle(
+      { type: 'START_TRANSLATION', payload: { videoId: 'dedup-video', tabId } },
+      senderFor(undefined),
+    );
+    expect(res2).toEqual({ ok: true });
+
+    // Only the FIRST call's pipeline reached out to the content script —
+    // the second was a dedup no-op against the still-running job.
+    expect(tabsSendMessageMock).toHaveBeenCalledTimes(1);
+
+    // Let the stuck first pipeline finish (requestTranscript resolves to a
+    // shape that fails `Array.isArray` -> pipeline records a clean
+    // "no transcript panel" failure) so its videoId is removed from the
+    // in-flight set and this test doesn't leak state into the next one.
+    releaseTranscript({ unavailable: true });
+    await vi.waitFor(async () => {
+      const record = await getTranslation('dedup-video');
+      expect(record?.status).toBe('failed');
+    });
+  });
+
+  it('allows starting a new job once the previous one for that videoId has settled', async () => {
+    const tabId = freshTabId();
+    await chrome.storage.local.set({ geminiApiKey: 'test-key', geminiApiKeySavedAt: new Date().toISOString() });
+    tabsSendMessageMock.mockResolvedValue({ unavailable: true });
+
+    await handle(
+      { type: 'START_TRANSLATION', payload: { videoId: 'settle-video', tabId } },
+      senderFor(undefined),
+    );
+    await vi.waitFor(async () => {
+      const record = await getTranslation('settle-video');
+      expect(record?.status).toBe('failed');
+    });
+
+    await handle(
+      { type: 'START_TRANSLATION', payload: { videoId: 'settle-video', tabId } },
+      senderFor(undefined),
+    );
+    await vi.waitFor(() => {
+      expect(tabsSendMessageMock).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  it('does not start any pipeline when no API key is set', async () => {
+    const tabId = freshTabId();
+    const res = await handle(
+      { type: 'START_TRANSLATION', payload: { videoId: 'no-key-video', tabId } },
+      senderFor(undefined),
+    );
+    expect(res).toEqual({ ok: false, error: 'API key not set' });
+    expect(tabsSendMessageMock).not.toHaveBeenCalled();
   });
 });

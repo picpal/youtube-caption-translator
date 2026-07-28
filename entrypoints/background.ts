@@ -4,6 +4,8 @@ import { testGeminiKey, analyzeGlossary, translateBatch } from '~/lib/gemini';
 import { putVideo, getTranslation, putTranslation, upsertBatch } from '~/lib/db';
 import { sendMessage } from '~/lib/messaging';
 import { runTranslationPipeline } from '~/features/translation/pipeline';
+import { broadcastToPorts } from '~/features/translation/progress-broadcast';
+import { TRANSLATION_PROGRESS_PORT } from '~/types/message';
 import type {
   AppMessage,
   AppResponseMap,
@@ -12,6 +14,7 @@ import type {
   RequestTranscriptMessage,
   RequestTranscriptResponse,
 } from '~/types/message';
+import type { TranslationProgress } from '~/types/transcript';
 
 // Latest known state per tab, keyed by the tab the content script's message
 // arrived FROM (`sender.tab.id`) — never by the panel's notion of "the
@@ -24,6 +27,39 @@ import type {
 // entry on its very next tick. Nothing here needs to survive a restart on
 // its own.
 const latestByTab = new Map<number, CurrentVideoState>();
+
+// M2 Task 7 — panels currently connected on the translation-progress
+// channel. One entry per open panel Port; a panel that reconnects mid-job
+// (e.g. closed and reopened) starts receiving progress events from that
+// point on — it does NOT get replayed history, since a Port has no memory
+// of messages sent before it connected. A reopened panel instead learns how
+// far an in-progress job already got from the persisted `TranslationRecord`
+// (`GET_TRANSLATION`, Task 6), which is exactly what `useTranslation`
+// (Task 7) pulls before deciding whether to auto-resume.
+const progressPorts = new Set<chrome.runtime.Port>();
+
+// Fans a progress event out to every connected panel. Wraps the actual
+// posting in `broadcastToPorts` (progress-broadcast.ts) so a since-closed
+// port can't throw out of this call and abort the pipeline mid-broadcast;
+// a throwing port is pruned on the spot rather than left to throw again
+// next time.
+function broadcastProgress(progress: TranslationProgress): void {
+  broadcastToPorts(progressPorts, progress);
+}
+
+// videoIds with a translation pipeline currently running in this service
+// worker. THIS IS WHAT MAKES PANEL-REOPEN AUTO-RESUME SAFE: `useTranslation`
+// (Task 7) calls `START_TRANSLATION` unconditionally whenever a loaded
+// record is still in-progress, with no way for the panel to know on its own
+// whether a job for that video is already running here — two panels open on
+// the same video, or a reopen racing an already-running job, would otherwise
+// each kick off their own pipeline: wasted Gemini calls, and two writers
+// racing on the same persisted record (Task 3's `upsertBatch` is per-call
+// idempotent, but running the SAME batch work twice concurrently is still
+// pure waste, not a correctness feature). A plain `Set<string>` is enough —
+// nothing here needs to await the running job's result, only know that one
+// exists; see the `START_TRANSLATION` handler below for the add/delete.
+const inFlightTranslations = new Set<string>();
 
 export default defineBackground(() => {
   chrome.sidePanel
@@ -41,6 +77,25 @@ export default defineBackground(() => {
       return true;
     },
   );
+
+  // Registers/deregisters a panel's translation-progress Port. A connected
+  // Port is also what keeps this service worker alive for the duration of a
+  // streaming job — Chrome resets a service worker's idle timer on Port
+  // activity, and every batch's `onProgress` call (`broadcastProgress`
+  // above) posts a message on this same channel while a job is actually
+  // running. No separate keepalive ping is added on top of that: Task 6's
+  // per-batch persistence + resume already makes a worker eviction
+  // recoverable regardless (the Port is the belt, persist+resume is the
+  // suspenders) — an eviction mid-job just means progress streaming pauses
+  // until the panel's next reconnect, not that the job's work is lost, and
+  // `chrome.alarms` is deliberately not used to paper over that (M2 scope).
+  chrome.runtime.onConnect.addListener((port) => {
+    if (port.name !== TRANSLATION_PROGRESS_PORT) return;
+    progressPorts.add(port);
+    port.onDisconnect.addListener(() => {
+      progressPorts.delete(port);
+    });
+  });
 
   // Drops a closed tab's entry so the map does not grow for the lifetime of
   // the browser session. Fires without the "tabs" permission (only reading
@@ -168,34 +223,47 @@ export async function handle<T extends AppMessage['type']>(
         return { ok: false, error: 'API key not set' } as AppResponseMap[T];
       }
 
-      // Fire-and-forget: START_TRANSLATION acks "accepted", not "finished".
-      // The promise is intentionally not awaited/returned to the caller;
-      // its rejection is only logged (there is no one left to answer by the
-      // time it could reject — the ack below has already gone out).
-      void runTranslationPipeline(
-        { videoId: payload.videoId, tabId: payload.tabId, key },
-        {
-          requestTranscript: async (tabId, videoId) =>
-            (await chrome.tabs.sendMessage(tabId, {
-              type: 'REQUEST_TRANSCRIPT',
-              videoId,
-            } satisfies RequestTranscriptMessage)) as RequestTranscriptResponse,
-          analyzeGlossary,
-          translateBatch,
-          getTranslation,
-          putTranslation,
-          upsertBatch,
-          sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
-          // TODO(Task 7): stream progress to the panel over the
-          // TRANSLATION_PROGRESS_PORT Port instead. No Port exists yet, so
-          // this is a log-only placeholder with no consumer.
-          onProgress: (progress) => {
-            console.log('[translation progress]', progress);
+      // Dedup (see `inFlightTranslations` above): a job for this video is
+      // already running — this call is either a genuine double-click, two
+      // panels open on the same video, or the panel's own auto-resume
+      // racing a job it is already attached to via the Port. Either way the
+      // honest answer is "already running, ack accepted" — not a second
+      // pipeline.
+      if (!inFlightTranslations.has(payload.videoId)) {
+        inFlightTranslations.add(payload.videoId);
+
+        // Fire-and-forget: START_TRANSLATION acks "accepted", not
+        // "finished". The promise is intentionally not awaited/returned to
+        // the caller; its rejection is only logged (there is no one left to
+        // answer by the time it could reject — the ack below has already
+        // gone out). `.finally` removes this video from the in-flight set
+        // regardless of outcome, so a later START_TRANSLATION (a real
+        // retry, or a future resume) is never dedup'd against a job that
+        // has already settled.
+        void runTranslationPipeline(
+          { videoId: payload.videoId, tabId: payload.tabId, key },
+          {
+            requestTranscript: async (tabId, videoId) =>
+              (await chrome.tabs.sendMessage(tabId, {
+                type: 'REQUEST_TRANSCRIPT',
+                videoId,
+              } satisfies RequestTranscriptMessage)) as RequestTranscriptResponse,
+            analyzeGlossary,
+            translateBatch,
+            getTranslation,
+            putTranslation,
+            upsertBatch,
+            sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+            onProgress: broadcastProgress,
           },
-        },
-      ).catch((err) => {
-        console.error('translation pipeline failed', err);
-      });
+        )
+          .catch((err) => {
+            console.error('translation pipeline failed', err);
+          })
+          .finally(() => {
+            inFlightTranslations.delete(payload.videoId);
+          });
+      }
 
       return { ok: true } as AppResponseMap[T];
     }
