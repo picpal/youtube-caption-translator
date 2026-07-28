@@ -1,4 +1,5 @@
 import type { ExtractedVideoMeta } from '~/lib/video-meta';
+import type { TranslationRecord } from '~/types/transcript';
 
 export type ApiKeyStatus =
   | { present: false }
@@ -51,7 +52,21 @@ export type AppMessage =
   // is: background has no "tabs" permission to resolve "the active tab"
   // itself, so the caller (which already knows via its own `chrome.tabs`
   // query) supplies it.
-  | { type: 'REQUEST_VIDEO_REEMIT'; payload: { tabId: number } };
+  | { type: 'REQUEST_VIDEO_REEMIT'; payload: { tabId: number } }
+  // panel -> background: kick off the M2 extraction+translation pipeline
+  // (Tasks 4-7) for a video. `tabId`-scoped for the same reason
+  // `GET_CURRENT_VIDEO`/`REQUEST_VIDEO_REEMIT` are: background has no "tabs"
+  // permission to resolve a target tab itself, and the pipeline needs one to
+  // reach the content script via `REQUEST_TRANSCRIPT` (see below). This is a
+  // fire-and-forget kickoff, not a completion signal — actual progress is
+  // streamed separately over the `TRANSLATION_PROGRESS_PORT` Port (Task 7);
+  // the response here only says whether the pipeline could be started.
+  | { type: 'START_TRANSLATION'; payload: { videoId: string; tabId: number } }
+  // panel -> background: read the cached translation for a video, e.g. on
+  // panel open/revisit, before deciding whether to call `START_TRANSLATION`
+  // at all. Mirrors `GET_CURRENT_VIDEO`'s null-means-"nothing cached yet"
+  // convention.
+  | { type: 'GET_TRANSLATION'; payload: { videoId: string } };
 
 export type AppResponseMap = {
   SAVE_API_KEY: { ok: true; status: ApiKeyStatus } | { ok: false; error: string };
@@ -69,6 +84,18 @@ export type AppResponseMap = {
   // silently-swallowed outcome (see the handler in entrypoints/background.ts),
   // not a caller-visible failure.
   REQUEST_VIDEO_REEMIT: { ok: true };
+  // Unlike `REQUEST_VIDEO_REEMIT`, an unreachable content script (or any
+  // other failure to start) IS caller-visible here: `START_TRANSLATION`
+  // means the panel is actively waiting to scrape a transcript, not
+  // best-effort re-announcing state nothing depends on, so the panel needs
+  // to know if that can't happen at all (e.g. render "no transcript
+  // panel"/error rather than spin forever).
+  START_TRANSLATION: { ok: true } | { ok: false; error: string };
+  // `null` means "no cached translation for this video" — same convention
+  // as `GET_CURRENT_VIDEO`'s null. A non-null record may still be mid-
+  // pipeline (`status` other than 'done'/'failed'); callers resume progress
+  // via the Port rather than polling this.
+  GET_TRANSLATION: TranslationRecord | null;
 };
 
 export type AppResponse<T extends AppMessage['type']> = AppResponseMap[T];
@@ -86,3 +113,56 @@ export type AppResponse<T extends AppMessage['type']> = AppResponseMap[T];
 export interface ReemitVideoMessage {
   type: 'REEMIT_VIDEO';
 }
+
+/**
+ * One row scraped from the YouTube transcript engagement panel, PRE-parse
+ * (the raw `.segment-timestamp` + `.segment-text` pair — see
+ * docs/youtube-transcript-findings.md). Deliberately NOT a
+ * `TranscriptSegment`: that shape (numeric start/end seconds, sentence-
+ * joined text) is produced later, by Task 4's parser (`rowsToSegments`/
+ * `reconstructSentences` in src/lib/transcript-parse.ts) running on an array
+ * of these. The content-script scraper de-duplicates the panel's
+ * double-mounted rows (Task 1 finding) before returning, so every row here
+ * is already unique.
+ */
+export interface RawTranscriptRow {
+  tsText: string;
+  text: string;
+}
+
+/**
+ * background -> content only, delivered via `chrome.tabs.sendMessage` (same
+ * reasoning as `ReemitVideoMessage` above). Deliberately NOT part of
+ * `AppMessage` for the same reason `ReemitVideoMessage` isn't: this is
+ * dispatched TO the content script, not through background's `handle()`.
+ * Unlike `ReemitVideoMessage`, this one carries a real response instead of a
+ * separate broadcast — see `RequestTranscriptResponse` below — because the
+ * pipeline (background) needs the scraped rows back synchronously to keep
+ * going, not as a fire-and-forget re-announcement.
+ */
+export interface RequestTranscriptMessage {
+  type: 'REQUEST_TRANSCRIPT';
+}
+
+/**
+ * Response to `RequestTranscriptMessage`, returned by the content script's
+ * `chrome.runtime.onMessage` listener (entrypoints/content.ts, Task 4).
+ * `{ unavailable: true }` means the video has no transcript engagement panel
+ * at all — the "no captions" case (PRD §9 실패 상태) — kept distinct from an
+ * empty array so "no panel" is never silently conflated with "panel present
+ * but scraped nothing".
+ */
+export type RequestTranscriptResponse = RawTranscriptRow[] | { unavailable: true };
+
+/**
+ * Channel name for the background -> panel translation-progress Port
+ * (`chrome.runtime.connect({ name: TRANSLATION_PROGRESS_PORT })`, Task 7).
+ * Named constant rather than a string literal at each call site so
+ * background and the panel can't drift on it independently. A Port's
+ * messages don't flow through background's `handle()` switch (there is no
+ * request/response pair, just a stream), so — unlike `AppMessage` — there is
+ * no discriminated union to extend here; the payload contract is simply
+ * documented: every message sent on this channel is a `TranslationProgress`
+ * (src/types/transcript.ts).
+ */
+export const TRANSLATION_PROGRESS_PORT = 'translation-progress';

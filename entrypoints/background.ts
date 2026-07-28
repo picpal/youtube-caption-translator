@@ -148,6 +148,15 @@ export async function handle<T extends AppMessage['type']>(
       // exhaustive if this is ever redelivered to the sender; there is no
       // state to update on receipt.
       return { ok: true } as AppResponseMap[T];
+    // TODO(Task 6/7): wire the real pipeline orchestrator. This stub only
+    // exists to keep this file's exhaustive switches type-checking after
+    // Task 2 added the message variant — it does not start anything yet.
+    case 'START_TRANSLATION':
+      return { ok: true } as AppResponseMap[T];
+    // TODO(Task 3/6): read from the `translations` IndexedDB store once it
+    // exists. Always `null` for now (Task 2 stub — types/schema only).
+    case 'GET_TRANSLATION':
+      return null as AppResponseMap[T];
   }
   throw new Error(`Unhandled message type: ${(msg as AppMessage).type}`);
 }
@@ -171,5 +180,9 @@ function errorResponseFor(msg: AppMessage, err: unknown): AppResponseMap[AppMess
       return { ok: true };
     case 'CURRENT_VIDEO_UPDATED':
       return { ok: true };
+    case 'START_TRANSLATION':
+      return { ok: false, error: message };
+    case 'GET_TRANSLATION':
+      return null;
   }
 }
