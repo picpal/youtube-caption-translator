@@ -120,19 +120,45 @@ export function useTranslation({ videoId, tabId }: UseTranslationParams): UseTra
     if (videoId === null || tabId === null) return;
 
     let cancelled = false;
+    // Fix round 1: once a live Port message has been observed for this job,
+    // the initial GET_TRANSLATION fetch below — which can still be in
+    // flight, e.g. this panel opened while a job was ALREADY RUNNING and
+    // the background's first progress broadcast reaches the freshly
+    // connected port before that fetch's own round trip completes — must
+    // not overwrite `status` with its now-stale snapshot. Once true, only
+    // Port messages drive `status`; this is what the `status` doc comment
+    // above promises ("Sourced from the live Port stream once any message
+    // has arrived") and the pre-fix code did not actually enforce.
+    let sawLiveStatus = false;
+    // Fix round 1: every GET_TRANSLATION issued for `record` (the initial
+    // pull below, and each terminal-triggered `refetchRecord`) is tagged
+    // with an increasing sequence number. A response is only applied if it
+    // is still the most RECENTLY ISSUED request by the time it resolves —
+    // otherwise a request issued after it exists, and this one lost the
+    // race regardless of which response actually arrives first over
+    // chrome.runtime messaging (unordered). Without this, the exact same
+    // "reopen attaches to an already-running job" scenario above could have
+    // a terminal progress event's `refetchRecord()` response arrive first,
+    // only for the STILL-IN-FLIGHT initial fetch to land afterward and
+    // clobber the fresher, final record with a stale in-progress one.
+    let recordRequestSeq = 0;
+
     const port = chrome.runtime.connect({ name: TRANSLATION_PROGRESS_PORT });
+
+    const applyRecordResponse = (seq: number, rec: TranslationRecord | null) => {
+      if (cancelled || seq !== recordRequestSeq) return;
+      setRecord(rec);
+      setError(rec?.error?.reason ?? null);
+    };
 
     // Re-pulls the persisted record — used both for the initial load and,
     // below, whenever a progress event reports a terminal status. See the
     // `record` doc comment above for why "on terminal event" and not "on
     // every batch".
     const refetchRecord = () => {
+      const seq = ++recordRequestSeq;
       sendMessage({ type: 'GET_TRANSLATION', payload: { videoId } })
-        .then((rec) => {
-          if (cancelled) return;
-          setRecord(rec);
-          setError(rec?.error?.reason ?? null);
-        })
+        .then((rec) => applyRecordResponse(seq, rec))
         .catch(() => {
           // Background unreachable — leave whatever record state is already
           // held; the next reconnect/message will refresh it.
@@ -142,6 +168,7 @@ export function useTranslation({ videoId, tabId }: UseTranslationParams): UseTra
     const handlePortMessage = (message: TranslationProgress) => {
       if (cancelled) return;
       if (message.videoId !== videoId) return;
+      sawLiveStatus = true;
       setStatus(message.status);
       setProgress({ done: message.done, total: message.total, step: message.step });
       if (TERMINAL_STATUSES.includes(message.status)) refetchRecord();
@@ -150,12 +177,12 @@ export function useTranslation({ videoId, tabId }: UseTranslationParams): UseTra
 
     // Initial pull: whatever was already persisted before this hook mounted
     // (a prior session's finished/failed/in-progress translation).
+    const initialSeq = ++recordRequestSeq;
     sendMessage({ type: 'GET_TRANSLATION', payload: { videoId } })
       .then((rec) => {
         if (cancelled) return;
-        setRecord(rec);
-        setStatus(rec?.status ?? 'idle');
-        setError(rec?.error?.reason ?? null);
+        applyRecordResponse(initialSeq, rec);
+        if (!sawLiveStatus) setStatus(rec?.status ?? 'idle');
 
         // Auto-resume (DoD #4): background's in-flight job registry dedups
         // this against a job that is either already running (this panel
@@ -163,8 +190,11 @@ export function useTranslation({ videoId, tabId }: UseTranslationParams): UseTra
         // progress event) or was evicted mid-run (this restarts it, and the
         // pipeline's own resume-from-persisted-batches logic, Task 6, picks
         // up from the last completed batch) — never a duplicate
-        // translation.
-        if (!cancelled && shouldResume(rec)) {
+        // translation. Decided from THIS response regardless of whether it
+        // won the `applyRecordResponse` race above — a superseded snapshot
+        // is still the right basis for "was this video in progress when
+        // the panel opened".
+        if (shouldResume(rec)) {
           void sendMessage({ type: 'START_TRANSLATION', payload: { videoId, tabId } }).catch(() => {});
         }
       })

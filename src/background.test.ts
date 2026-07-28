@@ -271,7 +271,7 @@ describe('CURRENT_VIDEO_UPDATED (self-delivery)', () => {
 // dedup assertion itself (only the cleanup below needs `vi.waitFor`, to let
 // the stuck first pipeline settle before the next test).
 describe('START_TRANSLATION dedup', () => {
-  it('does not start a second pipeline for a videoId with one already in-flight', async () => {
+  it('does not start a second pipeline for two concurrent calls with the same videoId', async () => {
     const tabId = freshTabId();
     await chrome.storage.local.set({ geminiApiKey: 'test-key', geminiApiKeySavedAt: new Date().toISOString() });
 
@@ -281,26 +281,26 @@ describe('START_TRANSLATION dedup', () => {
     });
     tabsSendMessageMock.mockReturnValueOnce(stuckTranscript);
 
-    const res1 = await handle(
-      { type: 'START_TRANSLATION', payload: { videoId: 'dedup-video', tabId } },
-      senderFor(undefined),
-    );
+    // Fired concurrently (both in flight before either resolves), rather
+    // than awaited one after another — self-evidently the race the dedup
+    // registry exists for, not just an inference from `handle()`'s
+    // synchronous check-then-add being race-free by construction.
+    const [res1, res2] = await Promise.all([
+      handle({ type: 'START_TRANSLATION', payload: { videoId: 'dedup-video', tabId } }, senderFor(undefined)),
+      handle({ type: 'START_TRANSLATION', payload: { videoId: 'dedup-video', tabId } }, senderFor(undefined)),
+    ]);
     expect(res1).toEqual({ ok: true });
-
-    const res2 = await handle(
-      { type: 'START_TRANSLATION', payload: { videoId: 'dedup-video', tabId } },
-      senderFor(undefined),
-    );
     expect(res2).toEqual({ ok: true });
 
-    // Only the FIRST call's pipeline reached out to the content script —
-    // the second was a dedup no-op against the still-running job.
+    // Only ONE of the two calls' pipeline actually reached out to the
+    // content script — the other was a dedup no-op against the still-
+    // running job.
     expect(tabsSendMessageMock).toHaveBeenCalledTimes(1);
 
-    // Let the stuck first pipeline finish (requestTranscript resolves to a
-    // shape that fails `Array.isArray` -> pipeline records a clean
-    // "no transcript panel" failure) so its videoId is removed from the
-    // in-flight set and this test doesn't leak state into the next one.
+    // Let the stuck pipeline finish (requestTranscript resolves to a shape
+    // that fails `Array.isArray` -> pipeline records a clean "no transcript
+    // panel" failure) so its videoId is removed from the in-flight set and
+    // this test doesn't leak state into the next one.
     releaseTranscript({ unavailable: true });
     await vi.waitFor(async () => {
       const record = await getTranslation('dedup-video');
