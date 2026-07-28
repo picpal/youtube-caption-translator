@@ -1,11 +1,14 @@
-import { useEffect, useState } from 'react';
+import { Fragment, useEffect, useState } from 'react';
 import { Button } from '~/components/Button';
 import { StatusBadge } from '~/components/StatusBadge';
 import { UnsupportedBanner } from '~/components/UnsupportedBanner';
 import { VideoCard } from '~/components/VideoCard';
 import { useApiKey } from '~/features/api-key/useApiKey';
+import { progressPercent, stepForStatus, type ProcessingStep } from '~/features/translation/progress-display';
+import { useTranslation, type TranslationProgressState } from '~/features/translation/useTranslation';
 import { useCurrentVideo } from '~/features/video/useCurrentVideo';
 import { classifyYoutubeUrl, type YoutubePageKind } from '~/lib/youtube';
+import type { TranslationRecord, TranslationStatus } from '~/types/transcript';
 
 // 'checking' is this component's own pre-first-query state, layered on top
 // of the 4-way `YoutubePageKind` — not one of its members, since
@@ -171,11 +174,15 @@ function NonYoutubeBody() {
 // is the destination now, not a link to one.
 //
 // The thumbnail/title/channel block and the caption-availability bar are
-// real data as of Task 9, via VideoCard + useCurrentVideo. The 자막 표시
-// selector, the (still-disabled) AI 자막 생성 button, and the 처리 단계
-// footer remain static — M2's concern, not this task's.
+// real data as of Task 9, via VideoCard + useCurrentVideo. The
+// `AI 자막 생성` button and the 처리 단계 footer are wired to the live
+// translation state as of M2 Task 8, via useTranslation (below). Only the
+// 자막 표시 selector remains static — M3's display-mode concern, not this
+// task's.
 function ReadyBody() {
-  const { video, loading } = useCurrentVideo();
+  const { video, loading, tabId } = useCurrentVideo();
+  const videoId = video?.videoId ?? null;
+  const { status, progress, record, start, error } = useTranslation({ videoId, tabId });
 
   // `no-metadata`: the pipeline settled for this watch-page tab (`loading`
   // is false — see useCurrentVideo's doc comment on what that requires) and
@@ -223,29 +230,203 @@ function ReadyBody() {
       </div>
 
       <div className="p-4">
-        <Button disabled aria-disabled className="w-full">
-          AI 자막 생성
-        </Button>
+        <TranslateButton
+          ready={videoId !== null && tabId !== null}
+          status={status}
+          progress={progress}
+          error={error}
+          onStart={start}
+        />
       </div>
 
-      <div className="flex flex-col gap-2 border-t border-neutral-200 px-4 py-3.5 dark:border-neutral-800">
-        <span className="text-[10.5px] font-semibold tracking-wide text-neutral-400 dark:text-neutral-500">
-          처리 단계
-        </span>
-        <div className="flex flex-wrap items-center gap-2 text-[11px] tabular-nums text-neutral-500 dark:text-neutral-400">
-          <span>1 Transcript 추출</span>
-          <span className="text-neutral-300 dark:text-neutral-700">→</span>
-          <span>2 용어 분석</span>
-          <span className="text-neutral-300 dark:text-neutral-700">→</span>
-          <span>3 한국어 번역</span>
-          <span className="text-neutral-300 dark:text-neutral-700">→</span>
-          <span>4 자막 적용</span>
-        </div>
-        <span className="text-[10.5px] text-neutral-400 dark:text-neutral-600">
-          약 40초 소요 · 처리 중에도 영상은 계속 재생됩니다
-        </span>
-      </div>
+      <ProcessingStepper status={status} progress={progress} record={record} />
     </>
+  );
+}
+
+// M2 Task 8 — the §9 `AI 자막 생성` state machine:
+// - not `ready` (videoId/tabId not resolved yet): disabled, neutral label —
+//   `useTranslation`'s own `start()` already no-ops in this state, so this
+//   just keeps the button from looking clickable when it silently wouldn't
+//   do anything.
+// - `idle`: enabled, kicks off `start()`.
+// - `extracting`/`analyzing`/`translating`: disabled with a step-aware
+//   label; `translating` additionally shows the live, divide-by-zero-safe
+//   percent via `progressPercent`.
+// - `done`: disabled, reads as complete. Re-translating and rendering the
+//   translated segment list are out of this task's scope (Task 9).
+// - `failed`: re-enabled as a 다시 시도 retry affordance, with the failure
+//   reason surfaced above it.
+function TranslateButton({
+  ready,
+  status,
+  progress,
+  error,
+  onStart,
+}: {
+  ready: boolean;
+  status: TranslationStatus | 'idle';
+  progress: TranslationProgressState | null;
+  error: string | null;
+  onStart: () => void;
+}) {
+  if (!ready) {
+    return (
+      <Button disabled aria-disabled className="w-full">
+        준비 중…
+      </Button>
+    );
+  }
+
+  if (status === 'failed') {
+    return (
+      <div className="flex flex-col gap-2">
+        {error ? (
+          <p className="text-[11.5px] leading-relaxed text-red-600 dark:text-red-400">{error}</p>
+        ) : null}
+        <Button onClick={onStart} className="w-full">
+          다시 시도
+        </Button>
+      </div>
+    );
+  }
+
+  if (status === 'extracting' || status === 'analyzing' || status === 'translating') {
+    return (
+      <Button disabled aria-disabled className="w-full">
+        {processingLabel(status, progress)}
+      </Button>
+    );
+  }
+
+  if (status === 'done') {
+    return (
+      <Button disabled aria-disabled className="w-full">
+        번역 완료
+      </Button>
+    );
+  }
+
+  // 'idle'
+  return (
+    <Button onClick={onStart} className="w-full">
+      AI 자막 생성
+    </Button>
+  );
+}
+
+function processingLabel(
+  status: 'extracting' | 'analyzing' | 'translating',
+  progress: TranslationProgressState | null,
+): string {
+  if (status === 'extracting') return 'Transcript 추출 중…';
+  if (status === 'analyzing') return '용어 분석 중…';
+  // 'translating' is the only step whose progress event actually streams
+  // (pipeline.ts emits one `onProgress` per completed batch), so it is the
+  // only label worth a live percent. `progress` can still briefly be `null`
+  // here — e.g. a panel reopened onto an already-`translating` record whose
+  // status came from the initial GET_TRANSLATION fetch, before this
+  // session's own Port has delivered a first message for the resumed job —
+  // so this guards on more than just `total === 0`.
+  if (progress === null) return '한국어 번역 중…';
+  return `한국어 번역 중… ${progressPercent(progress.done, progress.total)}%`;
+}
+
+const STEP_LABELS = ['Transcript 추출', '용어 분석', '한국어 번역', '자막 적용'] as const;
+
+type StepVisualState = 'done' | 'active' | 'failed' | 'pending';
+
+const STEP_TEXT_CLASS: Record<StepVisualState, string> = {
+  done: 'text-neutral-600 dark:text-neutral-400',
+  active: 'font-semibold text-neutral-900 dark:text-neutral-100',
+  failed: 'font-semibold text-red-600 dark:text-red-400',
+  pending: 'text-neutral-400 dark:text-neutral-600',
+};
+
+// `status === 'done'` marks every step done regardless of `activeStep`'s
+// exact value — once the whole job is done there is nothing left mid-flight
+// to distinguish between steps.
+function stepVisualState(
+  stepNum: number,
+  activeStep: ProcessingStep,
+  status: TranslationStatus | 'idle',
+): StepVisualState {
+  if (status === 'done') return 'done';
+  if (stepNum < activeStep) return 'done';
+  if (stepNum === activeStep && activeStep !== 0) return status === 'failed' ? 'failed' : 'active';
+  return 'pending';
+}
+
+// The idle-state hint is the original static copy; while a job is actively
+// processing it is replaced with a live `done / total` count — guarded the
+// same way `progressPercent` is (a `total` of 0, or no `progress` at all
+// yet, just omits the count rather than rendering a bogus "0 / 0").
+function stepperCaption(
+  status: TranslationStatus | 'idle',
+  progress: TranslationProgressState | null,
+): string {
+  if (status === 'failed') return '실패한 단계부터 다시 시도할 수 있습니다';
+  if (status === 'done') return '번역이 완료되었습니다';
+  if (status === 'idle') return '약 40초 소요 · 처리 중에도 영상은 계속 재생됩니다';
+  if (progress && progress.total > 0) {
+    return `${progress.done} / ${progress.total} · 처리 중에도 영상은 계속 재생됩니다`;
+  }
+  return '처리 중에도 영상은 계속 재생됩니다';
+}
+
+// M2 Task 8 — live 처리 단계 stepper. `stepForStatus` covers the plain
+// status->step mapping (extracting=1/analyzing=2/translating=3/done=4); the
+// `activeStep` resolution below layers on top of it for the one case that
+// mapping alone cannot express — WHICH step a `failed` status stopped at:
+// 1) prefer the live Port's `progress.step` (most current, and set together
+//    with `status` in useTranslation's own port-message handler, so this
+//    covers a failure that happened live in this session);
+// 2) fall back to the persisted record's `error.step` for a job that failed
+//    in a past session and was never resumed here (no Port message ever
+//    arrives for it this time — this is the common "reopen the panel on an
+//    old failure" path);
+// 3) finally fall back to the plain mapping (idle, or a done/failed video
+//    this session never streamed any progress for at all).
+function ProcessingStepper({
+  status,
+  progress,
+  record,
+}: {
+  status: TranslationStatus | 'idle';
+  progress: TranslationProgressState | null;
+  record: TranslationRecord | null;
+}) {
+  const activeStep = progress?.step ?? stepForStatus(record?.error?.step ?? status);
+
+  return (
+    <div className="flex flex-col gap-2 border-t border-neutral-200 px-4 py-3.5 dark:border-neutral-800">
+      <span className="text-[10.5px] font-semibold tracking-wide text-neutral-400 dark:text-neutral-500">
+        처리 단계
+      </span>
+      <div className="flex flex-wrap items-center gap-2 text-[11px] tabular-nums text-neutral-500 dark:text-neutral-400">
+        {STEP_LABELS.map((label, i) => {
+          const stepNum = i + 1;
+          const state = stepVisualState(stepNum, activeStep, status);
+          const marker = state === 'done' ? '✓' : state === 'failed' ? '!' : String(stepNum);
+          const percent =
+            state === 'active' && status === 'translating' && progress
+              ? ` ${progressPercent(progress.done, progress.total)}%`
+              : '';
+          return (
+            <Fragment key={label}>
+              {i > 0 && <span className="text-neutral-300 dark:text-neutral-700">→</span>}
+              <span className={STEP_TEXT_CLASS[state]}>
+                {marker} {label}
+                {percent}
+              </span>
+            </Fragment>
+          );
+        })}
+      </div>
+      <span className="text-[10.5px] text-neutral-400 dark:text-neutral-600">
+        {stepperCaption(status, progress)}
+      </span>
+    </div>
   );
 }
 

@@ -29,6 +29,16 @@ export interface UseCurrentVideoResult {
    * should read `video` regardless of `loading`.
    */
   loading: boolean;
+  /**
+   * The active tab's id, or `null` before the tab-identity effect's first
+   * `chrome.tabs.query` has resolved. Exposed (M2 Task 8) so callers that
+   * need to identify "this tab" for a chrome API of their own (e.g.
+   * `useTranslation`'s `START_TRANSLATION`, which runs content-script code
+   * in a specific tab) don't have to duplicate this hook's own
+   * `chrome.tabs.query({ active: true, currentWindow: true })` detection —
+   * this was already being tracked internally, just not returned before.
+   */
+  tabId: number | null;
 }
 
 /**
@@ -150,5 +160,6 @@ export function useCurrentVideo(): UseCurrentVideoResult {
     video: state?.meta ?? null,
     kind,
     loading,
+    tabId,
   };
 }
