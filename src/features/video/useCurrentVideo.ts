@@ -4,6 +4,40 @@ import type { ExtractedVideoMeta } from '~/lib/video-meta';
 import { sendMessage } from '~/lib/messaging';
 import type { AppMessage, CurrentVideoState } from '~/types/message';
 
+/**
+ * Task R7 fix round 1 (Critical #3) — a `CurrentVideoState` pull/push tagged
+ * with the tab id it was actually FOR. `tabId` (below) and `state` used to be
+ * two independent `useState` cells: on a tab switch, the tab-identity effect
+ * calls `setTabId(newTab)` and the push/pull effect (which owns `state`)
+ * re-runs only AFTER that render commits — producing one guaranteed render
+ * where this hook returns `{ video: <OLD tab's video>, tabId: newTab }`.
+ * `useTranslation` (M2 Task 7/R7) re-runs its own effect on exactly that
+ * `[videoId, tabId]` pair, so its auto-resume could fire `START_TRANSLATION`
+ * for the OLD tab's video against the NEW tab — the content script's
+ * video-id gate (entrypoints/content.ts) then answers `{ unavailable: true }`
+ * ("wrong tab"), which the pipeline cannot tell apart from "no transcript
+ * panel", permanently stamping a perfectly resumable record `failed`.
+ * Tagging every pushed/pulled state with the tab it came FOR, and only ever
+ * trusting it when that tag still matches the CURRENT `tabId` (see
+ * `currentVideoState` below), closes that window: a stale tag reads as "no
+ * data yet" (same as `null`), never as data belonging to a different tab.
+ */
+interface TabTaggedState {
+  tabId: number;
+  state: CurrentVideoState;
+}
+
+/**
+ * Pure: is `tagged` actually usable for `tabId` right now? Extracted
+ * standalone (not inlined in the effect below) so the "only trust state that
+ * is tagged for the CURRENT tab" decision is unit-testable without any
+ * chrome.* mock — see useCurrentVideo.test.ts.
+ */
+export function currentVideoState(tagged: TabTaggedState | null, tabId: number | null): CurrentVideoState | null {
+  if (tagged === null || tagged.tabId !== tabId) return null;
+  return tagged.state;
+}
+
 export interface UseCurrentVideoResult {
   /**
    * The active tab's video record, or `null` when there is none to show —
@@ -52,7 +86,7 @@ export function useCurrentVideo(): UseCurrentVideoResult {
   const [tabId, setTabId] = useState<number | null>(null);
   const [kind, setKind] = useState<YoutubePageKind>('other');
   const [tabResolved, setTabResolved] = useState(false);
-  const [state, setState] = useState<CurrentVideoState | null>(null);
+  const [taggedState, setTaggedState] = useState<TabTaggedState | null>(null);
 
   // Tracks which tab is active and its page kind, from the URL alone — the
   // same source entrypoints/sidepanel/App.tsx's M0 logic already reads
@@ -105,17 +139,24 @@ export function useCurrentVideo(): UseCurrentVideoResult {
   // whenever the active tab changes, and is the SOLE source of `video`/the
   // "provisional vs settled" half of `loading` — this is the push side; the
   // effect above is the tab-identity side, and the two do not fight over the
-  // same field (that effect never touches `state`).
+  // same field (that effect never touches `taggedState`).
+  //
+  // Every `setTaggedState` call below tags its state with THIS effect run's
+  // own `tabId` (fix round 1, Critical #3) — the closed-over value is always
+  // the tab this particular effect invocation is FOR, even after `tabId`
+  // (the separate, top-level state cell) has already moved on to a newer
+  // tab in between. `currentVideoState` (above) is what refuses to trust a
+  // tag that no longer matches.
   useEffect(() => {
     if (tabId === null) {
-      setState(null);
+      setTaggedState(null);
       return;
     }
 
     let cancelled = false;
     // Clear the previous tab's data immediately rather than leaving it on
     // screen while the new tab's state loads.
-    setState(null);
+    setTaggedState(null);
 
     // Ask the content script to push its current report again. This is what
     // recovers a freshly-opened panel from an evicted service worker: the
@@ -134,7 +175,8 @@ export function useCurrentVideo(): UseCurrentVideoResult {
 
     sendMessage({ type: 'GET_CURRENT_VIDEO', payload: { tabId } })
       .then((res) => {
-        if (!cancelled) setState(res);
+        if (cancelled) return;
+        setTaggedState(res === null ? null : { tabId, state: res });
       })
       .catch(() => {
         // Background unreachable (e.g. not woken up yet) — treated the same
@@ -144,7 +186,7 @@ export function useCurrentVideo(): UseCurrentVideoResult {
     const handleMessage = (msg: AppMessage) => {
       if (msg.type !== 'CURRENT_VIDEO_UPDATED') return;
       if (msg.payload.tabId !== tabId) return;
-      setState(msg.payload.video);
+      setTaggedState({ tabId, state: msg.payload.video });
     };
     chrome.runtime.onMessage.addListener(handleMessage);
 
@@ -154,6 +196,7 @@ export function useCurrentVideo(): UseCurrentVideoResult {
     };
   }, [tabId]);
 
+  const state = currentVideoState(taggedState, tabId);
   const loading = !tabResolved || (kind !== 'other' && (state === null || state.status === 'provisional'));
 
   return {

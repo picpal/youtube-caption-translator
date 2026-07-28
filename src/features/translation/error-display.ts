@@ -20,13 +20,21 @@
 //   the message text around it says. `'network'` also covers
 //   `GEMINI_FETCH_TIMEOUT_MS`'s abort path (gemini.ts): a timed-out fetch is
 //   classified `'network'` too, there is no separate timeout reason.
+// - background.ts's `START_TRANSLATION` handler sets the EXACT literal
+//   `'API key not set'` when there is no saved key at all (fix round 1,
+//   Important #2 — this response used to be silently discarded by the only
+//   caller, `useTranslation.ts`'s `start()`; now that it reaches `error`/
+//   `status:'failed'` like any other failure, it needs a mapping here too or
+//   it would show as raw English in the exact "설정 확인" case Fix 2B's
+//   `unauthorized` mapping already covers for an INVALID key).
 const NO_TRANSCRIPT_PANEL_REASON = 'No transcript panel available for this video';
+const API_KEY_NOT_SET_REASON = 'API key not set';
 
 export function translationErrorDisplay(reason: string): string {
   if (reason === NO_TRANSCRIPT_PANEL_REASON) {
     return '이 영상은 스크립트(대본)를 제공하지 않아 자막을 생성할 수 없어요';
   }
-  if (reason.includes('unauthorized')) {
+  if (reason === API_KEY_NOT_SET_REASON || reason.includes('unauthorized')) {
     return 'API 키가 유효하지 않아요. 설정에서 키를 확인해주세요';
   }
   if (reason.includes('rate_limit')) {

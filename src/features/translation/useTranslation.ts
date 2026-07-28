@@ -37,7 +37,12 @@ export interface UseTranslationResult {
    * `TranslationStatus`. Sourced from the live Port stream once any message
    * has arrived (most current), falling back to the last-loaded record's
    * `status` before that (e.g. a `done`/`failed` video that is not being
-   * resumed, so no Port message will ever arrive for it). */
+   * resumed, so no Port message will ever arrive for it). Also set to
+   * `'failed'` directly by `start()` itself when `START_TRANSLATION` answers
+   * `{ ok: false }` (fix round 1, Important #2) — that outcome has no
+   * `TranslationRecord` behind it at all, so it cannot come from a
+   * `GET_TRANSLATION` refetch the way every other `'failed'` transition
+   * does. */
   status: TranslationStatus | 'idle';
   /** Live batch-level progress from the Port stream. `null` until the first
    * progress event for this `videoId` arrives — which, for an auto-resumed
@@ -47,13 +52,17 @@ export interface UseTranslationResult {
   progress: TranslationProgressState | null;
   /** The persisted `TranslationRecord` (segments + glossary + status), from
    * `GET_TRANSLATION`. Loaded once on mount/`videoId` change, then
-   * re-fetched only when a progress event reports a TERMINAL status
-   * (`done`/`failed`) — the Port stream itself never carries segments, only
-   * counts, so this is the one point the full, final record is worth
-   * re-pulling. A record that is still in-progress may therefore show a
-   * `segments` array with some `translatedText: null` entries even while
-   * `progress` reports further along; consumers wanting live translated
-   * text should wait for `status === 'done'`. */
+   * re-fetched whenever a progress event reports a TERMINAL status
+   * (`done`/`failed`), and (fix round 1, Critical #1) an extra two times
+   * around a user-initiated `start()`: once right before it sends
+   * `START_TRANSLATION` (only if the Port needed reconnecting — see
+   * `reconnectPortIfNeeded` below), and once more if the safety window
+   * elapses with no live Port message at all, so the panel converges on
+   * persisted truth even if the progress stream itself never arrives. A
+   * record that is still in-progress may therefore show a `segments` array
+   * with some `translatedText: null` entries even while `progress` reports
+   * further along; consumers wanting live translated text should wait for
+   * `status === 'done'`. */
   record: TranslationRecord | null;
   /** Kicks off (or safely re-attaches to) the pipeline for the current
    * `videoId`/`tabId` via `START_TRANSLATION`. A no-op if either is `null`.
@@ -61,8 +70,11 @@ export interface UseTranslationResult {
    * this against an already-running job, so calling it when one is already
    * in flight for this video is harmless. */
   start: () => void;
-  /** The most recently observed failure reason, from `record.error?.reason`
-   * after a terminal `failed` refetch. Only meaningful while
+  /** The most recently observed failure reason. Usually `record.error?.reason`
+   * after a terminal `failed` refetch, but (fix round 1, Important #2) can
+   * also be `START_TRANSLATION`'s own `{ ok: false }` response's `error`
+   * string when the pipeline couldn't even be started (e.g. no API key) —
+   * that case has no backing `TranslationRecord`. Only meaningful while
    * `status === 'failed'` — a later successful retry does not proactively
    * clear this field, it is simply superseded once `status` moves on. */
   error: string | null;
@@ -74,9 +86,10 @@ export interface UseTranslationResult {
    * nothing. `pending` is `true` from the moment a USER-INITIATED `start()`
    * call fires (never the `shouldResume` auto-resume path below — that one
    * calls `sendMessage` directly, bypassing `start()`) until the first of:
-   * (a) a live Port message for this job, (b) `start()`'s own
-   * `START_TRANSLATION` send rejecting, or (c) a ~5s safety timeout — so a
-   * dead background can never leave this stuck `true` forever. It also never
+   * (a) a live Port message for this job, (b) `START_TRANSLATION` settling
+   * (either the send itself rejecting, or it resolving `{ ok: false }` —
+   * fix round 1, Important #2), or (c) a ~5s safety timeout — so a dead
+   * background can never leave this stuck `true` forever. It also never
    * resolves any EARLIER than `PENDING_MIN_VISIBLE_MS` after the click, so
    * the "요청 중…" affordance is always visible long enough to register as
    * feedback even when the real outcome arrives almost instantly. Reset to
@@ -104,7 +117,9 @@ export const PENDING_MIN_VISIBLE_MS = 600;
 /** Hard upper bound on `pending`, independent of whether either real signal
  * ever arrives (brief 2A path (c): a dead background service worker means no
  * Port message and no settled `START_TRANSLATION` response — this is the one
- * leg of the race that fires unconditionally). */
+ * leg of the race that fires unconditionally). Fix round 1 (Critical #1):
+ * reaching this timeout is also what triggers the convergence-fallback
+ * record re-pull — see `start()`'s own comment on it. */
 export const PENDING_SAFETY_TIMEOUT_MS = 5_000;
 
 /**
@@ -130,12 +145,39 @@ export function shouldResume(record: TranslationRecord | null): boolean {
 
 const TERMINAL_STATUSES: readonly TranslationStatus[] = ['done', 'failed'];
 
+/**
+ * Task R7 fix round 1 (Critical #1) — the subset of the per-`[videoId,
+ * tabId]` effect's internals that `start()` needs to reach into. `start()`
+ * is declared outside that effect (re-created every render, like this
+ * codebase's other hooks — see its own comment below), so it cannot close
+ * over the effect's local `port`/`sawLiveStatus`/`recordRequestSeq`
+ * variables directly; this ref is the bridge. `null` whenever there is no
+ * active session (videoId/tabId not yet resolved, or between one session's
+ * cleanup and the next's setup — both momentary, `start()` cannot actually
+ * be invoked during either since it requires a user click on a button the
+ * panel only enables once a session exists).
+ */
+interface TranslationSession {
+  /** Reconnects the Port if (and only if) `onDisconnect` has already fired
+   * for it — never eagerly; see the effect's own comment on `attachPort` for
+   * why an eager reconnect would be actively harmful. Returns whether a
+   * reconnect actually happened, so `start()` knows whether a record re-pull
+   * is warranted alongside it. */
+  reconnectPortIfNeeded: () => boolean;
+  /** Re-pulls `GET_TRANSLATION`, applied through the same seq-guarded,
+   * `sawLiveStatus`-aware path the initial load and terminal-status refetch
+   * already use (`applyRecordResponse` below) — never a bespoke one-off. */
+  refetchRecord: () => void;
+}
+
 export function useTranslation({ videoId, tabId }: UseTranslationParams): UseTranslationResult {
   const [status, setStatus] = useState<TranslationStatus | 'idle'>('idle');
   const [progress, setProgress] = useState<TranslationProgressState | null>(null);
   const [record, setRecord] = useState<TranslationRecord | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
+
+  const sessionRef = useRef<TranslationSession | null>(null);
 
   // Task R7 (Fix 2A) — plumbing for the `pending` lifecycle. Refs, not
   // state: nothing here needs its OWN render, only `pending` itself does.
@@ -198,24 +240,69 @@ export function useTranslation({ videoId, tabId }: UseTranslationParams): UseTra
   // Task R7 (Fix 2A): this is the ONLY path that turns `pending` on — the
   // `shouldResume` auto-resume call inside the effect below calls
   // `sendMessage` directly and deliberately does NOT go through `start()`,
-  // per the brief ("자동 재개 경로에는 pending을 켜지 말 것").
+  // per the brief ("자동 재개 경로에는 pending을 켜지 말 것"). It also runs
+  // right after the effect connects a fresh Port, so it never needs the
+  // reconnect dance below either.
   function start(): void {
     if (videoId === null || tabId === null) return;
     const generation = ++pendingGenerationRef.current;
     clearPendingTimers();
     pendingActivatedAtRef.current = Date.now();
     setPending(true);
-    // Path (c): fires unconditionally, regardless of (a)/(b) — the only one
-    // of the three race legs a dead background can't suppress.
-    pendingSafetyTimerRef.current = setTimeout(() => resolvePending(generation), PENDING_SAFETY_TIMEOUT_MS);
 
-    void sendMessage({ type: 'START_TRANSLATION', payload: { videoId, tabId } }).catch(() => {
-      // Path (b): background unreachable. Still no retry loop here, matching
-      // useCurrentVideo's same choice for the analogous "not woken up yet"
-      // case — but pending must still resolve rather than wait out the full
-      // safety timeout for something already known to have failed.
-      requestPendingResolve(generation);
-    });
+    // Fix round 1 (Critical #1) — heal a dead Port BEFORE this click can
+    // possibly reach a background instance whose `progressPorts` (background.ts)
+    // has no entry for this panel at all. MV3 can silently evict the service
+    // worker this hook's Port was connected to; `onDisconnect` (registered on
+    // the effect's own Port, below) is the only signal of that, and it fires
+    // well before any click — reconnecting only HERE, lazily, is deliberate:
+    // an eager reconnect on every disconnect would just keep re-waking the
+    // service worker forever, defeating the whole point of idle eviction.
+    // Only when a reconnect actually happened is there anything meaningfully
+    // stale to re-sync before dispatching a fresh pipeline run.
+    if (sessionRef.current?.reconnectPortIfNeeded()) {
+      sessionRef.current.refetchRecord();
+    }
+
+    // Path (c) / convergence fallback (fix round 1, Critical #1): reaching
+    // this callback at all means neither a live Port message (a) nor a
+    // settled `START_TRANSLATION` response (b, below) resolved pending
+    // earlier — exactly the "the pipeline ran but its broadcasts went
+    // nowhere" scenario the reconnect above is a best-effort mitigation for,
+    // not a guarantee (nothing prevents the reconnected Port's registration
+    // on the background side from losing a race with the pipeline's very
+    // first broadcast). One more re-pull here converges the panel on
+    // whatever IS persisted regardless, and `resolvePending` unconditionally
+    // ends the cycle either way so the button is never stuck.
+    pendingSafetyTimerRef.current = setTimeout(() => {
+      sessionRef.current?.refetchRecord();
+      resolvePending(generation);
+    }, PENDING_SAFETY_TIMEOUT_MS);
+
+    void sendMessage({ type: 'START_TRANSLATION', payload: { videoId, tabId } })
+      .then((res) => {
+        if (res.ok) return;
+        // Fix round 1 (Important #2) — `START_TRANSLATION`'s `{ ok: false }`
+        // response (message.ts documents it as caller-visible: no API key,
+        // or background's own catch-all) was previously read by no one,
+        // leaving `pending` to run out the full safety window into silence.
+        // There is no `TranslationRecord` behind this outcome at all (the
+        // pipeline never even started), so it is surfaced directly rather
+        // than via a refetch. Generation-guarded so a stale response from a
+        // superseded cycle can't clobber a newer one's state.
+        if (pendingGenerationRef.current !== generation) return;
+        setStatus('failed');
+        setError(res.error);
+        resolvePending(generation);
+      })
+      .catch(() => {
+        // Path (b): background unreachable (the send itself rejected).
+        // Still no retry loop here, matching useCurrentVideo's same choice
+        // for the analogous "not woken up yet" case — but pending must still
+        // resolve rather than wait out the full safety timeout for something
+        // already known to have failed.
+        requestPendingResolve(generation);
+      });
   }
 
   useEffect(() => {
@@ -234,6 +321,7 @@ export function useTranslation({ videoId, tabId }: UseTranslationParams): UseTra
     clearPendingTimers();
     pendingActivatedAtRef.current = null;
     setPending(false);
+    sessionRef.current = null;
 
     if (videoId === null || tabId === null) return;
 
@@ -249,9 +337,10 @@ export function useTranslation({ videoId, tabId }: UseTranslationParams): UseTra
     // has arrived") and the pre-fix code did not actually enforce.
     let sawLiveStatus = false;
     // Fix round 1: every GET_TRANSLATION issued for `record` (the initial
-    // pull below, and each terminal-triggered `refetchRecord`) is tagged
-    // with an increasing sequence number. A response is only applied if it
-    // is still the most RECENTLY ISSUED request by the time it resolves —
+    // pull below, each terminal-triggered `refetchRecord`, and — fix round 1
+    // (Critical #1) — the two new `start()`-driven re-pulls) is tagged with
+    // an increasing sequence number. A response is only applied if it is
+    // still the most RECENTLY ISSUED request by the time it resolves —
     // otherwise a request issued after it exists, and this one lost the
     // race regardless of which response actually arrives first over
     // chrome.runtime messaging (unordered). Without this, the exact same
@@ -261,18 +350,23 @@ export function useTranslation({ videoId, tabId }: UseTranslationParams): UseTra
     // clobber the fresher, final record with a stale in-progress one.
     let recordRequestSeq = 0;
 
-    const port = chrome.runtime.connect({ name: TRANSLATION_PROGRESS_PORT });
-
     const applyRecordResponse = (seq: number, rec: TranslationRecord | null) => {
       if (cancelled || seq !== recordRequestSeq) return;
       setRecord(rec);
       setError(rec?.error?.reason ?? null);
+      // Same "only if nothing live has spoken yet" guard the initial pull
+      // used to inline here directly — now shared by every refetch call
+      // site (terminal-status, and fix round 1's two `start()`-driven ones)
+      // so a record re-pull that happens to resolve before any Port message
+      // has arrived for this session still gets the panel off `'idle'`.
+      if (!sawLiveStatus) setStatus(rec?.status ?? 'idle');
     };
 
-    // Re-pulls the persisted record — used both for the initial load and,
-    // below, whenever a progress event reports a terminal status. See the
-    // `record` doc comment above for why "on terminal event" and not "on
-    // every batch".
+    // Re-pulls the persisted record — used for the initial load, whenever a
+    // progress event reports a terminal status, and (fix round 1) around a
+    // user-initiated `start()` (see `TranslationSession` above). See the
+    // `record` doc comment for why "on terminal event" and not "on every
+    // batch".
     const refetchRecord = () => {
       const seq = ++recordRequestSeq;
       sendMessage({ type: 'GET_TRANSLATION', payload: { videoId } })
@@ -302,7 +396,42 @@ export function useTranslation({ videoId, tabId }: UseTranslationParams): UseTra
       });
       if (TERMINAL_STATUSES.includes(message.status)) refetchRecord();
     };
-    port.onMessage.addListener(handlePortMessage);
+
+    // Fix round 1 (Critical #1) — `port`/`portDisconnected` are plain `let`s,
+    // not refs: everything that needs to read/replace them (`attachPort`,
+    // `reconnectPortIfNeeded`, and this effect's own cleanup) is itself
+    // defined inside this SAME effect invocation, so an ordinary closure
+    // over a mutable local already gives every one of them the current value
+    // — no extra ref indirection needed for that part. `sessionRef` (outside
+    // this effect) is only for bridging into `start()`, which is NOT defined
+    // in here.
+    let port = chrome.runtime.connect({ name: TRANSLATION_PROGRESS_PORT });
+    let portDisconnected = false;
+
+    const attachPort = (p: chrome.runtime.Port) => {
+      p.onMessage.addListener(handlePortMessage);
+      // MV3 can evict the service worker this Port is connected to at any
+      // time — its `progressPorts` (background.ts) is in-memory and dies
+      // with it, silently disconnecting every Port it held with no error
+      // event on either side beyond this one. Just flag it; reconnecting
+      // eagerly here (rather than lazily in `start()`) would mean every
+      // idle-eviction gets immediately undone by this listener re-waking the
+      // service worker on its own, which defeats the eviction entirely.
+      p.onDisconnect.addListener(() => {
+        if (p === port) portDisconnected = true;
+      });
+    };
+    attachPort(port);
+
+    const reconnectPortIfNeeded = (): boolean => {
+      if (!portDisconnected) return false;
+      port = chrome.runtime.connect({ name: TRANSLATION_PROGRESS_PORT });
+      portDisconnected = false;
+      attachPort(port);
+      return true;
+    };
+
+    sessionRef.current = { reconnectPortIfNeeded, refetchRecord };
 
     // Initial pull: whatever was already persisted before this hook mounted
     // (a prior session's finished/failed/in-progress translation).
@@ -311,7 +440,6 @@ export function useTranslation({ videoId, tabId }: UseTranslationParams): UseTra
       .then((rec) => {
         if (cancelled) return;
         applyRecordResponse(initialSeq, rec);
-        if (!sawLiveStatus) setStatus(rec?.status ?? 'idle');
 
         // Auto-resume (DoD #4): background's in-flight job registry dedups
         // this against a job that is either already running (this panel
@@ -335,6 +463,7 @@ export function useTranslation({ videoId, tabId }: UseTranslationParams): UseTra
 
     return () => {
       cancelled = true;
+      sessionRef.current = null;
       port.onMessage.removeListener(handlePortMessage);
       port.disconnect();
       // A genuine unmount (as opposed to a videoId/tabId dep change, which

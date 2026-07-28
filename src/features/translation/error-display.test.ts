@@ -30,6 +30,12 @@ describe('translationErrorDisplay', () => {
     );
   });
 
+  it('maps the exact API-key-not-set reason (background.ts START_TRANSLATION literal, fix round 1)', () => {
+    expect(translationErrorDisplay('API key not set')).toBe(
+      'API 키가 유효하지 않아요. 설정에서 키를 확인해주세요',
+    );
+  });
+
   it('maps a multi-chunk summary by the first matching reason token present', () => {
     expect(
       translationErrorDisplay('chunk 0: network (offline); chunk 1: network (offline)'),
