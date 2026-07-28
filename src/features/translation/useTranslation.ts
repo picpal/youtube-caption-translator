@@ -293,7 +293,13 @@ export function useTranslation({ videoId, tabId }: UseTranslationParams): UseTra
         if (pendingGenerationRef.current !== generation) return;
         setStatus('failed');
         setError(res.error);
-        resolvePending(generation);
+        // Fix round 2 — this is path (b), same as the reject branch below:
+        // `requestPendingResolve`, NOT a direct `resolvePending`, so a FAST
+        // `{ ok: false }` (e.g. an immediate "API key not set") still honors
+        // the `PENDING_MIN_VISIBLE_MS` floor instead of flipping `pending`
+        // back in well under 600ms — the exact "click looked like it did
+        // nothing" this task exists to close.
+        requestPendingResolve(generation);
       })
       .catch(() => {
         // Path (b): background unreachable (the send itself rejected).
