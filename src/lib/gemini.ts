@@ -266,6 +266,11 @@ export async function analyzeGlossary(
     generationConfig: {
       responseMimeType: 'application/json',
       responseSchema: ANALYZE_GLOSSARY_SCHEMA,
+      // Task R2: thinking is ON by default and is pure overhead for this
+      // simple structured-extraction call — trivially revertible if the
+      // live API rejects `thinkingBudget: 0` for this model (unconfirmed
+      // as of this change, see refactor-r2-report.md).
+      thinkingConfig: { thinkingBudget: 0 },
     },
   };
 
@@ -386,6 +391,12 @@ export async function translateBatch(
     generationConfig: {
       responseMimeType: 'application/json',
       responseSchema: TRANSLATE_BATCH_SCHEMA,
+      // Task R2: thinking is ON by default (measured ~452 thought-tokens per
+      // 30 segments) — pure overhead for a translate-and-format call with no
+      // reasoning benefit. One line, trivially revertible if the live API
+      // rejects `thinkingBudget: 0` for this model (unconfirmed as of this
+      // change, see refactor-r2-report.md).
+      thinkingConfig: { thinkingBudget: 0 },
     },
   };
 

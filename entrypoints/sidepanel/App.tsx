@@ -5,7 +5,13 @@ import { TranscriptList } from '~/components/TranscriptList';
 import { UnsupportedBanner } from '~/components/UnsupportedBanner';
 import { VideoCard } from '~/components/VideoCard';
 import { useApiKey } from '~/features/api-key/useApiKey';
-import { progressPercent, stepForStatus, translatePhaseLabel, type ProcessingStep } from '~/features/translation/progress-display';
+import {
+  formatElapsedTime,
+  progressPercent,
+  stepForStatus,
+  translatePhaseLabel,
+  type ProcessingStep,
+} from '~/features/translation/progress-display';
 import { useTranslation, type TranslationProgressState } from '~/features/translation/useTranslation';
 import { useCurrentVideo } from '~/features/video/useCurrentVideo';
 import { formatTimestamp } from '~/lib/transcript-parse';
@@ -194,6 +200,36 @@ function isRecordCurrentForStatus(
   return record !== null && record.status === status;
 }
 
+// Task R2 (progress UX polish) — a single translate chunk is now ~15s
+// (MAX_SEGMENTS_PER_REQUEST=50, pipeline.ts), but that's still long enough
+// that a static "번역 중… 요청 전송" label sitting at the same chunk-percent
+// the whole time can read as frozen. This ticks a panel-local elapsed-second
+// counter for as long as `active` is true — deliberately NOT sourced from
+// `TranslationProgress` (the brief is explicit: elapsed time is a panel-side
+// liveness signal, never threaded through the background Port). Resets to 0
+// the moment `active` flips true->false or false->true, so re-entering the
+// translating phase (a retry, or a fresh chunk after a rate-limit wait)
+// always starts the visible counter fresh rather than carrying over a stale
+// value from a previous attempt or step. Cleared via the effect's own
+// cleanup on unmount or whenever `active` changes.
+function useElapsedSeconds(active: boolean): number {
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
+
+  useEffect(() => {
+    setElapsedSeconds(0);
+    if (!active) return;
+
+    const startedAt = Date.now();
+    const interval = setInterval(() => {
+      setElapsedSeconds(Math.floor((Date.now() - startedAt) / 1000));
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [active]);
+
+  return elapsedSeconds;
+}
+
 // The thumbnail/title/channel block and the caption-availability bar are
 // real data as of Task 9, via VideoCard + useCurrentVideo. The
 // `AI 자막 생성` button and the 처리 단계 footer are wired to the live
@@ -205,6 +241,7 @@ function ReadyBody() {
   const { video, loading, tabId } = useCurrentVideo();
   const videoId = video?.videoId ?? null;
   const { status, progress, record, start, error } = useTranslation({ videoId, tabId });
+  const elapsedSeconds = useElapsedSeconds(status === 'translating');
 
   // DoD #2 — dump the finished transcript to the console once per
   // completion. Keyed on `videoId` (not a plain boolean) so switching to a
@@ -306,11 +343,12 @@ function ReadyBody() {
           status={status}
           progress={progress}
           error={error}
+          elapsedSeconds={elapsedSeconds}
           onStart={start}
         />
       </div>
 
-      <ProcessingStepper status={status} progress={progress} record={record} />
+      <ProcessingStepper status={status} progress={progress} record={record} elapsedSeconds={elapsedSeconds} />
 
       {showTranscriptList && record !== null && (
         <div className="border-t border-neutral-200 dark:border-neutral-800">
@@ -352,12 +390,14 @@ function TranslateButton({
   status,
   progress,
   error,
+  elapsedSeconds,
   onStart,
 }: {
   ready: boolean;
   status: TranslationStatus | 'idle';
   progress: TranslationProgressState | null;
   error: string | null;
+  elapsedSeconds: number;
   onStart: () => void;
 }) {
   if (!ready) {
@@ -384,7 +424,14 @@ function TranslateButton({
   if (status === 'extracting' || status === 'analyzing' || status === 'translating') {
     return (
       <Button disabled aria-disabled className="w-full">
-        {processingLabel(status, progress)}
+        {/* Task R2: a pulsing dot is the "still working" liveness signal
+            during step 3, alongside the elapsed-time text baked into
+            `processingLabel` below — neither causes layout shift (fixed-size
+            dot, text length varies but the button itself doesn't resize). */}
+        {status === 'translating' && (
+          <span className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-current" aria-hidden />
+        )}
+        <span>{processingLabel(status, progress, elapsedSeconds)}</span>
       </Button>
     );
   }
@@ -418,6 +465,7 @@ function TranslateButton({
 function processingLabel(
   status: 'extracting' | 'analyzing' | 'translating',
   progress: TranslationProgressState | null,
+  elapsedSeconds: number,
 ): string {
   if (status === 'extracting') return 'Transcript 추출 중…';
   if (status === 'analyzing') return '용어 분석 중…';
@@ -428,13 +476,19 @@ function processingLabel(
   // `translating` record whose status came from the initial GET_TRANSLATION
   // fetch, before this session's own Port has delivered a first message for
   // the resumed job.
-  if (progress === null) return '한국어 번역 중…';
+  // Task R2: the elapsed-time suffix is always appended while translating
+  // (even with `progress === null`) — this is the panel-side liveness
+  // signal the pulsing dot alone doesn't fully cover, and it's available
+  // regardless of whether a Port message has arrived yet.
+  const elapsedSuffix = ` · ${formatElapsedTime(elapsedSeconds)}`;
+  if (progress === null) return `한국어 번역 중…${elapsedSuffix}`;
   const phaseLabel = translatePhaseLabel(progress.phase);
   // Multi-chunk videos (2hr+) additionally show which chunk is in progress;
   // most videos are a single chunk, where this suffix would just be a
   // redundant "1/1" — omitted in that case.
   const chunkSuffix = progress.totalChunks > 1 ? ` (${progress.chunkIndex}/${progress.totalChunks})` : '';
-  return phaseLabel ? `한국어 번역 중… ${phaseLabel}${chunkSuffix}` : `한국어 번역 중…${chunkSuffix}`;
+  const base = phaseLabel ? `한국어 번역 중… ${phaseLabel}${chunkSuffix}` : `한국어 번역 중…${chunkSuffix}`;
+  return `${base}${elapsedSuffix}`;
 }
 
 const STEP_LABELS = ['Transcript 추출', '용어 분석', '한국어 번역', '자막 적용'] as const;
@@ -465,17 +519,25 @@ function stepVisualState(
 // The idle-state hint is the original static copy; while a translate-step
 // job is actively processing it is replaced with the live sending/
 // receiving/parsing phase label (M2 refactor §4 — no more per-segment
-// counter). `translatePhaseLabel` returning `null` (no phase yet, or a step
-// other than translating) just omits the phase clause.
+// counter) plus (Task R2) the panel-local elapsed-time counter, joined with
+// ` · ` and filtered for whichever parts apply — `translatePhaseLabel`
+// returning `null` (no phase yet, or a step other than translating) just
+// omits that one clause rather than the whole caption.
 function stepperCaption(
   status: TranslationStatus | 'idle',
   progress: TranslationProgressState | null,
+  elapsedSeconds: number,
 ): string {
   if (status === 'failed') return '실패한 단계부터 다시 시도할 수 있습니다';
   if (status === 'done') return '번역이 완료되었습니다';
   if (status === 'idle') return '약 40초 소요 · 처리 중에도 영상은 계속 재생됩니다';
-  const phaseLabel = status === 'translating' ? translatePhaseLabel(progress?.phase) : null;
-  if (phaseLabel) return `${phaseLabel} · 처리 중에도 영상은 계속 재생됩니다`;
+  if (status === 'translating') {
+    const phaseLabel = translatePhaseLabel(progress?.phase);
+    const parts = [phaseLabel, formatElapsedTime(elapsedSeconds), '처리 중에도 영상은 계속 재생됩니다'].filter(
+      (part): part is string => part !== null,
+    );
+    return parts.join(' · ');
+  }
   return '처리 중에도 영상은 계속 재생됩니다';
 }
 
@@ -496,10 +558,12 @@ function ProcessingStepper({
   status,
   progress,
   record,
+  elapsedSeconds,
 }: {
   status: TranslationStatus | 'idle';
   progress: TranslationProgressState | null;
   record: TranslationRecord | null;
+  elapsedSeconds: number;
 }) {
   const activeStep = progress?.step ?? stepForStatus(record?.error?.step ?? status);
 
@@ -513,6 +577,11 @@ function ProcessingStepper({
           const stepNum = i + 1;
           const state = stepVisualState(stepNum, activeStep, status);
           const marker = state === 'done' ? '✓' : state === 'failed' ? '!' : String(stepNum);
+          // Task R2: the active step-3 marker pulses in place of the plain
+          // numeral while a chunk is genuinely in flight — a subtle,
+          // fixed-size swap (no layout shift) so the stepper itself echoes
+          // the same liveness signal as the button above.
+          const isActiveTranslating = state === 'active' && status === 'translating';
           // Chunk-based percent (M2 refactor §4) — monotonic across the
           // job: `chunkIndex` only ever advances forward as chunks complete,
           // never regresses on a same-chunk retry.
@@ -523,16 +592,23 @@ function ProcessingStepper({
           return (
             <Fragment key={label}>
               {i > 0 && <span className="text-neutral-300 dark:text-neutral-700">→</span>}
-              <span className={STEP_TEXT_CLASS[state]}>
-                {marker} {label}
-                {percent}
+              <span className={`inline-flex items-center gap-1 ${STEP_TEXT_CLASS[state]}`}>
+                {isActiveTranslating ? (
+                  <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-current" aria-hidden />
+                ) : (
+                  <span>{marker}</span>
+                )}
+                <span>
+                  {label}
+                  {percent}
+                </span>
               </span>
             </Fragment>
           );
         })}
       </div>
       <span className="text-[10.5px] text-neutral-400 dark:text-neutral-600">
-        {stepperCaption(status, progress)}
+        {stepperCaption(status, progress, elapsedSeconds)}
       </span>
     </div>
   );

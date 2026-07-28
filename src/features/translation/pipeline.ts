@@ -13,31 +13,46 @@ import type {
 // M2 Task 6 — the translation pipeline orchestrator. Wires Task 4's pure
 // parser, Task 5's Gemini client, and Task 3's IndexedDB store into one
 // async job: extract -> (cache/resume decision) -> analyze glossary ->
-// translate SEQUENTIALLY in a few large chunks with retryDelay-honoring 429
-// handling -> consistency post-process -> done. Every side-effecting
+// translate SEQUENTIALLY in SW-lifetime-safe chunks with retryDelay-honoring
+// 429 handling -> consistency post-process -> done. Every side-effecting
 // collaborator is INJECTED via `deps` so this file never touches real
 // Gemini/IndexedDB/Chrome/timers — `pipeline.test.ts` drives it entirely
 // with mocks and an injectable `sleep`, and `entrypoints/background.ts`
 // assembles the real `deps`.
 //
-// Refactor note (see .superpowers/sdd/2026-07-28-m2-caption-translation/
-// refactor-single-request-brief.md): this SUPERSEDES the original plan §4
-// "8-segment batches at concurrency 3" design, which fanned out into ~30+
-// requests for a 1hr video and blew straight through the free-tier ~RPM 5
-// limit. User-authorized switch (2026-07-28) to as-few-as-possible large
-// sequential requests + stage-based progress instead. The per-chunk
-// persistence/resume machinery below (`upsertBatch`, deriving pending work
-// from `translatedText === null`, out-of-order-safe failure collection) is
-// UNCHANGED from the original design — only the request SHAPE (chunk size,
-// sequential instead of concurrent) and the retry/progress reporting around
-// it changed.
+// Refactor history:
+// - R1 (refactor-single-request-brief.md) SUPERSEDED the original plan §4
+//   "8-segment batches at concurrency 3" design, which fanned out into ~30+
+//   requests for a 1hr video and blew straight through the free-tier ~RPM 5
+//   limit — switched to sequential requests + stage-based progress.
+// - R2 (refactor-r2-brief.md) TUNED R1: R1's own "fewest possible requests"
+//   choice of 300 segments/chunk turned out to take 1-2min per request,
+//   long enough for MV3 to evict the service worker mid-fetch and lose the
+//   job. `MAX_SEGMENTS_PER_REQUEST` below is now sized to fit well inside
+//   the SW's active-fetch lifetime instead.
+// The per-chunk persistence/resume machinery below (`upsertBatch`, deriving
+// pending work from `translatedText === null`, out-of-order-safe failure
+// collection) is UNCHANGED across both — only the request SHAPE (chunk
+// size, sequential instead of concurrent) and the retry/progress reporting
+// around it changed.
 
-/** Segments packed into a single `translateBatch` call ("chunk"). Sized so
- * a 1hr talk (~247 merged segments) fits in exactly ONE request: at a
- * worst-case ~90 output tokens/segment, 300 segments ≈ 27k output tokens,
- * ~40% of `gemini-3.6-flash`'s 65,536 output-token cap — 2x headroom against
- * truncation. Only 2hr+ videos split into 2-3 sequential chunks. */
-export const MAX_SEGMENTS_PER_REQUEST = 300;
+/** Segments packed into a single `translateBatch` call ("chunk").
+ *
+ * Task R2 (see .superpowers/sdd/2026-07-28-m2-caption-translation/
+ * refactor-r2-brief.md): R1 originally set this to `300` — "fewest possible
+ * requests" — but real-Chrome DoD proved that NOT viable on MV3: a
+ * 247-segment request takes 1-2min to generate (measured ~288ms/segment
+ * with thinking on), and Chrome can evict the service worker mid-fetch,
+ * losing the in-flight request with no way to resume it (a fetch is not
+ * itself resumable — only the NEXT chunk's dispatch survives an eviction).
+ * `50` keeps each request to ~50 × 288ms ≈ 15s, safely inside the SW's
+ * active-fetch lifetime, while the per-chunk `onProgress` calls between
+ * requests also reset Chrome's idle timer. A 1hr talk (~247 segments) is
+ * now 5 sequential translation chunks + 1 glossary call ≈ 6 requests total —
+ * still paced under the free-tier RPM by the existing retryDelay-honoring
+ * backoff below, just no longer gambling the whole job on one giant
+ * long-running fetch. */
+export const MAX_SEGMENTS_PER_REQUEST = 50;
 
 /** Bounded retry count for a `rate_limit` (429) chunk result (brief §3:
  * "2-3"). Picked the lower end deliberately: each retry now waits out the

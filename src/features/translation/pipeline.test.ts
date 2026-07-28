@@ -75,12 +75,16 @@ function makeDeps(overrides: Partial<TranslationPipelineDeps> = {}): Translation
 
 describe('runTranslationPipeline', () => {
   describe('chunk splitting', () => {
-    it('has MAX_SEGMENTS_PER_REQUEST = 300 (brief: fits a 1hr talk in one request)', () => {
-      expect(MAX_SEGMENTS_PER_REQUEST).toBe(300);
+    // Task R2: 300 (R1's "fewest possible requests" choice) took 1-2min per
+    // request in real Chrome and let MV3 evict the service worker mid-fetch,
+    // losing the job. 50 keeps each request to ~15s, safely inside the SW's
+    // active-fetch lifetime — see pipeline.ts's doc comment on this constant.
+    it('has MAX_SEGMENTS_PER_REQUEST = 50 (R2: SW-lifetime-safe chunk size)', () => {
+      expect(MAX_SEGMENTS_PER_REQUEST).toBe(50);
     });
 
     it('splits N segments into ceil(N/MAX_SEGMENTS_PER_REQUEST) chunks of at most that size', async () => {
-      const rows = makeRows(350); // -> chunks of [300, 50]
+      const rows = makeRows(70); // -> chunks of [50, 20]
       const translateBatch = vi.fn(async (segs: TranscriptSegment[]) => ({
         ok: true as const,
         translations: segs.map((s) => ({ index: s.index, translatedText: `t${s.index}` })),
@@ -91,15 +95,19 @@ describe('runTranslationPipeline', () => {
 
       expect(translateBatch).toHaveBeenCalledTimes(2);
       const sizes = translateBatch.mock.calls.map(([segs]) => segs.length);
-      expect(sizes).toEqual([300, 50]);
+      expect(sizes).toEqual([50, 20]);
       expect(result.status).toBe('done');
-      expect(result.segments).toHaveLength(350);
+      expect(result.segments).toHaveLength(70);
       expect(result.segments.every((s) => s.translatedText !== null)).toBe(true);
       expect(result.totalBatches).toBe(2);
       expect(result.completedBatches).toBe(2);
     });
 
-    it('fits a 1hr-talk-sized transcript (247 segments) in exactly one request', async () => {
+    // Brief's own measured example: a 1hr talk (~247 merged segments) is now
+    // 5 sequential translation chunks (50,50,50,50,47), not 1 — the R1
+    // "fewest requests" premise this test used to assert is exactly what R2
+    // walked back for MV3 safety.
+    it('splits a 1hr-talk-sized transcript (247 segments) into 5 sequential chunks', async () => {
       const rows = makeRows(247);
       const translateBatch = vi.fn(async (segs: TranscriptSegment[]) => ({
         ok: true as const,
@@ -109,15 +117,17 @@ describe('runTranslationPipeline', () => {
 
       const result = await runTranslationPipeline({ videoId: 'v1', tabId: 1, key: 'k' }, deps);
 
-      expect(translateBatch).toHaveBeenCalledTimes(1);
+      expect(translateBatch).toHaveBeenCalledTimes(5);
+      const sizes = translateBatch.mock.calls.map(([segs]) => segs.length);
+      expect(sizes).toEqual([50, 50, 50, 50, 47]);
       expect(result.status).toBe('done');
-      expect(result.totalBatches).toBe(1);
+      expect(result.totalBatches).toBe(5);
     });
   });
 
   describe('sequential execution (never concurrent)', () => {
     it('never starts the next chunk before the previous one resolves', async () => {
-      const rows = makeRows(700); // 3 chunks: [300, 300, 100]
+      const rows = makeRows(120); // 3 chunks: [50, 50, 20]
       const releasers: Array<() => void> = [];
       let active = 0;
       let maxActive = 0;
@@ -163,9 +173,9 @@ describe('runTranslationPipeline', () => {
       expect(result.status).toBe('done');
       expect(translateBatch).toHaveBeenCalledTimes(3);
       expect(callOrder).toEqual([
-        Array.from({ length: 300 }, (_, i) => i),
-        Array.from({ length: 300 }, (_, i) => i + 300),
-        Array.from({ length: 100 }, (_, i) => i + 600),
+        Array.from({ length: 50 }, (_, i) => i),
+        Array.from({ length: 50 }, (_, i) => i + 50),
+        Array.from({ length: 20 }, (_, i) => i + 100),
       ]);
     });
   });
@@ -369,19 +379,19 @@ describe('runTranslationPipeline', () => {
 
   describe('resume', () => {
     it('retranslates only chunks with a pending (null) segment, leaving already-done chunks untouched', async () => {
-      const rows = makeRows(900); // 3 chunks of 300: [0-299], [300-599], [600-899]
+      const rows = makeRows(150); // 3 chunks of 50: [0-49], [50-99], [100-149]
       const parsedSegments = rowsToSegments(reconstructSentences(dedupeRows(rows)), 'v1');
       const fullText = parsedSegments.map((s) => s.sourceText).join('\n');
       const hash = captionHash(fullText);
 
-      // Chunk 1 (indices 300-599) is already fully translated from a prior
+      // Chunk 1 (indices 50-99) is already fully translated from a prior
       // run; chunks 0 and 2 are not. `completedBatches: 2` is deliberately
       // MISLEADING — a naive "resume from completedBatches" implementation
       // would read this as "chunks 0 and 1 are done, only chunk 2 is
       // pending" and wrongly skip chunk 0.
       const seededSegments = parsedSegments.map((s, i) => ({
         ...s,
-        translatedText: i >= 300 && i < 600 ? `seeded-${i}` : null,
+        translatedText: i >= 50 && i < 100 ? `seeded-${i}` : null,
       }));
 
       const existing: TranslationRecord = {
@@ -419,7 +429,7 @@ describe('runTranslationPipeline', () => {
       // Only chunk 0 and chunk 2 were pending.
       expect(translateBatch).toHaveBeenCalledTimes(2);
       const requestedIndexRanges = translateBatch.mock.calls.map(([segs]) => (segs as TranscriptSegment[])[0].index);
-      expect(requestedIndexRanges).toEqual([0, 600]); // sequential, ascending order
+      expect(requestedIndexRanges).toEqual([0, 100]); // sequential, ascending order
 
       expect(deps.upsertBatch).toHaveBeenCalledWith('v1', 0, expect.any(Array));
       expect(deps.upsertBatch).toHaveBeenCalledWith('v1', 2, expect.any(Array));
@@ -427,9 +437,9 @@ describe('runTranslationPipeline', () => {
 
       expect(result.status).toBe('done');
       expect(result.segments.every((s) => s.translatedText !== null)).toBe(true);
-      for (let i = 0; i < 300; i += 1) expect(result.segments[i].translatedText).toBe(`new-${i}`);
-      for (let i = 300; i < 600; i += 1) expect(result.segments[i].translatedText).toBe(`seeded-${i}`);
-      for (let i = 600; i < 900; i += 1) expect(result.segments[i].translatedText).toBe(`new-${i}`);
+      for (let i = 0; i < 50; i += 1) expect(result.segments[i].translatedText).toBe(`new-${i}`);
+      for (let i = 50; i < 100; i += 1) expect(result.segments[i].translatedText).toBe(`seeded-${i}`);
+      for (let i = 100; i < 150; i += 1) expect(result.segments[i].translatedText).toBe(`new-${i}`);
       expect(result.completedBatches).toBe(3);
     });
 
@@ -694,7 +704,7 @@ describe('runTranslationPipeline', () => {
     });
 
     it('reports a monotonically non-decreasing chunkIndex across a multi-chunk job', async () => {
-      const rows = makeRows(350); // 2 chunks: [300, 50]
+      const rows = makeRows(70); // 2 chunks: [50, 20]
       const progress: TranslationProgress[] = [];
       const onProgress = vi.fn((p: TranslationProgress) => progress.push(p));
       const deps = makeDeps({ requestTranscript: async () => rows, onProgress });
