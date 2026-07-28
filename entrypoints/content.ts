@@ -6,6 +6,7 @@ import {
   type ExtractedVideoMeta,
 } from '~/lib/video-meta';
 import { dedupeRows } from '~/lib/transcript-parse';
+import { chooseTranscriptButton } from '~/lib/transcript-panel';
 import { sendMessage } from '~/lib/messaging';
 import type {
   ReemitVideoMessage,
@@ -163,33 +164,35 @@ function transcriptPanelPresent(): boolean {
  * English, Korean, or the Korean synonym "대본" — `aria-label` values are
  * locale-dependent (§1, and the M1 doc's locale trap), so this can only ever
  * be a best-effort match, not an exhaustive one.
+ *
+ * The regex-only match used to return here directly (whichever matching
+ * element came first in document order). The live field bug this fixes
+ * (task-brief.md, 2026-07-29) measured that first match being, on a real
+ * captioned video, the panel's OWN "닫기" (close) chip or a Show-transcript
+ * chip already left `aria-selected="true"` by a prior SPA navigation —
+ * clicking either does the wrong thing (closes an open panel, or no-ops a
+ * toggle-off). This is now just the DOM adapter: it computes each match's
+ * visibility (`getBoundingClientRect`) and `aria-selected` state and hands
+ * them to the pure, unit-tested `chooseTranscriptButton`
+ * (src/lib/transcript-panel.ts), which owns the actual exclusion/ranking
+ * logic.
  */
 function findShowTranscriptButton(): HTMLElement | null {
-  const candidates = document.querySelectorAll<HTMLElement>(
-    'button, tp-yt-paper-button, yt-button-shape button',
-  );
-  for (const el of Array.from(candidates)) {
-    const label = el.getAttribute('aria-label') ?? el.textContent ?? '';
-    if (/transcript|스크립트|대본/i.test(label)) return el;
-  }
-  return null;
-}
+  const elements = Array.from(
+    document.querySelectorAll<HTMLElement>('button, tp-yt-paper-button, yt-button-shape button'),
+  ).filter((el) => /transcript|스크립트|대본/i.test(el.getAttribute('aria-label') ?? el.textContent ?? ''));
 
-/**
- * Triggers the panel open. Prefers a real click on the chip button (§1's
- * recommended method); falls back to forcing the searchable-transcript
- * engagement panel's `visibility` attribute directly when no button is found
- * (§1: this also works to open the panel on a fresh load).
- */
-function triggerShowTranscript(): void {
-  const button = findShowTranscriptButton();
-  if (button) {
-    button.click();
-    return;
-  }
-  document
-    .querySelector(TRANSCRIPT_ENGAGEMENT_PANEL)
-    ?.setAttribute('visibility', 'ENGAGEMENT_PANEL_VISIBILITY_EXPANDED');
+  const candidates = elements.map((el) => {
+    const rect = el.getBoundingClientRect();
+    return {
+      label: el.getAttribute('aria-label') ?? el.textContent ?? '',
+      visible: rect.width > 0 && rect.height > 0,
+      ariaSelected: el.getAttribute('aria-selected') === 'true',
+    };
+  });
+
+  const chosenIndex = chooseTranscriptButton(candidates);
+  return chosenIndex === null ? null : elements[chosenIndex];
 }
 
 /**
@@ -206,37 +209,96 @@ function transcriptRowsPopulated(): boolean {
 
 /**
  * Polls, on `TRANSCRIPT_OPEN_POLL_MS`'s schedule, until `transcriptRowsPopulated`
- * is true or the schedule is exhausted.
+ * is true or the schedule is exhausted. `onCheckpoint`, if given, fires after
+ * each miss (schedule elapsed-ms as its argument) — `openTranscriptPanel`
+ * below uses it to escalate to the next ladder strategy from INSIDE this same
+ * poll walk, so escalating never adds extra wall-clock time on top of the
+ * existing budget.
  */
-async function waitForTranscriptRows(): Promise<boolean> {
+async function waitForTranscriptRows(onCheckpoint?: (elapsedMs: number) => void): Promise<boolean> {
   let elapsed = 0;
   for (const checkpoint of TRANSCRIPT_OPEN_POLL_MS) {
     await sleep(checkpoint - elapsed);
     elapsed = checkpoint;
     if (transcriptRowsPopulated()) return true;
+    onCheckpoint?.(elapsed);
   }
   return false;
 }
 
 /**
- * Opens the transcript panel and waits for it to populate.
+ * Checkpoint (ms, one of `TRANSCRIPT_OPEN_POLL_MS`'s own entries) at/after
+ * which the ladder below falls through to the button-click strategy if the
+ * visibility-force strategy hasn't populated rows yet. Not itself a
+ * measurement — chosen from the schedule's own front portion to give the
+ * force-EXPANDED attempt a few checks (brief: "~5초 내 2-3회 체크") before
+ * trying the next strategy, same spirit as `MERGE_TARGET_CHARS` in
+ * transcript-parse.ts (a reasoned default, not a measured constant).
+ */
+const STRATEGY_3_ESCALATE_AT_MS = 2500;
+
+/**
+ * Opens the transcript panel and waits for it to populate, via a strategy
+ * ladder (task-brief.md, 2026-07-29 fix round) rather than a single
+ * click-and-poll — the live field bug this fixes is exactly a single click
+ * landing on the wrong element (see `findShowTranscriptButton`'s doc
+ * comment) with nothing else tried before the 30s budget ran out:
  *
- * Resolves `false` when the video has no transcript panel at all (§5), or
- * when the open was triggered but rows never populated within
- * `TRANSCRIPT_OPEN_POLL_MS` (the unresolved SPA-reopen case, §6b) —
- * `handleRequestTranscript` below maps either outcome to
- * `{ unavailable: true }`.
+ * 1. Already populated -> succeed immediately. Deliberately does NOT click
+ *    or toggle anything in this case — an already-open panel must never be
+ *    re-clicked (that is precisely how a stale `aria-selected="true"` chip
+ *    or the panel's own close button can undo an already-successful open).
+ * 2. Force the engagement panel's `visibility` attribute to
+ *    `ENGAGEMENT_PANEL_VISIBILITY_EXPANDED` directly — locale-independent,
+ *    and promoted to run FIRST (ahead of any click) because this fix's own
+ *    live diagnosis measured it populating a stuck, SPA-nav-leftover panel
+ *    in ~1s on exactly the state the button click no-op'd on.
+ * 3. If rows still haven't populated by `STRATEGY_3_ESCALATE_AT_MS`, click
+ *    the best candidate button via the hardened `findShowTranscriptButton`.
+ * 4. Whatever budget remains: keep polling `TRANSCRIPT_OPEN_POLL_MS` to its
+ *    end, same as before this fix (the unresolved SPA-reopen case, §6b).
+ *
+ * All of this runs inside the SAME `TRANSCRIPT_OPEN_POLL_MS` schedule/30s
+ * budget as before — steps 3/4 are escalations reached via
+ * `waitForTranscriptRows`'s `onCheckpoint` callback, not additional waits
+ * stacked on top, so the total budget is unchanged (task-brief.md's own
+ * constraint: "전체 예산은 기존 30초 유지 — 늘리지 말 것").
+ *
+ * Resolves `'no-panel'` when the video has no transcript panel at all (§5,
+ * checked before any strategy runs), `'open-failed'` when a panel/signal
+ * exists but every strategy above was exhausted without rows ever
+ * populating, or `'opened'` on success. `handleRequestTranscript` below maps
+ * `'no-panel'`/`'open-failed'` to `{ unavailable: true, reason }`.
  *
  * Deliberately does NOT scroll: §4a measured all rows already present in the
  * DOM the moment the panel finishes expanding (stable across a 5s no-scroll
  * window and an explicit scroll-to-bottom), so a scroll-and-wait loop would
  * do nothing useful.
  */
-export async function openTranscriptPanel(): Promise<boolean> {
-  if (!transcriptPanelPresent()) return false;
+export type TranscriptOpenResult = 'opened' | 'no-panel' | 'open-failed';
 
-  triggerShowTranscript();
-  return waitForTranscriptRows();
+export async function openTranscriptPanel(): Promise<TranscriptOpenResult> {
+  if (!transcriptPanelPresent()) return 'no-panel';
+  if (transcriptRowsPopulated()) return 'opened'; // strategy 1 — never click/toggle here
+
+  // Strategy 2 — locale-independent, measured fastest+most-reliable trigger,
+  // tried before any click.
+  document
+    .querySelector(TRANSCRIPT_ENGAGEMENT_PANEL)
+    ?.setAttribute('visibility', 'ENGAGEMENT_PANEL_VISIBILITY_EXPANDED');
+
+  let clickedFallback = false;
+  const populated = await waitForTranscriptRows((elapsedMs) => {
+    // Strategy 3 — fires exactly once, mid-poll, only if strategy 2 hasn't
+    // populated rows by the escalation checkpoint.
+    if (!clickedFallback && elapsedMs >= STRATEGY_3_ESCALATE_AT_MS) {
+      clickedFallback = true;
+      findShowTranscriptButton()?.click();
+    }
+  });
+  // Strategy 4 (tail poll) is `waitForTranscriptRows` itself continuing
+  // through the rest of the schedule above — no separate call needed.
+  return populated ? 'opened' : 'open-failed';
 }
 
 /**
@@ -275,19 +337,32 @@ function currentVideoId(): string | null {
  * makes ONE further attempt (re-open, re-check) before giving up; §6b found
  * reopening after an SPA transition unreliable in testing, so this is
  * best-effort, not a guarantee, and a second failure is reported the same as
- * "no transcript" rather than retried indefinitely.
+ * "no transcript" rather than retried indefinitely. The retry calls
+ * `openTranscriptPanel` again, so it automatically runs the same strategy
+ * ladder as the first attempt — no separate wiring needed here.
  */
 async function handleRequestTranscript(expectedVideoId: string): Promise<RequestTranscriptResponse> {
   const opened = await openTranscriptPanel();
-  if (!opened) return { unavailable: true };
+  if (opened !== 'opened') return { unavailable: true, reason: opened };
 
   if (currentVideoId() !== expectedVideoId) {
     const reopened = await openTranscriptPanel();
-    if (!reopened || currentVideoId() !== expectedVideoId) return { unavailable: true };
+    if (reopened !== 'opened' || currentVideoId() !== expectedVideoId) {
+      // A reopen that SUCCEEDS but still doesn't match `expectedVideoId` is
+      // reported the same as an open failure ('open-failed') — from the
+      // caller's side there is nothing more specific to say than "the right
+      // panel never became available."
+      return { unavailable: true, reason: reopened === 'opened' ? 'open-failed' : reopened };
+    }
   }
 
   const rows = scrapeRows();
-  return rows.length > 0 ? rows : { unavailable: true };
+  // Rows were populated a moment ago (openTranscriptPanel's own check) yet
+  // scrapeRows found none — an edge case, not a "genuinely no transcript"
+  // verdict, but there is no dedicated third reason for it; 'no-panel' keeps
+  // this branch's message identical to what it was before this fix round
+  // rather than inventing a new one.
+  return rows.length > 0 ? rows : { unavailable: true, reason: 'no-panel' };
 }
 
 export default defineContentScript({

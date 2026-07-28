@@ -36,6 +36,12 @@ describe('translationErrorDisplay', () => {
     );
   });
 
+  it('maps the exact transcript-open-failed reason (pipeline.ts unavailableReasonMessage literal, 2026-07-29 fix round)', () => {
+    expect(translationErrorDisplay('Transcript panel failed to open')).toBe(
+      '스크립트 패널을 여는 데 실패했어요. 페이지를 새로고침한 뒤 다시 시도해주세요.',
+    );
+  });
+
   it('maps a multi-chunk summary by the first matching reason token present', () => {
     expect(
       translationErrorDisplay('chunk 0: network (offline); chunk 1: network (offline)'),

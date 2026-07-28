@@ -157,12 +157,31 @@ export interface RequestTranscriptMessage {
 /**
  * Response to `RequestTranscriptMessage`, returned by the content script's
  * `chrome.runtime.onMessage` listener (entrypoints/content.ts, Task 4).
- * `{ unavailable: true }` means the video has no transcript engagement panel
- * at all — the "no captions" case (PRD §9 실패 상태) — kept distinct from an
- * empty array so "no panel" is never silently conflated with "panel present
- * but scraped nothing".
+ * `{ unavailable: true }` means the caller could not get scraped rows back —
+ * kept distinct from an empty array so "unavailable" is never silently
+ * conflated with "panel present but scraped nothing".
+ *
+ * `reason` (fix round, 2026-07-29 task-brief.md "transcript 열기 로직
+ * SPA-상태 견고화") distinguishes WHY, so the pipeline/UI can stop reporting
+ * a genuinely-captioned video as "this video has no transcript" (the field
+ * bug this fixes — https://www.youtube.com/watch?v=t3YJ5hKiMQ0 has an `en`
+ * track and a 550-row panel, but was misreported this way):
+ * - `'no-panel'` — §5's locale-independent panel-absent signals were BOTH
+ *   absent (`transcriptPanelPresent()` in content.ts) — the video genuinely
+ *   has no transcript at all.
+ * - `'open-failed'` — the panel/signal exists, but `openTranscriptPanel`'s
+ *   strategy ladder (populated-check -> force-EXPANDED -> button click ->
+ *   tail poll, all within the existing 30s budget) exhausted without rows
+ *   ever populating.
+ *
+ * `reason` is OPTIONAL, not required, on purpose: it is a refinement added
+ * on top of the original shape, and every existing/future caller that only
+ * checks `'unavailable' in response` must keep working unchanged whether or
+ * not a reason is present.
  */
-export type RequestTranscriptResponse = RawTranscriptRow[] | { unavailable: true };
+export type RequestTranscriptResponse =
+  | RawTranscriptRow[]
+  | { unavailable: true; reason?: 'no-panel' | 'open-failed' };
 
 /**
  * Channel name for the background -> panel translation-progress Port

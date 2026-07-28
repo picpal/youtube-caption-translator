@@ -737,6 +737,38 @@ describe('runTranslationPipeline', () => {
       expect(result.error?.step).toBe('extracting');
       expect(deps.putTranslation).toHaveBeenCalledOnce();
     });
+
+    // Fix round (2026-07-29 task-brief.md) — reason-splitting: back-compat
+    // (no `reason` field at all) and an explicit `'no-panel'` both still
+    // produce the ORIGINAL message, unchanged.
+    it('reports the original "no transcript panel" reason when `reason` is absent (back-compat)', async () => {
+      const deps = makeDeps({ requestTranscript: async () => ({ unavailable: true }) });
+
+      const result = await runTranslationPipeline({ videoId: 'v1', tabId: 1, key: 'k' }, deps);
+
+      expect(result.error?.reason).toBe('No transcript panel available for this video');
+    });
+
+    it('reports the original "no transcript panel" reason for an explicit reason:"no-panel"', async () => {
+      const deps = makeDeps({
+        requestTranscript: async () => ({ unavailable: true, reason: 'no-panel' as const }),
+      });
+
+      const result = await runTranslationPipeline({ videoId: 'v1', tabId: 1, key: 'k' }, deps);
+
+      expect(result.error?.reason).toBe('No transcript panel available for this video');
+    });
+
+    it('reports a distinct "panel failed to open" reason for reason:"open-failed" (the field bug this fix addresses)', async () => {
+      const deps = makeDeps({
+        requestTranscript: async () => ({ unavailable: true, reason: 'open-failed' as const }),
+      });
+
+      const result = await runTranslationPipeline({ videoId: 'v1', tabId: 1, key: 'k' }, deps);
+
+      expect(result.status).toBe('failed');
+      expect(result.error?.reason).toBe('Transcript panel failed to open');
+    });
   });
 
   // Review round 1, Minor #3: getTranslation/putTranslation/upsertBatch can

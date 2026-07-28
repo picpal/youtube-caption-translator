@@ -27,12 +27,25 @@
 //   `status:'failed'` like any other failure, it needs a mapping here too or
 //   it would show as raw English in the exact "설정 확인" case Fix 2B's
 //   `unauthorized` mapping already covers for an INVALID key).
+// - Fix round (2026-07-29 task-brief.md, "transcript 열기 로직 SPA-상태
+//   견고화"): pipeline.ts's `unavailableReasonMessage` sets the EXACT literal
+//   `'Transcript panel failed to open'` when `requestTranscript` comes back
+//   `{unavailable:true, reason:'open-failed'}` — the panel/signal existed but
+//   content.ts's `openTranscriptPanel` strategy ladder exhausted its budget
+//   without ever populating rows. Kept as a SEPARATE, more honest message
+//   from `NO_TRANSCRIPT_PANEL_REASON` above: that one means "this video
+//   genuinely has no script," which is false in this case and was the live
+//   field bug this whole fix round exists to correct.
 const NO_TRANSCRIPT_PANEL_REASON = 'No transcript panel available for this video';
 const API_KEY_NOT_SET_REASON = 'API key not set';
+const TRANSCRIPT_OPEN_FAILED_REASON = 'Transcript panel failed to open';
 
 export function translationErrorDisplay(reason: string): string {
   if (reason === NO_TRANSCRIPT_PANEL_REASON) {
     return '이 영상은 스크립트(대본)를 제공하지 않아 자막을 생성할 수 없어요';
+  }
+  if (reason === TRANSCRIPT_OPEN_FAILED_REASON) {
+    return '스크립트 패널을 여는 데 실패했어요. 페이지를 새로고침한 뒤 다시 시도해주세요.';
   }
   if (reason === API_KEY_NOT_SET_REASON || reason.includes('unauthorized')) {
     return 'API 키가 유효하지 않아요. 설정에서 키를 확인해주세요';

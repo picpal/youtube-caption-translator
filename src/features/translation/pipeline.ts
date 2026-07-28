@@ -180,6 +180,43 @@ function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
+/**
+ * Fix round (2026-07-29 task-brief.md, "transcript 열기 로직 SPA-상태
+ * 견고화") — the `reason` string recorded on a `failed` `TranslationRecord`
+ * when `requestTranscript` comes back `{ unavailable: true }`, split by WHY
+ * (src/types/message.ts's `RequestTranscriptResponse`):
+ * - `'no-panel'` (or no `reason` at all — see the `undefined` case below):
+ *   the video genuinely has no transcript engagement panel. Keeps the EXACT
+ *   pre-existing literal (`error-display.ts`'s Korean mapping keys off it).
+ * - `'open-failed'`: the panel/signal DID exist, but content.ts's
+ *   `openTranscriptPanel` strategy ladder exhausted its 30s budget without
+ *   ever populating rows — this is the field bug this fix round addresses
+ *   (a captioned video was misreported with the `'no-panel'` message above),
+ *   so it gets its own honest string rather than being folded into that one.
+ *
+ * `reason: undefined` (an older/back-compat `{unavailable:true}` with no
+ * `reason` field) is handled the SAME as `'no-panel'` on purpose — that was
+ * this function's only behavior before `reason` existed, and nothing about
+ * this fix changes what an absent reason means.
+ *
+ * The `default` branch's `never` assignment is an exhaustiveness guard: a
+ * third `RequestTranscriptResponse` reason value would fail to compile here
+ * instead of silently falling through to the wrong message.
+ */
+function unavailableReasonMessage(reason: 'no-panel' | 'open-failed' | undefined): string {
+  switch (reason) {
+    case 'open-failed':
+      return 'Transcript panel failed to open';
+    case 'no-panel':
+    case undefined:
+      return 'No transcript panel available for this video';
+    default: {
+      const exhaustive: never = reason;
+      return exhaustive;
+    }
+  }
+}
+
 /** Shared shape both `AnalyzeGlossaryResult` and `TranslateBatchResult`'s
  * failure branches satisfy — enough for the retry helper below to inspect
  * `reason`/`message`/`retryDelayMs` generically without depending on either
@@ -402,12 +439,14 @@ export async function runTranslationPipeline(
     // than dropped. Clean failure, not a crash: there is nothing new to
     // parse or hash, so this short-circuits before the cache/resume logic
     // below, which needs a freshly-computed captionHash to key off of.
+    // The reason string itself is now split by `reason` — see
+    // `unavailableReasonMessage`'s own doc comment above.
     return failPipeline(
       deps,
       videoId,
       'extracting',
       1,
-      'No transcript panel available for this video',
+      unavailableReasonMessage(rawResult.reason),
       existing ?? undefined,
     );
   }
