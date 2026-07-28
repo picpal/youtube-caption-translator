@@ -1,7 +1,14 @@
 import type { GeminiTestResult } from '~/types/message';
 import type { GlossaryEntry, TranscriptSegment } from '~/types/transcript';
 
-export const MODEL_ID = 'gemini-3.6-flash';
+// Task R5 — switched from `gemini-3.6-flash`: real-Chrome DoD found
+// mandatory thinking on that model explodes on the rules-heavy translation
+// prompt (a single 50-segment chunk took 150s+ and stalled). Measured
+// `gemini-3.5-flash-lite`: 5.8s for 40 segments, `thoughtsTokenCount: 0`,
+// `finishReason: STOP` — ~25x faster, zero thinking. Translation needs no
+// reasoning, just a rules-following format transform, so lite is strictly
+// better here for both speed and free-tier headroom.
+export const MODEL_ID = 'gemini-3.5-flash-lite';
 const ENDPOINT = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL_ID}:generateContent`;
 
 interface GeminiCallOptions {
@@ -291,11 +298,11 @@ export async function analyzeGlossary(
     generationConfig: {
       responseMimeType: 'application/json',
       responseSchema: ANALYZE_GLOSSARY_SCHEMA,
-      // Task R2 tried `thinkingConfig: { thinkingBudget: 0 }` here to skip
-      // thinking overhead on this simple structured-extraction call — the
-      // live gemini-3.6-flash API rejects it with 400 "Request contains an
-      // invalid argument" (this model does not support disabling thinking).
-      // Reverted; default thinking stays on.
+      // No `thinkingConfig` here: `gemini-3.5-flash-lite` (Task R5) already
+      // has zero thinking by default for this call and rejects an explicit
+      // `thinkingBudget` with a 400, the same failure mode `gemini-3.6-flash`
+      // had for `thinkingBudget: 0` (Task R2, reverted) — so this is left as
+      // just `responseMimeType`/`responseSchema` on purpose, not an oversight.
     },
   };
 
@@ -416,11 +423,14 @@ export async function translateBatch(
     generationConfig: {
       responseMimeType: 'application/json',
       responseSchema: TRANSLATE_BATCH_SCHEMA,
-      // Task R2 tried `thinkingConfig: { thinkingBudget: 0 }` here to skip
-      // thinking overhead (measured ~452 thought-tokens per 30 segments) —
-      // confirmed against the live gemini-3.6-flash API to return 400
-      // "Request contains an invalid argument": this model does not support
-      // disabling thinking. Reverted; default thinking stays on.
+      // No `thinkingConfig` here (see MODEL_ID's own doc comment, Task R5):
+      // `gemini-3.6-flash`'s mandatory thinking made this call explode
+      // (150s+ for a single 50-segment chunk) and, per Task R2, rejected an
+      // explicit `thinkingBudget: 0` with a 400 anyway. Switching to
+      // `gemini-3.5-flash-lite` fixed the actual problem at the root —
+      // `thoughtsTokenCount: 0` by default, no config needed, and this model
+      // also 400s on an explicit `thinkingBudget`, so `responseMimeType`/
+      // `responseSchema` alone is correct here, not incomplete.
     },
   };
 
