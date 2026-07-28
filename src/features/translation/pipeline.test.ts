@@ -327,6 +327,59 @@ describe('runTranslationPipeline', () => {
     });
   });
 
+  // Review round 1, Minor #3: getTranslation/putTranslation/upsertBatch can
+  // all reject (a real IndexedDB error) — unlike analyzeGlossary/
+  // translateBatch, which route every failure through callGeminiJson and
+  // never throw. Each site must resolve the pipeline promise to a `failed`
+  // TranslationRecord rather than letting the rejection propagate out of
+  // runTranslationPipeline.
+  describe('persistence failures (never reject the pipeline promise)', () => {
+    it('resolves to a failed record when getTranslation rejects', async () => {
+      const rows = makeRows(5);
+      const getTranslation = vi.fn(async () => {
+        throw new Error('IDB read failed');
+      });
+      const deps = makeDeps({ requestTranscript: async () => rows, getTranslation });
+
+      await expect(
+        runTranslationPipeline({ videoId: 'v1', tabId: 1, key: 'k' }, deps),
+      ).resolves.toMatchObject({ status: 'failed' });
+    });
+
+    it('resolves to a failed record when the initial putTranslation (skeleton) rejects, without ever calling translateBatch', async () => {
+      const rows = makeRows(5);
+      const putTranslation = vi.fn(async () => {
+        throw new Error('IDB write failed');
+      });
+      const translateBatch = vi.fn();
+      const deps = makeDeps({
+        requestTranscript: async () => rows,
+        putTranslation,
+        translateBatch: translateBatch as any,
+      });
+
+      const result = await runTranslationPipeline({ videoId: 'v1', tabId: 1, key: 'k' }, deps);
+
+      expect(result.status).toBe('failed');
+      // The load-bearing skeleton write never landed, so the pipeline must
+      // not have gone on to call translateBatch (which would have raced
+      // ahead of a record that upsertBatch — Task 3 — requires to exist).
+      expect(translateBatch).not.toHaveBeenCalled();
+    });
+
+    it('resolves to a failed record (does not reject) when upsertBatch rejects', async () => {
+      const rows = makeRows(5);
+      const upsertBatch = vi.fn(async () => {
+        throw new Error('IDB write failed');
+      });
+      const deps = makeDeps({ requestTranscript: async () => rows, upsertBatch });
+
+      await expect(
+        runTranslationPipeline({ videoId: 'v1', tabId: 1, key: 'k' }, deps),
+      ).resolves.toMatchObject({ status: 'failed' });
+    });
+  });
+
   describe('parseTimestamp throw guard', () => {
     it('fails cleanly (no throw) when a row has a malformed timestamp', async () => {
       const rows: RawTranscriptRow[] = [{ tsText: 'not-a-timestamp', text: 'Hello world.' }];
@@ -372,6 +425,44 @@ describe('applyGlossaryConsistency', () => {
 
     expect(result[0].translatedText).toBe('저는 리액트 훅을 좋아합니다');
     expect(result[1].translatedText).toBe('리액트 훅은 훌륭합니다'); // already correct, untouched
+  });
+
+  // Review round 1, Important #1: TRANSLATION_RULES (gemini.ts) explicitly
+  // allows the model to echo the English term in parentheses alongside the
+  // Korean translation ("add the English term in parentheses when it helps
+  // clarity"). The old code's guard only checked "does translatedText still
+  // contain the bare English term", which that echo satisfies even though
+  // the segment is ALREADY correctly translated — corrupting
+  // "리액트(React)를 사용합니다" into "리액트(리액트)를 사용합니다".
+  it('does not corrupt an already-correct translation that echoes the English term in parentheses', () => {
+    const glossary: GlossaryEntry[] = [{ term: 'React', translation: '리액트', keepEnglish: false }];
+    const segments: TranscriptSegment[] = [
+      seg(0, 'We use React for the frontend.', '프론트엔드에는 리액트(React)를 사용합니다'),
+    ];
+
+    const result = applyGlossaryConsistency(segments, glossary);
+
+    expect(result[0].translatedText).toBe('프론트엔드에는 리액트(React)를 사용합니다');
+    expect(result[0].translatedText).not.toContain('리액트(리액트)');
+  });
+
+  // Review round 1, Minor #2: no word-boundary anchoring meant a short term
+  // like "Go" matched as a bare substring inside "Google". A standalone
+  // occurrence of the actual term must still be fixed normally.
+  it('does not corrupt a short term matching inside a longer word, but still fixes a standalone occurrence', () => {
+    const glossary: GlossaryEntry[] = [{ term: 'Go', translation: '고랭', keepEnglish: false }];
+
+    const untouched = applyGlossaryConsistency(
+      [seg(0, 'Search on Google now.', '지금 Google에서 검색하세요.')],
+      glossary,
+    );
+    expect(untouched[0].translatedText).toBe('지금 Google에서 검색하세요.');
+
+    const fixed = applyGlossaryConsistency(
+      [seg(1, 'Go is a great language.', '저는 Go 언어를 좋아합니다.')],
+      glossary,
+    );
+    expect(fixed[0].translatedText).toBe('저는 고랭 언어를 좋아합니다.');
   });
 
   it('leaves keepEnglish:true terms alone', () => {

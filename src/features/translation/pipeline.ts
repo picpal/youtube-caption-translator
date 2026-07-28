@@ -93,6 +93,27 @@ function summarizeFailures(failures: BatchFailure[]): string {
   return failures.map((f) => `batch ${f.batchIdx}: ${f.reason} (${f.message})`).join('; ');
 }
 
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+// Best-effort persist: swallows a rejection rather than letting it escape as
+// an unhandled promise rejection. Used only where the write is NOT
+// load-bearing for the rest of this run (the two TERMINAL writes below, and
+// failPipeline's own write) — by the time these run, the pipeline's real
+// work is already done (or already being reported as failed), so a broken
+// DB write here must not turn "translation succeeded" into "the whole
+// pipeline promise rejects." The caller always gets the correct in-memory
+// TranslationRecord back either way, even if this particular write didn't
+// durably land.
+async function persistBestEffort(deps: TranslationPipelineDeps, rec: TranslationRecord): Promise<void> {
+  try {
+    await deps.putTranslation(rec);
+  } catch {
+    // Nothing further to do — see comment above.
+  }
+}
+
 async function failPipeline(
   deps: TranslationPipelineDeps,
   videoId: string,
@@ -117,7 +138,7 @@ async function failPipeline(
         createdAt: now,
         updatedAt: now,
       };
-  await deps.putTranslation(rec);
+  await persistBestEffort(deps, rec);
   deps.onProgress({
     videoId,
     status: 'failed',
@@ -171,14 +192,33 @@ function escapeRegExp(term: string): string {
  * term untranslated in one batch while translating it correctly in
  * another, since every batch is an independent call. This pass corrects
  * exactly that leftover-English case deterministically: for every
- * `keepEnglish:false` glossary entry whose term appears (case-insensitively)
- * in a segment's `sourceText`, if that segment's `translatedText` STILL
- * contains the literal English term (i.e. the model skipped translating it
- * in that particular batch), every such occurrence is replaced with the
- * glossary's canonical translation. Segments where the model already used
- * the Korean translation are untouched (the regex finds nothing to
- * replace). `keepEnglish:true` entries are intentionally left alone — the
- * term is SUPPOSED to stay in English, so there is nothing to unify.
+ * `keepEnglish:false` glossary entry whose term appears in a segment's
+ * `sourceText`, if that segment's `translatedText` contains the literal
+ * English term as a standalone token AND does NOT already contain the
+ * glossary's canonical Korean translation anywhere, every such occurrence of
+ * the term is replaced with that translation.
+ *
+ * Two guards, both fixed after review-round-1 caught real corruption cases:
+ * - `text.includes(entry.translation)` — `TRANSLATION_RULES` (gemini.ts)
+ *   also tells the model it may "add the English term in parentheses when
+ *   it helps clarity", e.g. `"리액트(React)를 사용합니다"`. That string
+ *   already contains BOTH the Korean translation and the bare English term —
+ *   without this guard, the old code rewrote it to `"리액트(리액트)를..."`,
+ *   corrupting an already-correct translation. If the canonical Korean form
+ *   is present anywhere in the text, the term was handled; leave it alone.
+ * - `\b...\b` word-boundary anchors — without them, a short term like
+ *   `"Go"` matched as a bare substring inside `"Google"`/`"ago"`. JS's `\b`
+ *   is defined against `\w` ([A-Za-z0-9_]), and Korean characters are NOT
+ *   `\w`, so the boundary still fires correctly at an English-term/Korean
+ *   transition with no whitespace needed (e.g. `"React훅"` still matches
+ *   `\bReact\b`) — the anchors are only weak for terms glued to OTHER
+ *   ASCII word characters, which is an acceptable, rare false-negative for
+ *   a best-effort safety net.
+ *
+ * Segments where the model already used the Korean translation (with or
+ * without a parenthetical English echo) are untouched. `keepEnglish:true`
+ * entries are intentionally left alone — the term is SUPPOSED to stay in
+ * English, so there is nothing to unify.
  */
 export function applyGlossaryConsistency(
   segments: TranscriptSegment[],
@@ -191,11 +231,13 @@ export function applyGlossaryConsistency(
     if (seg.translatedText === null) return seg;
     let text = seg.translatedText;
     for (const entry of rewritable) {
-      const testRe = new RegExp(escapeRegExp(entry.term), 'i');
-      if (testRe.test(seg.sourceText) && testRe.test(text)) {
-        const replaceRe = new RegExp(escapeRegExp(entry.term), 'gi');
-        text = text.replace(replaceRe, entry.translation);
-      }
+      const escaped = escapeRegExp(entry.term);
+      const testRe = new RegExp(`\\b${escaped}\\b`, 'i');
+      if (!testRe.test(seg.sourceText)) continue;
+      if (!testRe.test(text)) continue; // nothing left in English to fix here
+      if (text.includes(entry.translation)) continue; // already has the canonical Korean form
+      const replaceRe = new RegExp(`\\b${escaped}\\b`, 'gi');
+      text = text.replace(replaceRe, entry.translation);
     }
     return text === seg.translatedText ? seg : { ...seg, translatedText: text };
   });
@@ -246,7 +288,16 @@ export async function runTranslationPipeline(
   const totalBatches = segments.length === 0 ? 0 : Math.ceil(segments.length / BATCH_SIZE);
 
   // --- Step 2: cache/resume decision ------------------------------------
-  const existing = await deps.getTranslation(videoId);
+  let existing: TranslationRecord | null;
+  try {
+    existing = await deps.getTranslation(videoId);
+  } catch (err) {
+    // No skeleton exists yet at this point, so there is nothing meaningful
+    // to pass as `base` — same shape failPipeline already produces for
+    // "nothing persisted yet" (the unavailable-transcript / parse-failure
+    // paths above).
+    return failPipeline(deps, videoId, 'analyzing', 2, `Could not read cached translation: ${errorMessage(err)}`);
+  }
 
   if (existing && existing.captionHash === hash && existing.status === 'done') {
     // Same captions, already fully translated — reuse as-is, no re-work.
@@ -284,7 +335,15 @@ export async function runTranslationPipeline(
       createdAt: now,
       updatedAt: now,
     };
-    await deps.putTranslation(record);
+    // Load-bearing: `upsertBatch` (Task 3) THROWS if no record exists yet
+    // for this videoId, so a failure to persist THIS skeleton must halt the
+    // pipeline here rather than silently continue into batch work that
+    // would cascade into every subsequent upsertBatch call also failing.
+    try {
+      await deps.putTranslation(record);
+    } catch (err) {
+      return failPipeline(deps, videoId, 'analyzing', 2, `Could not persist translation record: ${errorMessage(err)}`, record);
+    }
   }
 
   // --- Step 2 (progress) / glossary analysis ----------------------------
@@ -306,7 +365,11 @@ export async function runTranslationPipeline(
     }
     glossary = glossaryResult.glossary;
     record = { ...record, status: 'translating', glossary, updatedAt: new Date().toISOString() };
-    await deps.putTranslation(record);
+    try {
+      await deps.putTranslation(record);
+    } catch (err) {
+      return failPipeline(deps, videoId, 'analyzing', 2, `Could not persist glossary: ${errorMessage(err)}`, record);
+    }
   }
 
   // --- Step 3: translate in concurrency-capped, backoff-retried batches -
@@ -371,7 +434,19 @@ export async function runTranslationPipeline(
           translatedText: byIndex.get(seg.index) ?? seg.translatedText,
         }));
 
-        await deps.upsertBatch(videoId, batchIdx, translatedSegs);
+        try {
+          await deps.upsertBatch(videoId, batchIdx, translatedSegs);
+        } catch (err) {
+          // The batch's own durability guarantee failed — do NOT mirror the
+          // translated result into `liveSegments` as if it were safely
+          // saved (it may not be, if the DB is genuinely broken). Recorded
+          // as a batch failure via the SAME mechanism as a translateBatch
+          // error, so it surfaces through the existing "any failure ->
+          // overall status:'failed'" path below rather than rejecting this
+          // function (and with it, the whole pipeline promise).
+          failures.push({ batchIdx, reason: 'unknown', message: `upsertBatch rejected: ${errorMessage(err)}` });
+          return;
+        }
 
         for (const seg of translatedSegs) {
           liveSegments[seg.index] = seg;
@@ -415,7 +490,7 @@ export async function runTranslationPipeline(
       error: { step: 'translating', reason: summarizeFailures(failures) || 'Some segments did not translate' },
       updatedAt: new Date().toISOString(),
     };
-    await deps.putTranslation(failedRecord);
+    await persistBestEffort(deps, failedRecord);
     deps.onProgress({ videoId, status: 'failed', done: doneCount, total, step: 3 });
     return failedRecord;
   }
@@ -432,7 +507,7 @@ export async function runTranslationPipeline(
     updatedAt: new Date().toISOString(),
   };
   delete finalRecord.error;
-  await deps.putTranslation(finalRecord);
+  await persistBestEffort(deps, finalRecord);
   deps.onProgress({ videoId, status: 'done', done: total, total, step: 4 });
   return finalRecord;
 }
