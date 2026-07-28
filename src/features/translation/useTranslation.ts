@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { sendMessage } from '~/lib/messaging';
 import { TRANSLATION_PROGRESS_PORT } from '~/types/message';
 import type { TranslatePhase, TranslationProgress, TranslationRecord, TranslationStatus } from '~/types/transcript';
@@ -66,7 +66,46 @@ export interface UseTranslationResult {
    * `status === 'failed'` — a later successful retry does not proactively
    * clear this field, it is simply superseded once `status` moves on. */
   error: string | null;
+  /** Task R7 (Fix 2A) — real-user test found a click on 시작/재시도 for a
+   * video with no transcript panel produced NO visible change at all: the
+   * pipeline fails in well under a second, so by the time this hook's next
+   * render happens `status` has already gone `failed -> failed` (or
+   * `idle -> failed`), which LOOKS identical to the click having done
+   * nothing. `pending` is `true` from the moment a USER-INITIATED `start()`
+   * call fires (never the `shouldResume` auto-resume path below — that one
+   * calls `sendMessage` directly, bypassing `start()`) until the first of:
+   * (a) a live Port message for this job, (b) `start()`'s own
+   * `START_TRANSLATION` send rejecting, or (c) a ~5s safety timeout — so a
+   * dead background can never leave this stuck `true` forever. It also never
+   * resolves any EARLIER than `PENDING_MIN_VISIBLE_MS` after the click, so
+   * the "요청 중…" affordance is always visible long enough to register as
+   * feedback even when the real outcome arrives almost instantly. Reset to
+   * `false` whenever `videoId`/`tabId` changes, same as every other field
+   * here. */
+  pending: boolean;
 }
+
+/** Task R7 (Fix 2A) — how much longer (ms, never negative) a pending cycle
+ * that began `elapsedMs` ago must still wait before it's allowed to resolve,
+ * so it never visually flashes for less than `minVisibleMs` even when the
+ * real signal (a Port message, or a `start()` rejection) arrives almost
+ * immediately. Pure and separately unit-tested — see
+ * `useTranslation.test.ts` — because it is the one piece of the pending
+ * lifecycle below that doesn't need a timer/chrome mock to verify.
+ */
+export function pendingResolveDelayMs(elapsedMs: number, minVisibleMs: number): number {
+  return Math.max(0, minVisibleMs - elapsedMs);
+}
+
+/** Minimum time `pending` stays visibly `true` once a user click starts a
+ * cycle (brief 2A: "최소 ~600ms"). */
+export const PENDING_MIN_VISIBLE_MS = 600;
+
+/** Hard upper bound on `pending`, independent of whether either real signal
+ * ever arrives (brief 2A path (c): a dead background service worker means no
+ * Port message and no settled `START_TRANSLATION` response — this is the one
+ * leg of the race that fires unconditionally). */
+export const PENDING_SAFETY_TIMEOUT_MS = 5_000;
 
 /**
  * Pure decision: does a previously-persisted record represent a job that is
@@ -96,18 +135,86 @@ export function useTranslation({ videoId, tabId }: UseTranslationParams): UseTra
   const [progress, setProgress] = useState<TranslationProgressState | null>(null);
   const [record, setRecord] = useState<TranslationRecord | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [pending, setPending] = useState(false);
+
+  // Task R7 (Fix 2A) — plumbing for the `pending` lifecycle. Refs, not
+  // state: nothing here needs its OWN render, only `pending` itself does.
+  // `pendingGenerationRef` is bumped on every new cycle (a fresh `start()`
+  // call, or the videoId/tabId reset below) so a stale timer/rejection from
+  // an EARLIER cycle can never resolve (or re-arm) a NEWER one — the same
+  // "is this response still the most recent" discipline `recordRequestSeq`
+  // already uses for `GET_TRANSLATION` below, just for this separate concern.
+  const pendingGenerationRef = useRef(0);
+  const pendingActivatedAtRef = useRef<number | null>(null);
+  const pendingMinTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingSafetyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  function clearPendingTimers(): void {
+    if (pendingMinTimerRef.current !== null) {
+      clearTimeout(pendingMinTimerRef.current);
+      pendingMinTimerRef.current = null;
+    }
+    if (pendingSafetyTimerRef.current !== null) {
+      clearTimeout(pendingSafetyTimerRef.current);
+      pendingSafetyTimerRef.current = null;
+    }
+  }
+
+  // Ends the pending cycle identified by `generation` — a no-op if a newer
+  // cycle (another `start()`, or a videoId/tabId reset) has already
+  // superseded it, so a straggling timer/rejection callback can never clear
+  // (or re-show) the WRONG cycle's pending state.
+  function resolvePending(generation: number): void {
+    if (pendingGenerationRef.current !== generation) return;
+    clearPendingTimers();
+    pendingActivatedAtRef.current = null;
+    setPending(false);
+  }
+
+  // Called from whichever of the two REAL signals (a Port message, or
+  // `start()`'s own rejection) happens first — schedules the actual
+  // `resolvePending` no sooner than `PENDING_MIN_VISIBLE_MS` after the cycle
+  // began. The independent safety timer (below, in `start()`) races this on
+  // its own separate path (c) and is unaffected by whichever of (a)/(b) (if
+  // either) also fires.
+  function requestPendingResolve(generation: number): void {
+    if (pendingGenerationRef.current !== generation || pendingActivatedAtRef.current === null) return;
+    const elapsed = Date.now() - pendingActivatedAtRef.current;
+    const delay = pendingResolveDelayMs(elapsed, PENDING_MIN_VISIBLE_MS);
+    if (pendingMinTimerRef.current !== null) clearTimeout(pendingMinTimerRef.current);
+    if (delay <= 0) {
+      resolvePending(generation);
+    } else {
+      pendingMinTimerRef.current = setTimeout(() => resolvePending(generation), delay);
+    }
+  }
 
   // Re-created every render, closing over the CURRENT `videoId`/`tabId`
   // props directly — no memoization, matching this codebase's existing
   // hooks (`useCurrentVideo` exposes no functions at all). Fire-and-forget:
   // `START_TRANSLATION` acks "accepted", not "finished"; actual progress
   // arrives over the Port this hook is already subscribed to below.
+  //
+  // Task R7 (Fix 2A): this is the ONLY path that turns `pending` on — the
+  // `shouldResume` auto-resume call inside the effect below calls
+  // `sendMessage` directly and deliberately does NOT go through `start()`,
+  // per the brief ("자동 재개 경로에는 pending을 켜지 말 것").
   function start(): void {
     if (videoId === null || tabId === null) return;
+    const generation = ++pendingGenerationRef.current;
+    clearPendingTimers();
+    pendingActivatedAtRef.current = Date.now();
+    setPending(true);
+    // Path (c): fires unconditionally, regardless of (a)/(b) — the only one
+    // of the three race legs a dead background can't suppress.
+    pendingSafetyTimerRef.current = setTimeout(() => resolvePending(generation), PENDING_SAFETY_TIMEOUT_MS);
+
     void sendMessage({ type: 'START_TRANSLATION', payload: { videoId, tabId } }).catch(() => {
-      // Background unreachable — nothing further to do; there is no retry
-      // loop here, matching useCurrentVideo's same choice for the
-      // analogous "not woken up yet" case.
+      // Path (b): background unreachable. Still no retry loop here, matching
+      // useCurrentVideo's same choice for the analogous "not woken up yet"
+      // case — but pending must still resolve rather than wait out the full
+      // safety timeout for something already known to have failed.
+      requestPendingResolve(generation);
     });
   }
 
@@ -119,6 +226,14 @@ export function useTranslation({ videoId, tabId }: UseTranslationParams): UseTra
     setProgress(null);
     setRecord(null);
     setError(null);
+    // Task R7 (Fix 2A): `pending` is a click-scoped UI affordance for THIS
+    // video/tab — bump the generation first so any in-flight timer/rejection
+    // from the PREVIOUS videoId/tabId can never resolve (or re-arm) this
+    // fresh one, then clear it outright.
+    pendingGenerationRef.current += 1;
+    clearPendingTimers();
+    pendingActivatedAtRef.current = null;
+    setPending(false);
 
     if (videoId === null || tabId === null) return;
 
@@ -172,6 +287,12 @@ export function useTranslation({ videoId, tabId }: UseTranslationParams): UseTra
       if (cancelled) return;
       if (message.videoId !== videoId) return;
       sawLiveStatus = true;
+      // Path (a): any live progress message for this job is proof the click
+      // (if there was one) was received — resolves the CURRENT pending
+      // cycle, if one is active (a no-op otherwise, e.g. an auto-resumed
+      // job's own progress stream, which never set `pending` in the first
+      // place).
+      requestPendingResolve(pendingGenerationRef.current);
       setStatus(message.status);
       setProgress({
         step: message.step,
@@ -216,8 +337,13 @@ export function useTranslation({ videoId, tabId }: UseTranslationParams): UseTra
       cancelled = true;
       port.onMessage.removeListener(handlePortMessage);
       port.disconnect();
+      // A genuine unmount (as opposed to a videoId/tabId dep change, which
+      // re-runs the reset block above instead) has no further effect
+      // invocation to clear these in — do it here too so a dangling timer
+      // never fires against a destroyed hook instance.
+      clearPendingTimers();
     };
   }, [videoId, tabId]);
 
-  return { status, progress, record, start, error };
+  return { status, progress, record, start, error, pending };
 }

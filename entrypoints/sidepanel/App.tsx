@@ -1,10 +1,11 @@
 import { Fragment, useEffect, useRef, useState } from 'react';
 import { Button } from '~/components/Button';
 import { StatusBadge } from '~/components/StatusBadge';
-import { TranscriptList } from '~/components/TranscriptList';
+import { TranscriptList, type DisplayMode } from '~/components/TranscriptList';
 import { UnsupportedBanner } from '~/components/UnsupportedBanner';
 import { VideoCard } from '~/components/VideoCard';
 import { useApiKey } from '~/features/api-key/useApiKey';
+import { translationErrorDisplay } from '~/features/translation/error-display';
 import {
   formatElapsedTime,
   progressPercent,
@@ -17,6 +18,7 @@ import { useCurrentVideo } from '~/features/video/useCurrentVideo';
 import { formatTimestamp } from '~/lib/transcript-parse';
 import { classifyYoutubeUrl, type YoutubePageKind } from '~/lib/youtube';
 import type { TranslationRecord, TranslationStatus } from '~/types/transcript';
+import type { CaptionAvailability } from '~/types/video';
 
 // 'checking' is this component's own pre-first-query state, layered on top
 // of the 4-way `YoutubePageKind` — not one of its members, since
@@ -230,18 +232,29 @@ function useElapsedSeconds(active: boolean): number {
   return elapsedSeconds;
 }
 
+// The 자막 표시 selector options (Task R7, Fix 1) — data-driven so the
+// buttons below are a plain `.map`, not three hand-copied `<button>`s that
+// could drift out of sync with each other.
+const DISPLAY_MODE_OPTIONS: ReadonlyArray<{ mode: DisplayMode; label: string }> = [
+  { mode: 'both', label: '영한 동시' },
+  { mode: 'ko', label: '한국어' },
+  { mode: 'en', label: '영어' },
+];
+
 // The thumbnail/title/channel block and the caption-availability bar are
 // real data as of Task 9, via VideoCard + useCurrentVideo. The
 // `AI 자막 생성` button and the 처리 단계 footer are wired to the live
 // translation state as of M2 Task 8, via useTranslation (below). The
 // finished transcript list (M2 Task 9) renders below the stepper once a
-// `done`/`failed` record has segments. Only the 자막 표시 selector remains
-// static — M3's display-mode concern, not this task's.
+// `done`/`failed` record has segments. The 자막 표시 selector (Task R7, Fix
+// 1) now actually switches `TranscriptList`'s `displayMode` — session-local
+// state only, per the brief; persisting the choice across sessions is M3.
 function ReadyBody() {
   const { video, loading, tabId } = useCurrentVideo();
   const videoId = video?.videoId ?? null;
-  const { status, progress, record, start, error } = useTranslation({ videoId, tabId });
+  const { status, progress, record, start, error, pending } = useTranslation({ videoId, tabId });
   const elapsedSeconds = useElapsedSeconds(status === 'translating');
+  const [displayMode, setDisplayMode] = useState<DisplayMode>('both');
 
   // DoD #2 — dump the finished transcript to the console once per
   // completion. Keyed on `videoId` (not a plain boolean) so switching to a
@@ -316,24 +329,24 @@ function ReadyBody() {
           자막 표시
         </span>
         <div className="mt-2 flex overflow-hidden rounded-[7px] border border-neutral-200 dark:border-neutral-800">
-          <button
-            type="button"
-            className="flex-1 border-0 bg-neutral-100 py-2 text-[11.5px] font-semibold text-neutral-900 dark:bg-neutral-800 dark:text-neutral-100"
-          >
-            영한 동시
-          </button>
-          <button
-            type="button"
-            className="flex-1 border-0 border-l border-neutral-200 bg-white py-2 text-[11.5px] text-neutral-600 hover:bg-neutral-50 dark:border-neutral-800 dark:bg-neutral-950 dark:text-neutral-400 dark:hover:bg-neutral-900"
-          >
-            한국어
-          </button>
-          <button
-            type="button"
-            className="flex-1 border-0 border-l border-neutral-200 bg-white py-2 text-[11.5px] text-neutral-600 hover:bg-neutral-50 dark:border-neutral-800 dark:bg-neutral-950 dark:text-neutral-400 dark:hover:bg-neutral-900"
-          >
-            영어
-          </button>
+          {DISPLAY_MODE_OPTIONS.map(({ mode, label }, i) => {
+            const selected = displayMode === mode;
+            return (
+              <button
+                key={mode}
+                type="button"
+                aria-pressed={selected}
+                onClick={() => setDisplayMode(mode)}
+                className={`flex-1 border-0 py-2 text-[11.5px] ${i > 0 ? 'border-l border-neutral-200 dark:border-neutral-800' : ''} ${
+                  selected
+                    ? 'bg-neutral-100 font-semibold text-neutral-900 dark:bg-neutral-800 dark:text-neutral-100'
+                    : 'bg-white text-neutral-600 hover:bg-neutral-50 dark:bg-neutral-950 dark:text-neutral-400 dark:hover:bg-neutral-900'
+                }`}
+              >
+                {label}
+              </button>
+            );
+          })}
         </div>
       </div>
 
@@ -344,6 +357,8 @@ function ReadyBody() {
           progress={progress}
           error={error}
           elapsedSeconds={elapsedSeconds}
+          pending={pending}
+          captionAvailability={video?.captionAvailability ?? null}
           onStart={start}
         />
       </div>
@@ -357,7 +372,7 @@ function ReadyBody() {
               번역 결과
             </span>
           </div>
-          <TranscriptList segments={record.segments} />
+          <TranscriptList segments={record.segments} displayMode={displayMode} />
         </div>
       )}
     </>
@@ -369,7 +384,16 @@ function ReadyBody() {
 //   `useTranslation`'s own `start()` already no-ops in this state, so this
 //   just keeps the button from looking clickable when it silently wouldn't
 //   do anything.
-// - `idle`: enabled, kicks off `start()`.
+// - `pending` (Task R7, Fix 2A): disabled "요청 중…", regardless of `status` —
+//   see `pending`'s own doc comment on `useTranslation` for why this exists
+//   and how it clears. Checked right after `!ready` (a click can only ever
+//   set `pending` while `ready`, so this ordering never actually matters in
+//   practice, but keeping the "can this even be true right now" checks
+//   first reads clearest).
+// - `idle`: enabled, kicks off `start()` — UNLESS (Task R7, Fix 3) this
+//   video's `captionAvailability` is known to be `'none'`, in which case
+//   there is nothing to generate from and the button is disabled with that
+//   explained instead.
 // - `extracting`/`analyzing`/`translating`: disabled with a step-aware
 //   label; `translating` additionally shows the live, divide-by-zero-safe
 //   percent via `progressPercent`.
@@ -384,13 +408,17 @@ function ReadyBody() {
 //   This is user-initiated, not automatic, so it does not reintroduce a
 //   revisit-time re-scrape.
 // - `failed`: re-enabled as a 다시 시도 retry affordance, with the failure
-//   reason surfaced above it.
+//   reason surfaced above it — translated to Korean via
+//   `translationErrorDisplay` (Task R7, Fix 2B) rather than shown as the raw
+//   pipeline reason string.
 function TranslateButton({
   ready,
   status,
   progress,
   error,
   elapsedSeconds,
+  pending,
+  captionAvailability,
   onStart,
 }: {
   ready: boolean;
@@ -398,6 +426,8 @@ function TranslateButton({
   progress: TranslationProgressState | null;
   error: string | null;
   elapsedSeconds: number;
+  pending: boolean;
+  captionAvailability: CaptionAvailability | null;
   onStart: () => void;
 }) {
   if (!ready) {
@@ -408,11 +438,21 @@ function TranslateButton({
     );
   }
 
+  if (pending) {
+    return (
+      <Button disabled aria-disabled className="w-full">
+        요청 중…
+      </Button>
+    );
+  }
+
   if (status === 'failed') {
     return (
       <div className="flex flex-col gap-2">
         {error ? (
-          <p className="text-[11.5px] leading-relaxed text-red-600 dark:text-red-400">{error}</p>
+          <p className="text-[11.5px] leading-relaxed text-red-600 dark:text-red-400">
+            {translationErrorDisplay(error)}
+          </p>
         ) : null}
         <Button onClick={onStart} className="w-full">
           다시 시도
@@ -454,7 +494,22 @@ function TranslateButton({
     );
   }
 
-  // 'idle'
+  // 'idle'. Task R7 (Fix 3): a video the extraction pipeline already knows
+  // has NO captions at all can't produce anything for `AI 자막 생성` to work
+  // from — gate on the exact `'none'` value only. `'unknown'`/`'auto-only'`/
+  // `null` all leave the button enabled: `'unknown'`/`null` genuinely don't
+  // know yet (a post-SPA DOM read, or nothing read at all — see
+  // `CaptionAvailability`'s own doc comment), and `'auto-only'` DOES have a
+  // transcript panel (auto-generated captions still populate one), so there
+  // is something real for the pipeline to extract either way.
+  if (captionAvailability === 'none') {
+    return (
+      <Button disabled aria-disabled className="w-full">
+        자막 없음 — 생성 불가
+      </Button>
+    );
+  }
+
   return (
     <Button onClick={onStart} className="w-full">
       AI 자막 생성

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { shouldResume } from './useTranslation';
+import { pendingResolveDelayMs, shouldResume } from './useTranslation';
 import type { TranslationRecord, TranslationStatus } from '~/types/transcript';
 
 // Only `shouldResume` is unit-tested here — the hook's connect/subscribe/
@@ -48,5 +48,29 @@ describe('shouldResume', () => {
   it('returns false for idle/extracting, statuses the pipeline never actually persists', () => {
     expect(shouldResume(recordWithStatus('idle'))).toBe(false);
     expect(shouldResume(recordWithStatus('extracting'))).toBe(false);
+  });
+});
+
+// Task R7 (Fix 2A) — the pure "how much longer must pending wait" helper
+// behind `useTranslation`'s `pending` flag. The timer-driven race itself (a
+// Port message / start() rejection / 5s safety timeout, whichever comes
+// first) needs a real Port and is exercised in real Chrome, same reasoning
+// as `shouldResume` above — this covers the one piece of that logic that
+// doesn't need a chrome.* mock.
+describe('pendingResolveDelayMs', () => {
+  it('returns the full minimum when no time has elapsed yet', () => {
+    expect(pendingResolveDelayMs(0, 600)).toBe(600);
+  });
+
+  it('returns the remaining time when partway through the minimum window', () => {
+    expect(pendingResolveDelayMs(250, 600)).toBe(350);
+  });
+
+  it('returns 0 once the minimum window has fully elapsed', () => {
+    expect(pendingResolveDelayMs(600, 600)).toBe(0);
+  });
+
+  it('never returns negative even when elapsed overshoots the minimum', () => {
+    expect(pendingResolveDelayMs(5000, 600)).toBe(0);
   });
 });
