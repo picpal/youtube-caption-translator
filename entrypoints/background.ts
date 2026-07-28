@@ -1,9 +1,17 @@
 import { defineBackground } from 'wxt/sandbox';
 import { saveApiKey, getApiKey, getApiKeyStatus, deleteApiKey } from '~/lib/storage';
-import { testGeminiKey } from '~/lib/gemini';
-import { putVideo } from '~/lib/db';
+import { testGeminiKey, analyzeGlossary, translateBatch } from '~/lib/gemini';
+import { putVideo, getTranslation, putTranslation, upsertBatch } from '~/lib/db';
 import { sendMessage } from '~/lib/messaging';
-import type { AppMessage, AppResponseMap, CurrentVideoState, ReemitVideoMessage } from '~/types/message';
+import { runTranslationPipeline } from '~/features/translation/pipeline';
+import type {
+  AppMessage,
+  AppResponseMap,
+  CurrentVideoState,
+  ReemitVideoMessage,
+  RequestTranscriptMessage,
+  RequestTranscriptResponse,
+} from '~/types/message';
 
 // Latest known state per tab, keyed by the tab the content script's message
 // arrived FROM (`sender.tab.id`) — never by the panel's notion of "the
@@ -148,15 +156,53 @@ export async function handle<T extends AppMessage['type']>(
       // exhaustive if this is ever redelivered to the sender; there is no
       // state to update on receipt.
       return { ok: true } as AppResponseMap[T];
-    // TODO(Task 6/7): wire the real pipeline orchestrator. This stub only
-    // exists to keep this file's exhaustive switches type-checking after
-    // Task 2 added the message variant — it does not start anything yet.
-    case 'START_TRANSLATION':
+    case 'START_TRANSLATION': {
+      const { payload } = msg as Extract<AppMessage, { type: 'START_TRANSLATION' }>;
+      const key = await getApiKey();
+      // The one synchronous "can't even start" check per message.ts's own
+      // doc comment on this response ("whether the pipeline could be
+      // started", not whether it will succeed) — everything else, including
+      // "this video has no transcript panel", is a normal pipeline OUTCOME
+      // (a `failed` TranslationRecord), not a reason to refuse the kickoff.
+      if (!key) {
+        return { ok: false, error: 'API key not set' } as AppResponseMap[T];
+      }
+
+      // Fire-and-forget: START_TRANSLATION acks "accepted", not "finished".
+      // The promise is intentionally not awaited/returned to the caller;
+      // its rejection is only logged (there is no one left to answer by the
+      // time it could reject — the ack below has already gone out).
+      void runTranslationPipeline(
+        { videoId: payload.videoId, tabId: payload.tabId, key },
+        {
+          requestTranscript: async (tabId, videoId) =>
+            (await chrome.tabs.sendMessage(tabId, {
+              type: 'REQUEST_TRANSCRIPT',
+              videoId,
+            } satisfies RequestTranscriptMessage)) as RequestTranscriptResponse,
+          analyzeGlossary,
+          translateBatch,
+          getTranslation,
+          putTranslation,
+          upsertBatch,
+          sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+          // TODO(Task 7): stream progress to the panel over the
+          // TRANSLATION_PROGRESS_PORT Port instead. No Port exists yet, so
+          // this is a log-only placeholder with no consumer.
+          onProgress: (progress) => {
+            console.log('[translation progress]', progress);
+          },
+        },
+      ).catch((err) => {
+        console.error('translation pipeline failed', err);
+      });
+
       return { ok: true } as AppResponseMap[T];
-    // TODO(Task 3/6): read from the `translations` IndexedDB store once it
-    // exists. Always `null` for now (Task 2 stub — types/schema only).
-    case 'GET_TRANSLATION':
-      return null as AppResponseMap[T];
+    }
+    case 'GET_TRANSLATION': {
+      const { payload } = msg as Extract<AppMessage, { type: 'GET_TRANSLATION' }>;
+      return (await getTranslation(payload.videoId)) as AppResponseMap[T];
+    }
   }
   throw new Error(`Unhandled message type: ${(msg as AppMessage).type}`);
 }
