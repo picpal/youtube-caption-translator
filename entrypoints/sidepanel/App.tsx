@@ -335,8 +335,16 @@ function ReadyBody() {
 // - `extracting`/`analyzing`/`translating`: disabled with a step-aware
 //   label; `translating` additionally shows the live, divide-by-zero-safe
 //   percent via `progressPercent`.
-// - `done`: disabled, reads as complete. Re-translating and rendering the
-//   translated segment list are out of this task's scope (Task 9).
+// - `done`: disabled, reads as complete, PLUS (Task 10) a secondary
+//   `다시 생성` affordance calling the same `start()` — otherwise a cached
+//   `done` video could never be re-checked against YouTube's current
+//   captions. `start()` re-runs `START_TRANSLATION`, and the pipeline's own
+//   cache decision (pipeline.ts, untouched by Task 10) takes it from there:
+//   same `captionHash` -> near-instant cache-hit return (see pipeline.ts's
+//   "returns the existing record as-is with no Gemini calls" cache-hit
+//   test), different hash -> a fresh skeleton, i.e. an actual regeneration.
+//   This is user-initiated, not automatic, so it does not reintroduce a
+//   revisit-time re-scrape.
 // - `failed`: re-enabled as a 다시 시도 retry affordance, with the failure
 //   reason surfaced above it.
 function TranslateButton({
@@ -383,9 +391,19 @@ function TranslateButton({
 
   if (status === 'done') {
     return (
-      <Button disabled aria-disabled className="w-full">
-        번역 완료
-      </Button>
+      <div className="flex items-center gap-2">
+        <Button disabled aria-disabled className="flex-1">
+          번역 완료
+        </Button>
+        <Button
+          variant="secondary"
+          onClick={onStart}
+          className="shrink-0"
+          title="자막이 바뀌었다면 새로 생성합니다"
+        >
+          다시 생성
+        </Button>
+      </div>
     );
   }
 
