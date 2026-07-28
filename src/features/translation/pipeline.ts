@@ -133,6 +133,50 @@ function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
+/** Shared shape both `AnalyzeGlossaryResult` and `TranslateBatchResult`'s
+ * failure branches satisfy — enough for the retry helper below to inspect
+ * `reason`/`message`/`retryDelayMs` generically without depending on either
+ * concrete type. */
+interface RetryableFailure {
+  ok: false;
+  reason: string;
+  message: string;
+  retryDelayMs?: number;
+}
+
+/**
+ * Task R3 — the SAME retryDelay-honoring 429 retry logic, factored out so
+ * both the glossary call (step 2) and each translate chunk (step 3) share
+ * it rather than duplicating the wait-calculation. On a `rate_limit`
+ * result, waits `parseRetryDelayMs(message) ?? retryDelayMs ??
+ * DEFAULT_RETRY_DELAY_MS`, capped at `MAX_RETRY_DELAY_MS`, and retries up to
+ * `MAX_RATE_LIMIT_RETRIES` times. Any other failure reason (or a `rate_limit`
+ * that has exhausted its retry budget) is returned as-is — this helper never
+ * decides what a failure MEANS, only whether to try again.
+ *
+ * `attempt` is called fresh on every try (not memoized) so a caller that
+ * needs to react per-attempt — the chunk loop's own `sending` progress
+ * event, fired before each individual request — can do so from inside it.
+ */
+async function callWithRateLimitRetry<T extends { ok: true } | RetryableFailure>(
+  deps: TranslationPipelineDeps,
+  attempt: () => Promise<T>,
+): Promise<T> {
+  let tries = 0;
+  for (;;) {
+    const result = await attempt();
+    if (result.ok) return result;
+    if (result.reason !== 'rate_limit' || tries >= MAX_RATE_LIMIT_RETRIES) return result;
+
+    const delayMs = Math.min(
+      parseRetryDelayMs(result.message) ?? result.retryDelayMs ?? DEFAULT_RETRY_DELAY_MS,
+      MAX_RETRY_DELAY_MS,
+    );
+    await deps.sleep(delayMs);
+    tries += 1;
+  }
+}
+
 // Best-effort persist: swallows a rejection rather than letting it escape as
 // an unhandled promise rejection. Used only where the write is NOT
 // load-bearing for the rest of this run (the two TERMINAL writes below, and
@@ -420,11 +464,24 @@ export async function runTranslationPipeline(
   if (resuming && glossaryResolved(record)) {
     glossary = record.glossary;
   } else {
-    const glossaryResult = await deps.analyzeGlossary(fullText, key);
-    if (!glossaryResult.ok) {
-      return failPipeline(deps, videoId, 'analyzing', 2, glossaryResult.message, record);
+    // Task R3: same retryDelay-honoring retry as translate chunks (real-
+    // Chrome DoD found a single 429 here used to fail the WHOLE pipeline in
+    // ~3s with no wait, even though the server's own message asked for a
+    // 53s retry). AND, if it still fails after retries (rate_limit
+    // exhausted, or any other error) — NON-FATAL: the glossary is a
+    // consistency aid, not required for `translateBatch` (which already
+    // handles an empty glossary as a no-op, see `buildGlossaryBlock` in
+    // gemini.ts). Translation is the core deliverable and must not be
+    // killed by a glossary hiccup.
+    const glossaryResult = await callWithRateLimitRetry(deps, () => deps.analyzeGlossary(fullText, key));
+    if (glossaryResult.ok) {
+      glossary = glossaryResult.glossary;
+    } else {
+      console.warn(
+        `[translation pipeline] glossary analysis failed for ${videoId}, proceeding with an empty glossary: ${glossaryResult.reason} (${glossaryResult.message})`,
+      );
+      glossary = [];
     }
-    glossary = glossaryResult.glossary;
     record = { ...record, status: 'translating', glossary, updatedAt: new Date().toISOString() };
     try {
       await deps.putTranslation(record);
@@ -479,8 +536,12 @@ export async function runTranslationPipeline(
     const [start, end] = chunkRange(chunkIdx);
     const segs = liveSegments.slice(start, end);
 
-    let attempt = 0;
-    for (;;) {
+    // Task R3: the retry/backoff itself is now the SHARED
+    // `callWithRateLimitRetry` helper (also used by the glossary call
+    // above) — `attempt` fires the `sending` progress event fresh on every
+    // try (including retries), since that's a per-request signal the shared
+    // helper itself has no opinion on.
+    const result = await callWithRateLimitRetry(deps, () => {
       deps.onProgress({
         videoId,
         status: 'translating',
@@ -489,85 +550,10 @@ export async function runTranslationPipeline(
         chunkIndex: completedChunks,
         totalChunks,
       });
-      const result = await deps.translateBatch(segs, glossary, key);
+      return deps.translateBatch(segs, glossary, key);
+    });
 
-      if (result.ok) {
-        deps.onProgress({
-          videoId,
-          status: 'translating',
-          step: 3,
-          phase: 'receiving',
-          chunkIndex: completedChunks,
-          totalChunks,
-        });
-
-        const byIndex = new Map(result.translations.map((t) => [t.index, t.translatedText]));
-        // A translatedText the model omitted for THIS call falls back to
-        // whatever `seg` already had (possibly still null, possibly a
-        // value a prior run's partial response already filled in) —
-        // never regress an already-known-good translation to null.
-        const translatedSegs = segs.map((seg) => ({
-          ...seg,
-          translatedText: byIndex.get(seg.index) ?? seg.translatedText,
-        }));
-
-        deps.onProgress({
-          videoId,
-          status: 'translating',
-          step: 3,
-          phase: 'parsing',
-          chunkIndex: completedChunks,
-          totalChunks,
-        });
-
-        try {
-          await deps.upsertBatch(videoId, chunkIdx, translatedSegs);
-        } catch (err) {
-          // The chunk's own durability guarantee failed — do NOT mirror the
-          // translated result into `liveSegments` as if it were safely
-          // saved (it may not be, if the DB is genuinely broken). Recorded
-          // as a chunk failure via the SAME mechanism as a translateBatch
-          // error, so it surfaces through the existing "any failure ->
-          // overall status:'failed'" path below rather than rejecting this
-          // function (and with it, the whole pipeline promise).
-          failures.push({ chunkIdx, reason: 'unknown', message: `upsertBatch rejected: ${errorMessage(err)}` });
-          return;
-        }
-
-        for (const seg of translatedSegs) {
-          liveSegments[seg.index] = seg;
-        }
-        // `Math.max`, not a plain increment: on a resume, `pendingChunkIndices`
-        // can be a non-contiguous subset (e.g. chunk 1 already done, only
-        // chunks 0 and 2 pending) — a plain `+= 1` would double-count past
-        // whatever the seeded `record.completedBatches` hint already
-        // credited. This mirrors the pre-refactor batch loop's own
-        // resume-safe formula, just walked sequentially instead of by
-        // out-of-order completion.
-        completedChunks = Math.max(completedChunks, chunkIdx + 1);
-        // Chunk fully done and persisted — no `phase` (nothing is
-        // in-flight right now), `chunkIndex` advanced.
-        deps.onProgress({ videoId, status: 'translating', step: 3, chunkIndex: completedChunks, totalChunks });
-        return;
-      }
-
-      if (result.reason === 'rate_limit' && attempt < MAX_RATE_LIMIT_RETRIES) {
-        // Prefer the human-readable "retry in Ns" text (every real
-        // free-tier 429 carries it); fall back to the structured
-        // `RetryInfo.retryDelay` gemini.ts surfaces when the text has no
-        // parseable number (e.g. a bare "Resource has been exhausted");
-        // only then fall back to a fixed default. Review fix: without the
-        // structured fallback, a message-less 429 silently used the 5s
-        // default regardless of how long the server actually asked for.
-        const delayMs = Math.min(
-          parseRetryDelayMs(result.message) ?? result.retryDelayMs ?? DEFAULT_RETRY_DELAY_MS,
-          MAX_RETRY_DELAY_MS,
-        );
-        await deps.sleep(delayMs);
-        attempt += 1;
-        continue;
-      }
-
+    if (!result.ok) {
       // Either a non-retryable error (including the truncation guard's
       // `'truncated'`/`'bad_json'` reasons — never retried, brief §2: "no
       // auto re-split required"), or a rate_limit that exhausted its retry
@@ -581,6 +567,63 @@ export async function runTranslationPipeline(
       failures.push({ chunkIdx, reason: result.reason, message: result.message });
       return;
     }
+
+    deps.onProgress({
+      videoId,
+      status: 'translating',
+      step: 3,
+      phase: 'receiving',
+      chunkIndex: completedChunks,
+      totalChunks,
+    });
+
+    const byIndex = new Map(result.translations.map((t) => [t.index, t.translatedText]));
+    // A translatedText the model omitted for THIS call falls back to
+    // whatever `seg` already had (possibly still null, possibly a
+    // value a prior run's partial response already filled in) —
+    // never regress an already-known-good translation to null.
+    const translatedSegs = segs.map((seg) => ({
+      ...seg,
+      translatedText: byIndex.get(seg.index) ?? seg.translatedText,
+    }));
+
+    deps.onProgress({
+      videoId,
+      status: 'translating',
+      step: 3,
+      phase: 'parsing',
+      chunkIndex: completedChunks,
+      totalChunks,
+    });
+
+    try {
+      await deps.upsertBatch(videoId, chunkIdx, translatedSegs);
+    } catch (err) {
+      // The chunk's own durability guarantee failed — do NOT mirror the
+      // translated result into `liveSegments` as if it were safely
+      // saved (it may not be, if the DB is genuinely broken). Recorded
+      // as a chunk failure via the SAME mechanism as a translateBatch
+      // error, so it surfaces through the existing "any failure ->
+      // overall status:'failed'" path below rather than rejecting this
+      // function (and with it, the whole pipeline promise).
+      failures.push({ chunkIdx, reason: 'unknown', message: `upsertBatch rejected: ${errorMessage(err)}` });
+      return;
+    }
+
+    for (const seg of translatedSegs) {
+      liveSegments[seg.index] = seg;
+    }
+    // `Math.max`, not a plain increment: on a resume, `pendingChunkIndices`
+    // can be a non-contiguous subset (e.g. chunk 1 already done, only
+    // chunks 0 and 2 pending) — a plain `+= 1` would double-count past
+    // whatever the seeded `record.completedBatches` hint already
+    // credited. This mirrors the pre-refactor batch loop's own
+    // resume-safe formula, just walked sequentially instead of by
+    // out-of-order completion.
+    completedChunks = Math.max(completedChunks, chunkIdx + 1);
+    // Chunk fully done and persisted — no `phase` (nothing is
+    // in-flight right now), `chunkIndex` advanced.
+    deps.onProgress({ videoId, status: 'translating', step: 3, chunkIndex: completedChunks, totalChunks });
   }
 
   // Sequential, one chunk at a time (never concurrent) — the free-tier RPM

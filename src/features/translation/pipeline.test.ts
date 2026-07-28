@@ -338,6 +338,105 @@ describe('runTranslationPipeline', () => {
     });
   });
 
+  // Task R3 — real-Chrome DoD found a single 429 on `analyzeGlossary` used
+  // to fail the WHOLE pipeline in ~3s with no wait at all, even though the
+  // server's own message asked for a 53.2s retry (the chunk retry loop
+  // already honored this; the glossary call did not). Fixed by routing the
+  // glossary call through the SAME `callWithRateLimitRetry` helper the
+  // chunk loop uses, and — since the glossary is a consistency aid, not a
+  // hard requirement (`translateBatch` treats an empty glossary as a
+  // no-op) — falling back to an empty glossary rather than failing the
+  // pipeline when it still doesn't resolve after retries.
+  describe('glossary resilience (Task R3)', () => {
+    it('retries a rate-limited glossary call honoring the parsed retryDelay, then succeeds with the resolved glossary', async () => {
+      const rows = makeRows(5);
+      let calls = 0;
+      const analyzeGlossary = vi.fn(async () => {
+        calls += 1;
+        if (calls === 1) {
+          return { ok: false as const, reason: 'rate_limit' as const, message: 'Please retry in 53.2s.' };
+        }
+        return {
+          ok: true as const,
+          topic: 't',
+          glossary: [{ term: 'React', translation: '리액트', keepEnglish: false }],
+        };
+      });
+      const sleepCalls: number[] = [];
+      const sleep = vi.fn(async (ms: number) => {
+        sleepCalls.push(ms);
+      });
+      const translateBatch = vi.fn(async (segs: TranscriptSegment[], glossary: GlossaryEntry[]) => ({
+        ok: true as const,
+        translations: segs.map((s) => ({ index: s.index, translatedText: `t${s.index}-${glossary.length}` })),
+      }));
+      const deps = makeDeps({ requestTranscript: async () => rows, analyzeGlossary, sleep, translateBatch });
+
+      const result = await runTranslationPipeline({ videoId: 'v1', tabId: 1, key: 'k' }, deps);
+
+      expect(analyzeGlossary).toHaveBeenCalledTimes(2);
+      expect(sleepCalls).toEqual([53_200]);
+      expect(result.status).toBe('done');
+      expect(result.glossary).toEqual([{ term: 'React', translation: '리액트', keepEnglish: false }]);
+      // translateBatch received the resolved (non-empty) glossary.
+      expect(translateBatch).toHaveBeenCalledWith(expect.any(Array), result.glossary, 'k');
+    });
+
+    it('proceeds with an empty glossary (never fails the pipeline) when the glossary call exhausts its retries', async () => {
+      const rows = makeRows(5);
+      const analyzeGlossary = vi.fn(async () => ({
+        ok: false as const,
+        reason: 'rate_limit' as const,
+        message: 'Please retry in 1s.',
+      }));
+      const sleep = vi.fn(async () => {});
+      const translateBatch = vi.fn(async (segs: TranscriptSegment[]) => ({
+        ok: true as const,
+        translations: segs.map((s) => ({ index: s.index, translatedText: `t${s.index}` })),
+      }));
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const deps = makeDeps({ requestTranscript: async () => rows, analyzeGlossary, sleep, translateBatch });
+
+      const result = await runTranslationPipeline({ videoId: 'v1', tabId: 1, key: 'k' }, deps);
+
+      // 1 initial attempt + MAX_RATE_LIMIT_RETRIES retries, same budget as
+      // a translate chunk.
+      expect(analyzeGlossary).toHaveBeenCalledTimes(MAX_RATE_LIMIT_RETRIES + 1);
+      expect(sleep).toHaveBeenCalledTimes(MAX_RATE_LIMIT_RETRIES);
+      // The glossary hiccup must NOT surface as a pipeline failure.
+      expect(result.status).not.toBe('failed');
+      expect(result.status).toBe('done');
+      expect(result.glossary).toEqual([]);
+      // Translation still ran, with an empty glossary passed through.
+      expect(translateBatch).toHaveBeenCalledWith(expect.any(Array), [], 'k');
+      expect(warnSpy).toHaveBeenCalled();
+
+      warnSpy.mockRestore();
+    });
+
+    it('still emits the analyzing-step progress event even when the glossary call retries', async () => {
+      const rows = makeRows(5);
+      let calls = 0;
+      const analyzeGlossary = vi.fn(async () => {
+        calls += 1;
+        if (calls === 1) {
+          return { ok: false as const, reason: 'rate_limit' as const, message: 'Please retry in 1s.' };
+        }
+        return { ok: true as const, topic: 't', glossary: [] };
+      });
+      const sleep = vi.fn(async () => {});
+      const progress: TranslationProgress[] = [];
+      const onProgress = vi.fn((p: TranslationProgress) => progress.push(p));
+      const deps = makeDeps({ requestTranscript: async () => rows, analyzeGlossary, sleep, onProgress });
+
+      await runTranslationPipeline({ videoId: 'v1', tabId: 1, key: 'k' }, deps);
+
+      const analyzingEvents = progress.filter((p) => p.status === 'analyzing');
+      expect(analyzingEvents).toHaveLength(1);
+      expect(analyzingEvents[0]).toMatchObject({ step: 2, chunkIndex: 0, totalChunks: 1 });
+    });
+  });
+
   describe('truncation guard', () => {
     it('marks a chunk failed (not retried, not persisted as done) when translateBatch reports reason:truncated', async () => {
       const rows = makeRows(5);
