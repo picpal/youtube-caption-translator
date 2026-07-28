@@ -5,8 +5,14 @@ import {
   isDurationAdBlocked,
   type ExtractedVideoMeta,
 } from '~/lib/video-meta';
+import { dedupeRows } from '~/lib/transcript-parse';
 import { sendMessage } from '~/lib/messaging';
-import type { ReemitVideoMessage } from '~/types/message';
+import type {
+  ReemitVideoMessage,
+  RequestTranscriptMessage,
+  RequestTranscriptResponse,
+  RawTranscriptRow,
+} from '~/types/message';
 
 // ISOLATED world (the default — no `world` option needed), and Task 4's ruling
 // stands, but not for the reason it gave. Task 4 assumed MAIN world would be
@@ -103,6 +109,185 @@ const SETTLE_SCHEDULE_MS = [0, 100, 250, 500, 1000, 2000, 4000, 6000, 8000, 1100
 function isVideoPage(url: string): boolean {
   const kind = classifyYoutubeUrl(url);
   return kind === 'watch' || kind === 'shorts' || kind === 'live';
+}
+
+// ---------------------------------------------------------------------------
+// M2 Task 4 — transcript-panel scraper. Everything below reads the rendered
+// transcript engagement panel (docs/youtube-transcript-findings.md), never
+// `timedtext` (dead on this build — see that doc's opening paragraph). All
+// selectors/signals are the MEASURED ones from that document, cited inline.
+
+// §5: locale-independent panel-absent signal. Either one present means the
+// video has a transcript engagement panel at all; both absent means it does
+// not (measured together, all four signals, on a no-caption fixture).
+const TRANSCRIPT_ENGAGEMENT_PANEL =
+  'ytd-engagement-panel-section-list-renderer[target-id="engagement-panel-searchable-transcript"]';
+const TRANSCRIPT_SECTION_SIGNAL = 'ytd-video-description-transcript-section-renderer';
+
+// §2: row selectors, measured stable across ASR and manual tracks.
+const TRANSCRIPT_ROW = 'ytd-transcript-segment-renderer';
+const TRANSCRIPT_TIMESTAMP = '.segment-timestamp';
+const TRANSCRIPT_TEXT = '.segment-text';
+
+/**
+ * Milliseconds after the open-trigger at which `openTranscriptPanel` re-checks
+ * for populated rows.
+ *
+ * A first, fresh panel open was measured settling within 2-3s (§1/§4c) — the
+ * early checkpoints cover that. The long tail exists for the SPA-reopen case,
+ * which §6b found genuinely unresolved: one clean run left the panel stuck on
+ * YouTube's own `ghost-cards` placeholder for 8+ seconds across several
+ * retrigger strategies, and the doc's own recommendation is "poll with a
+ * longer timeout ... before giving up" rather than assuming a 2-3s open
+ * always works post-navigation. 30s total is that longer timeout; nothing in
+ * §6b's measurements suggested a specific bound past "more than 8s", so this
+ * is a defensive budget, not a measured one.
+ */
+const TRANSCRIPT_OPEN_POLL_MS = [300, 800, 1500, 2500, 4000, 6000, 9000, 13000, 18000, 24000, 30000];
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** §5: whether the current video has a transcript engagement panel at all. */
+function transcriptPanelPresent(): boolean {
+  return (
+    document.querySelector(TRANSCRIPT_ENGAGEMENT_PANEL) !== null ||
+    document.querySelector(TRANSCRIPT_SECTION_SIGNAL) !== null
+  );
+}
+
+/**
+ * The Show-transcript chip button, found the same way §1 measured it: any
+ * button-like element whose `aria-label` or text matches "transcript" in
+ * English, Korean, or the Korean synonym "대본" — `aria-label` values are
+ * locale-dependent (§1, and the M1 doc's locale trap), so this can only ever
+ * be a best-effort match, not an exhaustive one.
+ */
+function findShowTranscriptButton(): HTMLElement | null {
+  const candidates = document.querySelectorAll<HTMLElement>(
+    'button, tp-yt-paper-button, yt-button-shape button',
+  );
+  for (const el of Array.from(candidates)) {
+    const label = el.getAttribute('aria-label') ?? el.textContent ?? '';
+    if (/transcript|스크립트|대본/i.test(label)) return el;
+  }
+  return null;
+}
+
+/**
+ * Triggers the panel open. Prefers a real click on the chip button (§1's
+ * recommended method); falls back to forcing the searchable-transcript
+ * engagement panel's `visibility` attribute directly when no button is found
+ * (§1: this also works to open the panel on a fresh load).
+ */
+function triggerShowTranscript(): void {
+  const button = findShowTranscriptButton();
+  if (button) {
+    button.click();
+    return;
+  }
+  document
+    .querySelector(TRANSCRIPT_ENGAGEMENT_PANEL)
+    ?.setAttribute('visibility', 'ENGAGEMENT_PANEL_VISIBILITY_EXPANDED');
+}
+
+/**
+ * Whether the panel has ACTUALLY populated with rows — checked via a real
+ * `ytd-transcript-renderer` containing at least one row, not merely the outer
+ * panel's `visibility` attribute. §6b found the attribute can read
+ * `EXPANDED` while the panel's content is still YouTube's own `ghost-cards`
+ * loading placeholder, so the attribute alone would be a false positive.
+ */
+function transcriptRowsPopulated(): boolean {
+  const renderer = document.querySelector('ytd-transcript-renderer');
+  return renderer !== null && renderer.querySelector(TRANSCRIPT_ROW) !== null;
+}
+
+/**
+ * Polls, on `TRANSCRIPT_OPEN_POLL_MS`'s schedule, until `transcriptRowsPopulated`
+ * is true or the schedule is exhausted.
+ */
+async function waitForTranscriptRows(): Promise<boolean> {
+  let elapsed = 0;
+  for (const checkpoint of TRANSCRIPT_OPEN_POLL_MS) {
+    await sleep(checkpoint - elapsed);
+    elapsed = checkpoint;
+    if (transcriptRowsPopulated()) return true;
+  }
+  return false;
+}
+
+/**
+ * Opens the transcript panel and waits for it to populate.
+ *
+ * Resolves `false` when the video has no transcript panel at all (§5), or
+ * when the open was triggered but rows never populated within
+ * `TRANSCRIPT_OPEN_POLL_MS` (the unresolved SPA-reopen case, §6b) —
+ * `handleRequestTranscript` below maps either outcome to
+ * `{ unavailable: true }`.
+ *
+ * Deliberately does NOT scroll: §4a measured all rows already present in the
+ * DOM the moment the panel finishes expanding (stable across a 5s no-scroll
+ * window and an explicit scroll-to-bottom), so a scroll-and-wait loop would
+ * do nothing useful.
+ */
+export async function openTranscriptPanel(): Promise<boolean> {
+  if (!transcriptPanelPresent()) return false;
+
+  triggerShowTranscript();
+  return waitForTranscriptRows();
+}
+
+/**
+ * Reads every transcript row currently in the DOM and de-dupes the
+ * double-mount (§4b: the panel mounts the ENTIRE transcript TWICE, so an
+ * unscoped `querySelectorAll` returns every row twice). Reuses the pure,
+ * unit-tested `dedupeRows` (src/lib/transcript-parse.ts) rather than
+ * re-implementing the same `(tsText, text)` key here.
+ *
+ * No rolling-overlap dedup is applied (§7 measured 0 word overlap across
+ * every consecutive row pair in the panel DOM — that pattern belongs to the
+ * raw `timedtext` cue stream this project cannot use, not to this DOM).
+ */
+export function scrapeRows(): RawTranscriptRow[] {
+  const rows = Array.from(document.querySelectorAll(TRANSCRIPT_ROW));
+  const raw = rows.map((row) => ({
+    tsText: row.querySelector(TRANSCRIPT_TIMESTAMP)?.textContent?.trim() ?? '',
+    text: row.querySelector(TRANSCRIPT_TEXT)?.textContent?.trim() ?? '',
+  }));
+  return dedupeRows(raw);
+}
+
+/** `ytd-watch-flexy[video-id]` — the SPA-safe id source (video-meta.ts). */
+function currentVideoId(): string | null {
+  return document.querySelector('ytd-watch-flexy')?.getAttribute('video-id') ?? null;
+}
+
+/**
+ * Full open+scrape for a `REQUEST_TRANSCRIPT` message, gated on the scraped
+ * rows actually belonging to `expectedVideoId`.
+ *
+ * The gate matters because of §6a: after an SPA navigation the transcript
+ * panel goes HIDDEN while STALE rows from the PREVIOUS video survive
+ * underneath it — reading rows without checking video-id agreement first
+ * would silently return the wrong video's transcript. On a mismatch this
+ * makes ONE further attempt (re-open, re-check) before giving up; §6b found
+ * reopening after an SPA transition unreliable in testing, so this is
+ * best-effort, not a guarantee, and a second failure is reported the same as
+ * "no transcript" rather than retried indefinitely.
+ */
+async function handleRequestTranscript(expectedVideoId: string): Promise<RequestTranscriptResponse> {
+  const opened = await openTranscriptPanel();
+  if (!opened) return { unavailable: true };
+
+  if (currentVideoId() !== expectedVideoId) {
+    const reopened = await openTranscriptPanel();
+    if (!reopened || currentVideoId() !== expectedVideoId) return { unavailable: true };
+  }
+
+  const rows = scrapeRows();
+  return rows.length > 0 ? rows : { unavailable: true };
 }
 
 export default defineContentScript({
@@ -303,5 +488,27 @@ export default defineContentScript({
       }
       return false;
     });
+
+    // Answers `REQUEST_TRANSCRIPT` (bg -> content, Task 4/6). A SEPARATE
+    // listener from the `REEMIT_VIDEO` one above rather than folded into it:
+    // that one is fire-and-forget and always returns `false` (sync, no
+    // response); this one is async and must return `true` to keep the
+    // message channel open until `handleRequestTranscript` resolves. Mixing
+    // the two into one listener would force every `REEMIT_VIDEO` delivery to
+    // also return `true`, leaking an open channel that never gets a response.
+    chrome.runtime.onMessage.addListener(
+      (msg: unknown, _sender, sendResponse: (response: RequestTranscriptResponse) => void) => {
+        const request = msg as Partial<RequestTranscriptMessage>;
+        if (request?.type !== 'REQUEST_TRANSCRIPT') return false;
+
+        handleRequestTranscript(request.videoId ?? '')
+          .then(sendResponse)
+          .catch((err) => {
+            console.warn('[ypa] REQUEST_TRANSCRIPT failed', err);
+            sendResponse({ unavailable: true });
+          });
+        return true; // keep the channel open for the async response
+      },
+    );
   },
 });

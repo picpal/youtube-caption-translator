@@ -142,6 +142,16 @@ export interface RawTranscriptRow {
  */
 export interface RequestTranscriptMessage {
   type: 'REQUEST_TRANSCRIPT';
+  // The video the caller expects rows for. The content script (Task 4)
+  // compares this against `ytd-watch-flexy[video-id]` before trusting any
+  // scraped rows — docs/youtube-transcript-findings.md §6a measured that
+  // after an SPA navigation the transcript panel goes HIDDEN while STALE rows
+  // from the previous video survive underneath it, so a scraper that reads
+  // rows without this check would silently return the wrong video's
+  // transcript. Background wiring (passing the real videoId when it sends
+  // this message) is Task 6; this field just needs to exist for the gate to
+  // be implementable now.
+  videoId: string;
 }
 
 /**
