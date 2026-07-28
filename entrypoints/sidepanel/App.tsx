@@ -175,6 +175,25 @@ function NonYoutubeBody() {
 // the wider column. The popup's own "패널 열기" button is dropped — the panel
 // is the destination now, not a link to one.
 //
+// Task 9 fix round 1: `useTranslation`'s `handlePortMessage` sets the
+// derived `status` this component reads SYNCHRONOUSLY from the terminal Port
+// message, but only kicks off the async `refetchRecord()` alongside it (see
+// that hook's doc comments) — so on a fail -> retry -> succeed transition
+// there is at least one render where `status === 'done'` while `record`
+// still holds the PREVIOUS (`failed`) attempt's stale segments, before the
+// refetch's response lands. `record.status === status` is only true once
+// the SAME GET_TRANSLATION response that produced `record.segments` also
+// produced the `status` this render is comparing against — i.e. the two are
+// guaranteed to be from one atomic snapshot, never a stale segments array
+// paired with a fresher derived status (or vice versa). Both the transcript
+// list and the console dump gate on this, not just on `status` alone.
+function isRecordCurrentForStatus(
+  status: TranslationStatus | 'idle',
+  record: TranslationRecord | null,
+): record is TranslationRecord {
+  return record !== null && record.status === status;
+}
+
 // The thumbnail/title/channel block and the caption-availability bar are
 // real data as of Task 9, via VideoCard + useCurrentVideo. The
 // `AI 자막 생성` button and the 처리 단계 footer are wired to the live
@@ -194,9 +213,16 @@ function ReadyBody() {
   // re-render, or the stepper's percent ticking on the way there) never
   // re-logs. A ref rather than state: this is a one-shot side effect with no
   // corresponding UI, so it doesn't need to trigger a re-render itself.
+  //
+  // Gated through `isRecordCurrentForStatus` (not just `status === 'done'`):
+  // without it, the stale-record render on a fail -> retry -> succeed
+  // transition would consume the `dumpedVideoIdRef` guard against the OLD
+  // failed record, and the correct final transcript would never get dumped
+  // once the real `done` record actually arrived a moment later.
   const dumpedVideoIdRef = useRef<string | null>(null);
   useEffect(() => {
-    if (status !== 'done' || record === null || videoId === null) return;
+    if (status !== 'done' || videoId === null) return;
+    if (!isRecordCurrentForStatus(status, record)) return;
     if (dumpedVideoIdRef.current === videoId) return;
     dumpedVideoIdRef.current = videoId;
     const rows = record.segments
@@ -229,8 +255,20 @@ function ReadyBody() {
   // that phase, and `record` can still hold a stale prior-video snapshot or
   // partially-filled segments mid-flight (see useTranslation's `record` doc
   // comment) that would be misleading to render as if finished.
+  //
+  // `isRecordCurrentForStatus` (not just `record !== null`) additionally
+  // excludes the fail -> retry -> succeed transition's one-render window
+  // where `status` has already flipped to `'done'`/`'failed'` but `record`
+  // is still the PREVIOUS attempt's stale segments — see that function's
+  // doc comment. Without it this list would flash the old attempt's rows
+  // for a frame before the real ones replace them (and during a live retry,
+  // where derived `status` is `'translating'` but the persisted
+  // `record.status` is still `'failed'` from before, it is excluded anyway
+  // by the `status === 'done' || status === 'failed'` check below).
   const showTranscriptList =
-    (status === 'done' || status === 'failed') && record !== null && record.segments.length > 0;
+    (status === 'done' || status === 'failed') &&
+    isRecordCurrentForStatus(status, record) &&
+    record.segments.length > 0;
 
   return (
     <>

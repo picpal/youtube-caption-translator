@@ -110,6 +110,13 @@ describe('formatTimestamp', () => {
       expect(parseTimestamp(formatTimestamp(sec))).toBe(sec);
     }
   });
+
+  it('clamps a negative or non-finite input to "0:00" instead of throwing or emitting garbage', () => {
+    expect(formatTimestamp(-5)).toBe('0:00');
+    expect(formatTimestamp(NaN)).toBe('0:00');
+    expect(formatTimestamp(Infinity)).toBe('0:00');
+    expect(formatTimestamp(-Infinity)).toBe('0:00');
+  });
 });
 
 describe('dedupeRows', () => {

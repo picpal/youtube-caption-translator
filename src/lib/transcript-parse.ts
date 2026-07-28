@@ -44,16 +44,25 @@ export function parseTimestamp(ts: string): number {
  * above 1h, no leading zero on the leftmost unit, zero-padded lower units
  * (`0` -> `"0:00"`, `3611` -> `"1:00:11"`, never `"01:00:11"`).
  * `parseTimestamp(formatTimestamp(x)) === x` for every non-negative integer
- * `x` — see transcript-parse.test.ts for the round-trip assertion. Used by
- * `TranscriptList` (Task 9) to render `TranscriptSegment.startSec` for
- * display; `Math.floor` guards a fractional input the same way
- * `VideoCard.tsx`'s `formatDuration` does, though every caller today passes
- * an already-integer second count.
+ * `x` — see transcript-parse.test.ts for the round-trip assertion.
+ *
+ * The single seconds->clock definition in this codebase — `VideoCard.tsx`'s
+ * `formatDuration` (video duration badge) delegates to this rather than
+ * re-implementing the identical m:ss/h:mm:ss logic, so there is exactly one
+ * place this format can drift. Used directly by `TranscriptList` (Task 9) to
+ * render `TranscriptSegment.startSec`.
+ *
+ * A negative or non-finite input (`NaN`, `Infinity`) is clamped to `0`
+ * rather than propagating into the arithmetic below: this runs on the
+ * render path (unlike `parseTimestamp`, which throws in the guarded scrape
+ * path), so a malformed value here should degrade to `"0:00"`, not crash
+ * the panel or print `"NaN:NaN"`.
  */
 export function formatTimestamp(totalSeconds: number): string {
-  const hours = Math.floor(totalSeconds / 3600);
-  const minutes = Math.floor((totalSeconds % 3600) / 60);
-  const seconds = Math.floor(totalSeconds % 60);
+  const safeSeconds = Number.isFinite(totalSeconds) && totalSeconds > 0 ? totalSeconds : 0;
+  const hours = Math.floor(safeSeconds / 3600);
+  const minutes = Math.floor((safeSeconds % 3600) / 60);
+  const seconds = Math.floor(safeSeconds % 60);
   const paddedSeconds = String(seconds).padStart(2, '0');
   if (hours > 0) {
     return `${hours}:${String(minutes).padStart(2, '0')}:${paddedSeconds}`;

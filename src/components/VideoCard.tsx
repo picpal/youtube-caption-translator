@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { formatTimestamp } from '~/lib/transcript-parse';
 import type { ExtractedVideoMeta } from '~/lib/video-meta';
 import type { CaptionAvailability } from '~/types/video';
 
@@ -124,16 +125,16 @@ function Thumbnail({
   );
 }
 
-/** `3661` -> `"1:01:01"`, `368` -> `"6:08"`. Callers must not pass `null`. */
+/**
+ * `3661` -> `"1:01:01"`, `368` -> `"6:08"`. Callers must not pass `null`.
+ *
+ * Delegates to `~/lib/transcript-parse`'s `formatTimestamp` — the same
+ * seconds->clock format, kept as one definition (Task 9 fix round 1: this
+ * function used to duplicate that logic byte-for-byte) rather than two
+ * copies that could silently drift apart.
+ */
 export function formatDuration(totalSeconds: number): string {
-  const hours = Math.floor(totalSeconds / 3600);
-  const minutes = Math.floor((totalSeconds % 3600) / 60);
-  const seconds = Math.floor(totalSeconds % 60);
-  const paddedSeconds = String(seconds).padStart(2, '0');
-  if (hours > 0) {
-    return `${hours}:${String(minutes).padStart(2, '0')}:${paddedSeconds}`;
-  }
-  return `${minutes}:${paddedSeconds}`;
+  return formatTimestamp(totalSeconds);
 }
 
 function CaptionBar({ availability }: { availability: CaptionAvailability | null }) {
