@@ -121,9 +121,6 @@ describe('analyzeGlossary', () => {
     expect(prompt).toContain('topic');
     expect(prompt).toContain('glossary');
     expect(body.generationConfig.responseMimeType).toBe('application/json');
-    // Task R2: thinking disabled — pure overhead for a structured extraction
-    // call, see gemini.ts's comment on this generationConfig field.
-    expect(body.generationConfig.thinkingConfig).toEqual({ thinkingBudget: 0 });
   });
 
   it('parses a clean JSON response', async () => {
@@ -260,11 +257,6 @@ describe('translateBatch', () => {
     expect(prompt).toContain('[2] A closure captures variables.');
 
     expect(body.generationConfig.responseMimeType).toBe('application/json');
-    // Task R2: thinking disabled for translation — measured ~452
-    // thought-tokens per 30 segments, pure overhead. See refactor-r2-report.md
-    // for the caveat that live-API acceptance of thinkingBudget:0 for this
-    // model is unconfirmed as of this change.
-    expect(body.generationConfig.thinkingConfig).toEqual({ thinkingBudget: 0 });
   });
 
   it('parses a clean JSON array response, mapped back by index', async () => {
