@@ -411,6 +411,66 @@ describe('translateBatch', () => {
     expect(result).toEqual({ ok: false, reason: 'rate_limit', message: 'quota' });
   });
 
+  // Review fix — a 429 whose `message` has no parseable "retry in Ns" number
+  // (e.g. a bare quota-exhausted message) must still surface the server's
+  // actual wait time from the structured `error.details[]` RetryInfo entry,
+  // so the pipeline doesn't fall back to a fixed default that can't survive
+  // a real 40-60s free-tier quota window.
+  it('surfaces retryDelayMs from error.details[].retryInfo.retryDelay when the message has no parseable number', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(
+      jsonResponse(
+        {
+          error: {
+            message: 'Resource has been exhausted (e.g. check quota).',
+            details: [{ '@type': 'type.googleapis.com/google.rpc.RetryInfo', retryDelay: '56s' }],
+          },
+        },
+        { status: 429 },
+      ),
+    );
+    const result = await translateBatch(SEGS, GLOSSARY, 'AIzaFAKE', { fetchImpl });
+    expect(result).toEqual({
+      ok: false,
+      reason: 'rate_limit',
+      message: 'Resource has been exhausted (e.g. check quota).',
+      retryDelayMs: 56_000,
+    });
+  });
+
+  it('parses a fractional-second structured retryDelay', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(
+      jsonResponse(
+        {
+          error: {
+            message: 'Resource has been exhausted.',
+            details: [{ '@type': 'type.googleapis.com/google.rpc.RetryInfo', retryDelay: '56.5s' }],
+          },
+        },
+        { status: 429 },
+      ),
+    );
+    const result = await translateBatch(SEGS, GLOSSARY, 'AIzaFAKE', { fetchImpl });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.retryDelayMs).toBe(56_500);
+  });
+
+  it('leaves retryDelayMs undefined when details carry no RetryInfo entry', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(
+      jsonResponse(
+        {
+          error: {
+            message: 'Resource has been exhausted.',
+            details: [{ '@type': 'type.googleapis.com/google.rpc.Help' }],
+          },
+        },
+        { status: 429 },
+      ),
+    );
+    const result = await translateBatch(SEGS, GLOSSARY, 'AIzaFAKE', { fetchImpl });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.retryDelayMs).toBeUndefined();
+  });
+
   it('maps a fetch throw to network', async () => {
     const fetchImpl = vi.fn().mockRejectedValue(new TypeError('offline'));
     const result = await translateBatch(SEGS, GLOSSARY, 'AIzaFAKE', { fetchImpl });

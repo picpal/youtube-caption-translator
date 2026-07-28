@@ -22,6 +22,14 @@ describe('progressPercent', () => {
     expect(progressPercent(1, 3)).toBe(33);
     expect(progressPercent(2, 3)).toBe(67);
   });
+
+  // Review fix — a record persisted by the pre-refactor 8-segment-batch code
+  // (seeded `completedBatches`, e.g. 5) resumed under the new, much smaller
+  // `totalChunks` (e.g. 1) briefly renders `done > total` before the `done`
+  // event self-corrects. Must clamp, never show e.g. 500%.
+  it('clamps to 100 when done exceeds total (stale cross-version resume)', () => {
+    expect(progressPercent(5, 1)).toBe(100);
+  });
 });
 
 describe('stepForStatus', () => {

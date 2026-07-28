@@ -384,13 +384,21 @@ export async function runTranslationPipeline(
     }
   }
 
+  // Review fix: unify on the freshly-recomputed `totalChunks` (in scope
+  // since the extract step above) rather than `record.totalBatches` — same
+  // value in-version, but `record.totalBatches` is what a STALE
+  // pre-refactor-format persisted record would carry on a resume (computed
+  // under the old 8-segment-batch math), which must never leak into a
+  // live progress event.
+  let completedChunks = record.completedBatches;
+
   // --- Step 2 (progress) / glossary analysis ----------------------------
   deps.onProgress({
     videoId,
     status: 'analyzing',
     step: 2,
-    chunkIndex: record.completedBatches,
-    totalChunks: record.totalBatches,
+    chunkIndex: completedChunks,
+    totalChunks,
   });
 
   let glossary: GlossaryEntry[];
@@ -420,7 +428,6 @@ export async function runTranslationPipeline(
   // chunk) is safe now for an even simpler reason than before: chunks run
   // one at a time, so there is no interleaving to reason about at all.
   const liveSegments = record.segments.slice();
-  let completedChunks = record.completedBatches;
 
   deps.onProgress({ videoId, status: 'translating', step: 3, chunkIndex: completedChunks, totalChunks });
 
@@ -530,7 +537,17 @@ export async function runTranslationPipeline(
       }
 
       if (result.reason === 'rate_limit' && attempt < MAX_RATE_LIMIT_RETRIES) {
-        const delayMs = Math.min(parseRetryDelayMs(result.message) ?? DEFAULT_RETRY_DELAY_MS, MAX_RETRY_DELAY_MS);
+        // Prefer the human-readable "retry in Ns" text (every real
+        // free-tier 429 carries it); fall back to the structured
+        // `RetryInfo.retryDelay` gemini.ts surfaces when the text has no
+        // parseable number (e.g. a bare "Resource has been exhausted");
+        // only then fall back to a fixed default. Review fix: without the
+        // structured fallback, a message-less 429 silently used the 5s
+        // default regardless of how long the server actually asked for.
+        const delayMs = Math.min(
+          parseRetryDelayMs(result.message) ?? result.retryDelayMs ?? DEFAULT_RETRY_DELAY_MS,
+          MAX_RETRY_DELAY_MS,
+        );
         await deps.sleep(delayMs);
         attempt += 1;
         continue;

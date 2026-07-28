@@ -220,6 +220,70 @@ describe('runTranslationPipeline', () => {
       expect(result.status).toBe('done');
     });
 
+    // Review fix — a rate_limit result whose message has NO parseable
+    // number must still honor the structured `retryDelayMs` gemini.ts
+    // surfaces from `error.details[].retryInfo.retryDelay`, rather than
+    // falling all the way through to the fixed 5s default (which cannot
+    // survive a real 40-60s free-tier quota window).
+    it('honors the structured retryDelayMs fallback when the message has no parseable number', async () => {
+      const rows = makeRows(5);
+      let calls = 0;
+      const translateBatch = vi.fn(async (segs: TranscriptSegment[]) => {
+        calls += 1;
+        if (calls === 1) {
+          return {
+            ok: false as const,
+            reason: 'rate_limit' as const,
+            message: 'Resource has been exhausted (e.g. check quota).',
+            retryDelayMs: 56_000,
+          };
+        }
+        return {
+          ok: true as const,
+          translations: segs.map((s) => ({ index: s.index, translatedText: `t${s.index}` })),
+        };
+      });
+      const sleepCalls: number[] = [];
+      const sleep = vi.fn(async (ms: number) => {
+        sleepCalls.push(ms);
+      });
+      const deps = makeDeps({ requestTranscript: async () => rows, translateBatch, sleep });
+
+      const result = await runTranslationPipeline({ videoId: 'v1', tabId: 1, key: 'k' }, deps);
+
+      expect(sleepCalls).toEqual([56_000]);
+      expect(result.status).toBe('done');
+    });
+
+    it('prefers the parsed message delay over the structured retryDelayMs when both are present', async () => {
+      const rows = makeRows(5);
+      let calls = 0;
+      const translateBatch = vi.fn(async (segs: TranscriptSegment[]) => {
+        calls += 1;
+        if (calls === 1) {
+          return {
+            ok: false as const,
+            reason: 'rate_limit' as const,
+            message: 'Please retry in 3s.',
+            retryDelayMs: 56_000,
+          };
+        }
+        return {
+          ok: true as const,
+          translations: segs.map((s) => ({ index: s.index, translatedText: `t${s.index}` })),
+        };
+      });
+      const sleepCalls: number[] = [];
+      const sleep = vi.fn(async (ms: number) => {
+        sleepCalls.push(ms);
+      });
+      const deps = makeDeps({ requestTranscript: async () => rows, translateBatch, sleep });
+
+      await runTranslationPipeline({ videoId: 'v1', tabId: 1, key: 'k' }, deps);
+
+      expect(sleepCalls).toEqual([3_000]);
+    });
+
     it('caps the delay at MAX_RETRY_DELAY_MS even when the server asks for longer', async () => {
       const rows = makeRows(5);
       let calls = 0;

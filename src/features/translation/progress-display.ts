@@ -38,14 +38,21 @@ export function stepForStatus(status: TranslationStatus | 'idle'): ProcessingSte
 
 /**
  * Divide-by-zero-safe percent complete, rounded to the nearest integer,
- * 0-100. `total === 0` happens on the very first `onProgress` event of a
- * job (pipeline.ts emits `{ done: 0, total: 0, step: 1 }` before any
- * segment count is known) — guarded here so that moment renders `0`, never
- * `NaN`/`Infinity`.
+ * clamped to 0-100. `total === 0` happens on the very first `onProgress`
+ * event of a job (pipeline.ts emits `{ done: 0, total: 0, step: 1 }` before
+ * any segment count is known) — guarded here so that moment renders `0`,
+ * never `NaN`/`Infinity`.
+ *
+ * The upper clamp (review fix) covers `done > total` — e.g. a
+ * `TranslationRecord` persisted by the pre-refactor 8-segment-batch code
+ * (seeded `completedBatches` like 5) resumed under the new, much smaller
+ * `totalChunks` (e.g. 1): before the `done` event self-corrects, the raw
+ * ratio briefly exceeds 100% (500%). `Math.min(100, ...)` keeps the
+ * displayed percent sane regardless of the two numbers' provenance.
  */
 export function progressPercent(done: number, total: number): number {
   if (total === 0) return 0;
-  return Math.round((done / total) * 100);
+  return Math.min(100, Math.round((done / total) * 100));
 }
 
 // M2 refactor (single large request + stage progress) — Korean labels for

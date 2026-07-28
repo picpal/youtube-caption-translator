@@ -9,7 +9,14 @@ interface GeminiCallOptions {
 }
 
 interface GeminiErrorBody {
-  error?: { message?: string };
+  error?: {
+    message?: string;
+    // Structured retry hint Gemini's REST error body can carry alongside
+    // (or instead of) the human-readable `message` — one `details[]` entry
+    // whose `@type` identifies it as a `RetryInfo`, with `retryDelay` a
+    // protobuf Duration string like `"56s"`/`"56.5s"`.
+    details?: Array<{ '@type'?: string; retryDelay?: string }>;
+  };
 }
 
 // Shared status/message -> reason classification, extracted out of
@@ -76,7 +83,7 @@ export async function testGeminiKey(
 
 type GeminiCallResult =
   | { ok: true; text: string; finishReason?: string }
-  | { ok: false; reason: GeminiErrorReason; message: string };
+  | { ok: false; reason: GeminiErrorReason; message: string; retryDelayMs?: number };
 
 function extractGeminiCandidate(
   data: unknown,
@@ -92,23 +99,43 @@ function extractGeminiCandidate(
   };
 }
 
+function secondsToMs(rawSeconds: string): number | undefined {
+  const seconds = Number.parseFloat(rawSeconds);
+  if (!Number.isFinite(seconds) || seconds < 0) return undefined;
+  return Math.round(seconds * 1000);
+}
+
 // Parses the free-tier rate-limit wait hint Gemini embeds in its 429 error
 // message text — e.g. "... Please retry in 55.5s." — into milliseconds.
-// This is the ONLY retry-delay source used by pipeline.ts's chunk retry loop
-// (brief §3): the Gemini REST error body can also carry a structured
-// `error.details[].retryInfo.retryDelay` (a protobuf Duration string like
-// "55s"), but every free-tier 429 observed in the field already echoes the
-// same number back in the human-readable `message`, so parsing THAT (already
-// plumbed through `classifyGeminiError`/`TranslateBatchResult.message`) covers
-// the real case without adding a second field to every Gemini result type.
-// Returns `undefined` (never throws) when the message has no parseable hint,
-// so callers can fall back to a fixed default delay.
+// This is the PRIMARY retry-delay source used by pipeline.ts's chunk retry
+// loop (brief §3): every free-tier 429 observed in the field carries this
+// exact wording. Returns `undefined` (never throws) when the message has no
+// parseable hint, so callers can fall back to the structured
+// `retryDelayMs` below, then a fixed default delay.
 export function parseRetryDelayMs(message: string): number | undefined {
   const match = message.match(/retry in\s+(\d+(?:\.\d+)?)\s*s/i);
   if (!match) return undefined;
-  const seconds = Number.parseFloat(match[1]);
-  if (!Number.isFinite(seconds) || seconds < 0) return undefined;
-  return Math.round(seconds * 1000);
+  return secondsToMs(match[1]);
+}
+
+// Structured fallback for a 429 whose `message` text has no parseable "retry
+// in Ns" number (e.g. a bare "Resource has been exhausted") — reads the same
+// wait time from `error.details[]`'s `RetryInfo` entry instead. Review fix:
+// without this, such a response fell back to `DEFAULT_RETRY_DELAY_MS` (5s)
+// regardless of how long the server actually asked for, which for a real
+// 40-60s free-tier quota window reproduces the exact failure this refactor
+// exists to kill.
+function extractStructuredRetryDelayMs(errorBody: GeminiErrorBody): number | undefined {
+  const details = errorBody.error?.details;
+  if (!Array.isArray(details)) return undefined;
+  const retryInfo = details.find(
+    (d) => typeof d?.['@type'] === 'string' && d['@type'].includes('RetryInfo') && typeof d?.retryDelay === 'string',
+  );
+  const retryDelay = retryInfo?.retryDelay;
+  if (typeof retryDelay !== 'string') return undefined;
+  const match = retryDelay.match(/^(\d+(?:\.\d+)?)s$/);
+  if (!match) return undefined;
+  return secondsToMs(match[1]);
 }
 
 async function callGeminiJson(
@@ -131,7 +158,14 @@ async function callGeminiJson(
   if (!response.ok) {
     const errorBody = await response.json().catch(() => ({} as GeminiErrorBody)) as GeminiErrorBody;
     const message = errorBody.error?.message ?? `HTTP ${response.status}`;
-    return { ok: false, ...classifyGeminiError(response.status, message) };
+    const classified = classifyGeminiError(response.status, message);
+    // Structured retryDelayMs is only meaningful for a rate_limit result —
+    // attaching it unconditionally would be harmless but misleading for
+    // every other reason, so it's scoped to that branch.
+    if (classified.reason === 'rate_limit') {
+      return { ok: false, ...classified, retryDelayMs: extractStructuredRetryDelayMs(errorBody) };
+    }
+    return { ok: false, ...classified };
   }
 
   const data = await response.json().catch(() => null);
@@ -269,7 +303,11 @@ export type TranslateBatchReason = GeminiErrorReason | 'truncated' | 'bad_json';
 
 export type TranslateBatchResult =
   | { ok: true; translations: Array<{ index: number; translatedText: string | null }> }
-  | { ok: false; reason: TranslateBatchReason; message: string };
+  // `retryDelayMs` (rate_limit only) is the STRUCTURED `RetryInfo.retryDelay`
+  // fallback — pipeline.ts prefers `parseRetryDelayMs(message)` first (the
+  // human-readable "retry in Ns" text every real free-tier 429 carries), and
+  // falls back to this field only when that text has no parseable number.
+  | { ok: false; reason: TranslateBatchReason; message: string; retryDelayMs?: number };
 
 const TRANSLATE_BATCH_SCHEMA = {
   type: 'ARRAY',
