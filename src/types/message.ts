@@ -195,3 +195,25 @@ export type RequestTranscriptResponse =
  * (src/types/transcript.ts).
  */
 export const TRANSLATION_PROGRESS_PORT = 'translation-progress';
+
+/**
+ * Playback sync (spec: docs/superpowers/specs/2026-07-29-playback-sync-design.md).
+ * The ONE deliberate exception to "panel talks only to background": the panel
+ * connects DIRECTLY to the content script via `chrome.tabs.connect(tabId,
+ * { name: PLAYBACK_PORT })`, because a periodic playback stream routed
+ * through the SW would keep it awake for the whole watch session — the exact
+ * cost M2 confined keepalive to pipeline runs to avoid. Pipeline
+ * trigger/query messaging stays background-routed, unchanged.
+ */
+export const PLAYBACK_PORT = 'playback';
+
+/** Panel -> content script, over PLAYBACK_PORT. First message MUST be init. */
+export type PlaybackPanelMessage =
+  | { type: 'init'; videoId: string }
+  | { type: 'seek'; seconds: number };
+
+/** Content script -> panel, over PLAYBACK_PORT: throttled playback ticks. */
+export interface PlaybackTick {
+  t: number;
+  paused: boolean;
+}

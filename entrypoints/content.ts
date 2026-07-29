@@ -8,11 +8,15 @@ import {
 import { dedupeRows } from '~/lib/transcript-parse';
 import { chooseTranscriptButton } from '~/lib/transcript-panel';
 import { sendMessage } from '~/lib/messaging';
-import type {
-  ReemitVideoMessage,
-  RequestTranscriptMessage,
-  RequestTranscriptResponse,
-  RawTranscriptRow,
+import { shouldEmitTick } from '~/lib/playback-sync';
+import {
+  PLAYBACK_PORT,
+  type ReemitVideoMessage,
+  type RequestTranscriptMessage,
+  type RequestTranscriptResponse,
+  type RawTranscriptRow,
+  type PlaybackPanelMessage,
+  type PlaybackTick,
 } from '~/types/message';
 
 // ISOLATED world (the default — no `world` option needed), and Task 4's ruling
@@ -365,6 +369,93 @@ async function handleRequestTranscript(expectedVideoId: string): Promise<Request
   return rows.length > 0 ? rows : { unavailable: true, reason: 'no-panel' };
 }
 
+// ---------------------------------------------------------------------------
+// Playback sync port (spec §3.1). The panel connects directly (no SW hop —
+// see PLAYBACK_PORT's doc comment in types/message.ts) and must send
+// { type: 'init', videoId } first; ticks only start after the init gate
+// passes. The <video> element survives SPA navigations with new content, so
+// every emit re-checks the page's video-id and self-disconnects on mismatch
+// (same staleness reasoning as handleRequestTranscript's §6a gate).
+
+function findVideoElement(): HTMLVideoElement | null {
+  return (
+    document.querySelector<HTMLVideoElement>('#movie_player video') ??
+    document.querySelector<HTMLVideoElement>('video')
+  );
+}
+
+function attachPlaybackPort(port: chrome.runtime.Port): void {
+  let video: HTMLVideoElement | null = null;
+  let expectedVideoId: string | null = null;
+  let lastEmitAtMs: number | null = null;
+  let detach: (() => void) | null = null;
+
+  const cleanup = () => {
+    detach?.();
+    detach = null;
+    video = null;
+  };
+
+  // Self-initiated disconnects do NOT fire our own onDisconnect listener —
+  // cleanup must run explicitly on this path.
+  const bail = () => {
+    cleanup();
+    port.disconnect();
+  };
+
+  const emitTick = (force: boolean) => {
+    if (video === null) return;
+    const now = Date.now();
+    if (!force && !shouldEmitTick(lastEmitAtMs, now)) return;
+    if (currentVideoId() !== expectedVideoId) {
+      bail();
+      return;
+    }
+    lastEmitAtMs = now;
+    const tick: PlaybackTick = { t: video.currentTime, paused: video.paused };
+    port.postMessage(tick);
+  };
+
+  const handleTimeupdate = () => emitTick(false);
+  const handleImmediate = () => emitTick(true);
+
+  port.onMessage.addListener((msg: PlaybackPanelMessage) => {
+    if (msg.type === 'init') {
+      expectedVideoId = msg.videoId;
+      if (currentVideoId() !== msg.videoId) {
+        bail();
+        return;
+      }
+      video = findVideoElement();
+      if (video === null) {
+        bail();
+        return;
+      }
+      const el = video;
+      el.addEventListener('timeupdate', handleTimeupdate);
+      el.addEventListener('seeked', handleImmediate);
+      el.addEventListener('play', handleImmediate);
+      el.addEventListener('pause', handleImmediate);
+      detach = () => {
+        el.removeEventListener('timeupdate', handleTimeupdate);
+        el.removeEventListener('seeked', handleImmediate);
+        el.removeEventListener('play', handleImmediate);
+        el.removeEventListener('pause', handleImmediate);
+      };
+      // Immediate first tick so the panel highlights without waiting for the
+      // next natural timeupdate (which never comes while paused).
+      emitTick(true);
+      return;
+    }
+    // msg.type === 'seek' — spec §2: currentTime only, play state untouched.
+    if (video !== null && currentVideoId() === expectedVideoId) {
+      video.currentTime = msg.seconds;
+    }
+  });
+
+  port.onDisconnect.addListener(cleanup);
+}
+
 export default defineContentScript({
   matches: ['https://www.youtube.com/*'],
   main() {
@@ -585,5 +676,9 @@ export default defineContentScript({
         return true; // keep the channel open for the async response
       },
     );
+
+    chrome.runtime.onConnect.addListener((port) => {
+      if (port.name === PLAYBACK_PORT) attachPlaybackPort(port);
+    });
   },
 });
