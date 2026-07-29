@@ -283,21 +283,6 @@ function ReadyBody() {
     console.log(`[YT Play Assistant] translation done — ${videoId}\n${rows}`);
   }, [status, record, videoId]);
 
-  // `no-metadata`: the pipeline settled for this watch-page tab (`loading`
-  // is false — see useCurrentVideo's doc comment on what that requires) and
-  // still produced no video record. This is the one UnsupportedReason that
-  // legitimately comes from the extraction pipeline rather than the URL
-  // alone — App's top-level branch already guarantees `pageKind === 'watch'`
-  // by the time ReadyBody is mounted at all, so there is nothing further to
-  // check here beyond "did it settle, and is it still empty".
-  if (!loading && video === null) {
-    return (
-      <div className="p-6">
-        <UnsupportedBanner reason="no-metadata" onRetry={retryActiveTab} />
-      </div>
-    );
-  }
-
   // The list is only meaningful once the job has reached a terminal state
   // with something to show: `done` (full EN+KO) or `failed` (EN plus
   // whatever KO batches completed before the failure — Task 9's "실패 →
@@ -317,6 +302,14 @@ function ReadyBody() {
   // where derived `status` is `'translating'` but the persisted
   // `record.status` is still `'failed'` from before, it is excluded anyway
   // by the `status === 'done' || status === 'failed'` check below).
+  //
+  // Computed above the `no-metadata` early return (below) rather than after
+  // it: `usePlaybackSync` is a hook, and the Rules of Hooks require every
+  // hook to run on every render regardless of which branch a component takes
+  // — a conditional return above it would make the hook count differ
+  // between the no-metadata render and every other render. `videoId === null`
+  // in that branch already makes `showTranscriptList` false, so the hook
+  // stays disabled (no connection attempt) there exactly as before.
   const showTranscriptList =
     (status === 'done' || status === 'failed') &&
     isRecordCurrentForStatus(status, record) &&
@@ -328,6 +321,21 @@ function ReadyBody() {
     showTranscriptList && record !== null && playback.currentTime !== null
       ? activeSegmentIndex(record.segments, playback.currentTime)
       : null;
+
+  // `no-metadata`: the pipeline settled for this watch-page tab (`loading`
+  // is false — see useCurrentVideo's doc comment on what that requires) and
+  // still produced no video record. This is the one UnsupportedReason that
+  // legitimately comes from the extraction pipeline rather than the URL
+  // alone — App's top-level branch already guarantees `pageKind === 'watch'`
+  // by the time ReadyBody is mounted at all, so there is nothing further to
+  // check here beyond "did it settle, and is it still empty".
+  if (!loading && video === null) {
+    return (
+      <div className="p-6">
+        <UnsupportedBanner reason="no-metadata" onRetry={retryActiveTab} />
+      </div>
+    );
+  }
 
   return (
     <>
