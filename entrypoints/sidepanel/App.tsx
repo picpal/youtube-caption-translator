@@ -5,6 +5,7 @@ import { TranscriptList, type DisplayMode } from '~/components/TranscriptList';
 import { UnsupportedBanner } from '~/components/UnsupportedBanner';
 import { VideoCard } from '~/components/VideoCard';
 import { useApiKey } from '~/features/api-key/useApiKey';
+import { usePlaybackSync } from '~/features/playback/usePlaybackSync';
 import { translationErrorDisplay } from '~/features/translation/error-display';
 import {
   formatElapsedTime,
@@ -15,6 +16,7 @@ import {
 } from '~/features/translation/progress-display';
 import { useTranslation, type TranslationProgressState } from '~/features/translation/useTranslation';
 import { useCurrentVideo } from '~/features/video/useCurrentVideo';
+import { activeSegmentIndex } from '~/lib/playback-sync';
 import { formatTimestamp } from '~/lib/transcript-parse';
 import { classifyYoutubeUrl, type YoutubePageKind } from '~/lib/youtube';
 import type { TranslationRecord, TranslationStatus } from '~/types/transcript';
@@ -320,6 +322,13 @@ function ReadyBody() {
     isRecordCurrentForStatus(status, record) &&
     record.segments.length > 0;
 
+  // Playback sync (spec §3.2): stream only while the list is on screen.
+  const playback = usePlaybackSync({ videoId, tabId, enabled: showTranscriptList });
+  const activeIndex =
+    showTranscriptList && record !== null && playback.currentTime !== null
+      ? activeSegmentIndex(record.segments, playback.currentTime)
+      : null;
+
   return (
     <>
       <VideoCard video={video} loading={loading} />
@@ -372,7 +381,12 @@ function ReadyBody() {
               번역 결과
             </span>
           </div>
-          <TranscriptList segments={record.segments} displayMode={displayMode} />
+          <TranscriptList
+            segments={record.segments}
+            displayMode={displayMode}
+            activeIndex={activeIndex}
+            onSeekRow={(segment) => playback.seek(segment.startSec)}
+          />
         </div>
       )}
     </>
