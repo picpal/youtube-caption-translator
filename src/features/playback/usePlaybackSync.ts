@@ -59,6 +59,11 @@ export function usePlaybackSync({ videoId, tabId, enabled }: UsePlaybackSyncPara
           setPaused(msg.paused);
         });
         port.onDisconnect.addListener(() => {
+          // Read (and discard) lastError so Chrome doesn't log an
+          // "Unchecked runtime.lastError" warning on every disconnect — e.g.
+          // the expected no-listening-CS case this same disconnect is
+          // signaling, which the retry interval below already handles.
+          void chrome.runtime.lastError;
           // Only the CURRENT port may flip the dead flag — a stale port's
           // disconnect must not kill a newer connection (same guard shape as
           // useTranslation's generation checks).
