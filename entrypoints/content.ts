@@ -448,9 +448,11 @@ function attachPlaybackPort(port: chrome.runtime.Port): void {
       return;
     }
     // msg.type === 'seek' — spec §2: currentTime only, play state untouched.
-    if (video !== null && currentVideoId() === expectedVideoId) {
-      video.currentTime = msg.seconds;
+    if (video === null || currentVideoId() !== expectedVideoId) {
+      bail();
+      return;
     }
+    video.currentTime = msg.seconds;
   });
 
   port.onDisconnect.addListener(cleanup);
