@@ -43,8 +43,11 @@ permission으로 충분해 새 권한이 필요 없다. **재생 연동에 한�
 - video 요소: `#movie_player video`(폴백 `document.querySelector('video')`).
 - `timeupdate` 리스너 + 500ms 스로틀 전송, `seeked`/`play`/`pause`는 즉시 전송.
 - `seek` 명령 수신 → `video.currentTime = seconds`.
-- 포트 disconnect 시 리스너 해제(누수 방지). SPA 이동으로 video-id가 바뀌면 CS가 포트를 끊는다
-  (기존 내비게이션 감지 훅에 연결) → 패널이 재연결을 담당.
+- 포트 disconnect 시 리스너 해제(누수 방지). video-id 불일치 감지는 lazy — `emitTick`/`seek`
+  처리 시 `ytd-watch-flexy[video-id]`를 재확인해 즉시 self-disconnect. SPA 이동의 1차 방어는
+  패널 쪽: `[videoId, tabId, enabled]` effect가 포트를 내리고 재연결을 담당한다.
+  (구현 확정 2026-07-29, 최종 리뷰 M1: 최초 설계의 "내비게이션 감지 훅 연결" 대신 lazy 재확인을
+  채택. 일시정지 중 SPA 이동은 CS 단독으로는 감지 못 하지만 패널 teardown이 커버한다.)
 
 ### 3.2 패널 훅: `usePlaybackSync({ videoId, tabId, enabled })` (`src/features/playback/`)
 - 반환: `{ currentTime: number | null, seek(seconds: number): void }`.
