@@ -446,16 +446,20 @@ function ReadyBody({ scrollContainerRef }: { scrollContainerRef: RefObject<HTMLD
   // (or vice versa), the restore simply waits for the other. The ref makes
   // it once-per-mount: a mid-session retry that closes and reopens the gate
   // gets the snap-back's 'transcript', not a surprise jump back to Summary.
+  // If the user manually clicked Summary in the gate-open/prefs-loading window,
+  // activeTab is already 'summary' when the restore fires — in that case,
+  // don't arm restoringTabRef (the scroll effect has no [activeTab] re-run to
+  // clear it), to avoid leaking the flag into a later, unrelated click.
   const lastTabRestoredRef = useRef(false);
   const restoringTabRef = useRef(false);
   useEffect(() => {
     if (!showSummaryTab || lastTabRestoredRef.current || storedLastTab === null) return;
     lastTabRestoredRef.current = true;
     if (storedLastTab === 'summary') {
-      restoringTabRef.current = true;
+      if (activeTab !== 'summary') restoringTabRef.current = true;
       setActiveTab('summary');
     }
-  }, [showSummaryTab, storedLastTab]);
+  }, [showSummaryTab, storedLastTab, activeTab]);
 
   // Fix round B2 — switching tabs must never leave the newly-active tab
   // showing wherever the previous tab happened to be scrolled to. The
