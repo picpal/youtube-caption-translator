@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useRef, useState } from 'react';
+import { Fragment, useEffect, useRef, useState, type RefObject } from 'react';
 import { Button } from '~/components/Button';
 import { StatusBadge } from '~/components/StatusBadge';
 import { SummaryPanel } from '~/components/SummaryPanel';
@@ -51,6 +51,13 @@ type PageKind = 'checking' | YoutubePageKind;
 export function App() {
   const { status } = useApiKey();
   const [pageKind, setPageKind] = useState<PageKind>('checking');
+  // Fix round B — the panel's OWN page (this div, not `document`) is the
+  // scroll container: the outer shell above is pinned to `min-h-screen`
+  // rather than growing with content, so this `overflow-auto` div is where
+  // all real scrolling happens. Owned here (not inside ReadyBody) since it's
+  // this element's ref, and passed down so ReadyBody's tab-switch reset
+  // (B2) and floating scroll-to-top button (B3) can both act on it.
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
 
   const loading = status === null;
   const present = status?.present === true;
@@ -141,8 +148,8 @@ export function App() {
       </header>
 
       {ready ? (
-        <div className="flex-1 overflow-auto">
-          <ReadyBody />
+        <div ref={scrollContainerRef} className="flex-1 overflow-auto">
+          <ReadyBody scrollContainerRef={scrollContainerRef} />
         </div>
       ) : (
         <div className="flex-1 overflow-auto p-6">
@@ -236,6 +243,36 @@ function useElapsedSeconds(active: boolean): number {
   return elapsedSeconds;
 }
 
+// Fix round B3 — "meaningfully scrolled" threshold for the floating
+// scroll-to-top button. No spec-mandated value; picked as a visually
+// obvious scroll depth, not tied to any content measurement.
+const SCROLL_TOP_BUTTON_THRESHOLD_PX = 300;
+
+// Fix round B3 — tracks whether the panel's own scroll container (App.tsx's
+// `overflow-auto` div, passed down as `scrollContainerRef`) is scrolled past
+// the threshold above, for the floating scroll-to-top button's visibility.
+// A plain scroll listener on that ONE element, deliberately not the
+// capture-phase `document` trick TranscriptList uses for its own auto-scroll
+// suspension: that trick exists there to catch a scroll on the container
+// from a component that doesn't hold a ref to it, but this hook is handed
+// the ref directly, so a listener on the real element is simpler and needs
+// no target-identity guessing.
+function useScrollTopVisible(containerRef: RefObject<HTMLDivElement | null>, thresholdPx: number): boolean {
+  const [visible, setVisible] = useState(false);
+
+  useEffect(() => {
+    const container = containerRef.current;
+    if (container === null) return;
+    const handleScroll = () => {
+      setVisible(container.scrollTop > thresholdPx);
+    };
+    container.addEventListener('scroll', handleScroll, { passive: true });
+    return () => container.removeEventListener('scroll', handleScroll);
+  }, [containerRef, thresholdPx]);
+
+  return visible;
+}
+
 // The 자막 표시 selector options (Task R7, Fix 1) — data-driven so the
 // buttons below are a plain `.map`, not three hand-copied `<button>`s that
 // could drift out of sync with each other.
@@ -253,7 +290,7 @@ const DISPLAY_MODE_OPTIONS: ReadonlyArray<{ mode: DisplayMode; label: string }> 
 // `done`/`failed` record has segments. The 자막 표시 selector (Task R7, Fix
 // 1) now actually switches `TranscriptList`'s `displayMode` — session-local
 // state only, per the brief; persisting the choice across sessions is M3.
-function ReadyBody() {
+function ReadyBody({ scrollContainerRef }: { scrollContainerRef: RefObject<HTMLDivElement | null> }) {
   const { video, loading, tabId } = useCurrentVideo();
   const videoId = video?.videoId ?? null;
   const { status, progress, record, start, error, pending } = useTranslation({ videoId, tabId });
@@ -351,6 +388,28 @@ function ReadyBody() {
     if (!showSummaryTab) setActiveTab('transcript');
   }, [showSummaryTab]);
 
+  // Fix round B2 — switching tabs must never leave the newly-active tab
+  // showing wherever the previous tab happened to be scrolled to. The
+  // panel's own page is the scroll container (App.tsx), not a per-tab
+  // scroll area, so there is no separate scroll position to preserve or
+  // restore — this always resets to the top on every `activeTab` change.
+  // `scrollIntoView` walks up to find the nearest scrollable ancestor on its
+  // own; `block: 'start'` lands this wrapper's own top edge (where the
+  // sticky tab bar sits, when it's rendered) flush with the viewport's top,
+  // with the freshly-mounted tab's content immediately below it.
+  // `behavior: 'instant'` — no animation, consistent with B3's button below.
+  // Note: this can trip TranscriptList's own user-scroll suspension for
+  // ~5s when switching back to Transcript (its capture-phase scroll
+  // listener can't distinguish this from a real user scroll) — accepted
+  // per the brief, not coupled around.
+  const tabSectionRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    tabSectionRef.current?.scrollIntoView({ block: 'start', behavior: 'instant' });
+  }, [activeTab]);
+
+  // Fix round B3 — floating scroll-to-top button visibility.
+  const scrollTopVisible = useScrollTopVisible(scrollContainerRef, SCROLL_TOP_BUTTON_THRESHOLD_PX);
+
   // `no-metadata`: the pipeline settled for this watch-page tab (`loading`
   // is false — see useCurrentVideo's doc comment on what that requires) and
   // still produced no video record. This is the one UnsupportedReason that
@@ -412,10 +471,19 @@ function ReadyBody() {
       <ProcessingStepper status={status} progress={progress} record={record} elapsedSeconds={elapsedSeconds} />
 
       {showTranscriptList && record !== null && (
-        <div className="border-t border-neutral-200 dark:border-neutral-800">
+        <div ref={tabSectionRef} className="border-t border-neutral-200 dark:border-neutral-800">
           {showSummaryTab ? (
             <>
-              <div className="flex border-b border-neutral-200 dark:border-neutral-800" role="tablist">
+              {/* Fix round B1 — sticky within the panel's own scroll
+                  container (App.tsx's `overflow-auto` div), with an opaque
+                  background so scrolled-past content doesn't show through
+                  underneath it. Only rendered at all when `showSummaryTab`
+                  — a `failed` video's transcript-only render below has no
+                  tab bar to keep on screen. */}
+              <div
+                className="sticky top-0 z-10 flex border-b border-neutral-200 bg-white dark:border-neutral-800 dark:bg-neutral-950"
+                role="tablist"
+              >
                 {(
                   [
                     ['transcript', 'Transcript'],
@@ -477,6 +545,17 @@ function ReadyBody() {
             </>
           )}
         </div>
+      )}
+
+      {scrollTopVisible && (
+        <button
+          type="button"
+          onClick={() => scrollContainerRef.current?.scrollTo({ top: 0, behavior: 'instant' })}
+          aria-label="맨 위로"
+          className="fixed bottom-4 right-4 z-20 flex h-9 w-9 items-center justify-center rounded-full bg-neutral-900/85 text-sm text-white shadow-lg hover:bg-neutral-900 dark:bg-neutral-100/85 dark:text-neutral-900 dark:hover:bg-neutral-100"
+        >
+          ↑
+        </button>
       )}
     </>
   );
