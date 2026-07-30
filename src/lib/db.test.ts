@@ -2,6 +2,7 @@ import 'fake-indexeddb/auto';
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { VideoMeta } from '~/types/video';
 import type { TranscriptSegment, TranslationRecord } from '~/types/transcript';
+import type { VideoSummary } from '~/types/summary';
 import {
   DB_NAME,
   STORE_NAME,
@@ -11,6 +12,8 @@ import {
   putTranslation,
   putVideo,
   upsertBatch,
+  putSummary,
+  getSummary,
 } from './db';
 
 function makeMeta(overrides: Partial<VideoMeta> = {}): VideoMeta {
@@ -299,5 +302,78 @@ describe('captionHash invalidation via overwrite', () => {
 
     const count = await countTranslationRecords();
     expect(count).toBe(1);
+  });
+});
+
+function makeSummary(overrides: Partial<VideoSummary> = {}): VideoSummary {
+  return {
+    videoId: 'zjkBMFhNj_g',
+    purpose: 'Explains how LLMs are trained and used.',
+    mainArguments: ['Training is compression.', 'Fine-tuning aligns behavior.'],
+    sections: [
+      { startSec: 0, title: '문제 정의' },
+      { startSec: 620, title: '모델 구조' },
+    ],
+    keywords: ['LLM', 'Fine-tuning'],
+    conclusion: 'LLMs are becoming an OS-like platform.',
+    model: 'gemini-3.5-flash-lite',
+    createdAt: '2026-07-30T00:00:00.000Z',
+    ...overrides,
+  };
+}
+
+// Seeds a v2 database (videos + translations, as db.ts shipped in M2) with
+// raw indexedDB calls, so the v3 migration test exercises a real 2->3
+// onupgradeneeded transition — mirrors seedV1Database above.
+function seedV2Database(rec: TranslationRecord): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(DB_NAME, 2);
+    request.onupgradeneeded = () => {
+      const db = request.result;
+      db.createObjectStore(STORE_NAME, { keyPath: 'videoId' });
+      db.createObjectStore(TRANSLATIONS_STORE, { keyPath: 'videoId' });
+    };
+    request.onsuccess = () => {
+      const db = request.result;
+      const tx = db.transaction(TRANSLATIONS_STORE, 'readwrite');
+      tx.objectStore(TRANSLATIONS_STORE).put(rec);
+      tx.oncomplete = () => {
+        db.close();
+        resolve();
+      };
+      tx.onerror = () => {
+        db.close();
+        reject(tx.error);
+      };
+    };
+    request.onerror = () => reject(request.error);
+  });
+}
+
+describe('v2 -> v3 migration', () => {
+  it('adds the summaries store without touching existing translations data', async () => {
+    const rec = makeRecord({ status: 'done' });
+    await seedV2Database(rec);
+    await putSummary(makeSummary());
+    expect(await getSummary('zjkBMFhNj_g')).toEqual(makeSummary());
+    expect(await getTranslation('zjkBMFhNj_g')).toEqual(rec);
+  });
+});
+
+describe('putSummary / getSummary', () => {
+  it('round-trips a stored summary', async () => {
+    const summary = makeSummary();
+    await putSummary(summary);
+    expect(await getSummary(summary.videoId)).toEqual(summary);
+  });
+
+  it('returns null for an absent videoId', async () => {
+    expect(await getSummary('missing')).toBeNull();
+  });
+
+  it('overwrites rather than duplicating on repeated put (regeneration path)', async () => {
+    await putSummary(makeSummary({ purpose: 'first' }));
+    await putSummary(makeSummary({ purpose: 'second' }));
+    expect((await getSummary('zjkBMFhNj_g'))?.purpose).toBe('second');
   });
 });

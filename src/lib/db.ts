@@ -1,5 +1,6 @@
 import type { VideoMeta } from '~/types/video';
 import type { TranscriptSegment, TranslationRecord } from '~/types/transcript';
+import type { VideoSummary } from '~/types/summary';
 
 // Hand-rolled IndexedDB wrapper instead of the `idb` package: the surface is
 // a handful of put/get operations on two object stores, and MV3 service
@@ -10,11 +11,15 @@ import type { TranscriptSegment, TranslationRecord } from '~/types/transcript';
 // worth revisiting then — YAGNI applies.
 
 export const DB_NAME = 'youtube-play-assistant';
-export const DB_VERSION = 2;
+export const DB_VERSION = 3;
 export const STORE_NAME = 'videos';
 // M2: one record per video, keyed the same way as `videos` so it can be
 // looked up alongside VideoMeta with the same id.
 export const TRANSLATIONS_STORE = 'translations';
+// M3: one Korean summary per video, generated on demand from a `done`
+// translation record (spec 2026-07-30 §2). Keyed like the other stores so
+// regeneration is a plain overwrite of the same key.
+export const SUMMARIES_STORE = 'summaries';
 
 function openDb(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
@@ -30,6 +35,9 @@ function openDb(): Promise<IDBDatabase> {
       }
       if (!db.objectStoreNames.contains(TRANSLATIONS_STORE)) {
         db.createObjectStore(TRANSLATIONS_STORE, { keyPath: 'videoId' });
+      }
+      if (!db.objectStoreNames.contains(SUMMARIES_STORE)) {
+        db.createObjectStore(SUMMARIES_STORE, { keyPath: 'videoId' });
       }
     };
     request.onsuccess = () => resolve(request.result);
@@ -176,6 +184,42 @@ export async function upsertBatch(
     tx.onabort = () => {
       db.close();
       reject(tx.error ?? notFoundError());
+    };
+  });
+}
+
+export async function putSummary(summary: VideoSummary): Promise<void> {
+  const db = await openDb();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(SUMMARIES_STORE, 'readwrite');
+    tx.objectStore(SUMMARIES_STORE).put(summary);
+    tx.oncomplete = () => {
+      db.close();
+      resolve();
+    };
+    tx.onerror = () => {
+      db.close();
+      reject(tx.error);
+    };
+  });
+}
+
+export async function getSummary(videoId: string): Promise<VideoSummary | null> {
+  const db = await openDb();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(SUMMARIES_STORE, 'readonly');
+    const request = tx.objectStore(SUMMARIES_STORE).get(videoId);
+    let result: VideoSummary | null = null;
+    request.onsuccess = () => {
+      result = (request.result as VideoSummary | undefined) ?? null;
+    };
+    request.onerror = () => {
+      db.close();
+      reject(request.error);
+    };
+    tx.oncomplete = () => {
+      db.close();
+      resolve(result);
     };
   });
 }
