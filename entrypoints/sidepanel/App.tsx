@@ -20,6 +20,7 @@ import { useTranslation, type TranslationProgressState } from '~/features/transl
 import { useCurrentVideo } from '~/features/video/useCurrentVideo';
 import { activeSegmentIndex } from '~/lib/playback-sync';
 import { formatTimestamp } from '~/lib/transcript-parse';
+import { loadPanelPrefs, savePanelDisplayMode, savePanelLastTab, type PanelTab } from '~/lib/panel-prefs';
 import { classifyYoutubeUrl, type YoutubePageKind } from '~/lib/youtube';
 import type { TranslationRecord, TranslationStatus } from '~/types/transcript';
 import type { CaptionAvailability } from '~/types/video';
@@ -301,14 +302,42 @@ const DISPLAY_MODE_OPTIONS: ReadonlyArray<{ mode: DisplayMode; label: string }> 
 // translation state as of M2 Task 8, via useTranslation (below). The
 // finished transcript list (M2 Task 9) renders below the stepper once a
 // `done`/`failed` record has segments. The 자막 표시 selector (Task R7, Fix
-// 1) now actually switches `TranscriptList`'s `displayMode` — session-local
-// state only, per the brief; persisting the choice across sessions is M3.
+// 1) now actually switches `TranscriptList`'s `displayMode` — persisted to
+// `chrome.storage.local` via `panel-prefs` (M3, spec 2026-07-30-panel-prefs)
+// and restored on mount.
 function ReadyBody({ scrollContainerRef }: { scrollContainerRef: RefObject<HTMLDivElement | null> }) {
   const { video, loading, tabId } = useCurrentVideo();
   const videoId = video?.videoId ?? null;
   const { status, progress, record, start, error, pending } = useTranslation({ videoId, tabId });
   const elapsedSeconds = useElapsedSeconds(status === 'translating');
   const [displayMode, setDisplayMode] = useState<DisplayMode>('both');
+
+  // Panel prefs persistence (M3 spec 2026-07-30-panel-prefs). Both restored
+  // values come from one mount-time load; WRITES happen only in the two
+  // onClick handlers below — automatic transitions (the snap-back effect
+  // further down) must never persist, or reopening the panel would clobber
+  // a stored 'summary' with 'transcript' during the moment the gate is
+  // still closed while the translation record loads.
+  //
+  // displayMode is applied as soon as the load resolves — unless the user
+  // already clicked a mode button in that ~ms window (touched ref wins).
+  // lastTab is NOT applied here: it's parked in state and applied by the
+  // gate-keyed effect below, because restoring 'summary' before
+  // showSummaryTab is true would be immediately snapped back to
+  // 'transcript' by the existing effect.
+  const displayModeTouchedRef = useRef(false);
+  const [storedLastTab, setStoredLastTab] = useState<PanelTab | null>(null); // null = not loaded yet
+  useEffect(() => {
+    let cancelled = false;
+    void loadPanelPrefs().then((prefs) => {
+      if (cancelled) return;
+      if (!displayModeTouchedRef.current) setDisplayMode(prefs.displayMode);
+      setStoredLastTab(prefs.lastTab);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // DoD #2 — dump the finished transcript to the console once per
   // completion. Keyed on `videoId` (not a plain boolean) so switching to a
@@ -409,6 +438,19 @@ function ReadyBody({ scrollContainerRef }: { scrollContainerRef: RefObject<HTMLD
     if (!showSummaryTab) setActiveTab('transcript');
   }, [showSummaryTab]);
 
+  // One-shot restore of the persisted tab, at the first moment BOTH are
+  // true: the Summary gate is open and prefs have loaded. Keyed on both so
+  // either arrival order works — if the gate opens before storage resolves
+  // (or vice versa), the restore simply waits for the other. The ref makes
+  // it once-per-mount: a mid-session retry that closes and reopens the gate
+  // gets the snap-back's 'transcript', not a surprise jump back to Summary.
+  const lastTabRestoredRef = useRef(false);
+  useEffect(() => {
+    if (!showSummaryTab || lastTabRestoredRef.current || storedLastTab === null) return;
+    lastTabRestoredRef.current = true;
+    if (storedLastTab === 'summary') setActiveTab('summary');
+  }, [showSummaryTab, storedLastTab]);
+
   // Fix round B2 — switching tabs must never leave the newly-active tab
   // showing wherever the previous tab happened to be scrolled to. The
   // panel's own page is the scroll container (App.tsx), not a per-tab
@@ -495,7 +537,11 @@ function ReadyBody({ scrollContainerRef }: { scrollContainerRef: RefObject<HTMLD
                 key={mode}
                 type="button"
                 aria-pressed={selected}
-                onClick={() => setDisplayMode(mode)}
+                onClick={() => {
+                  displayModeTouchedRef.current = true;
+                  setDisplayMode(mode);
+                  void savePanelDisplayMode(mode);
+                }}
                 className={`flex-1 border-0 py-2 text-[11.5px] ${i > 0 ? 'border-l border-neutral-200 dark:border-neutral-800' : ''} ${
                   selected
                     ? 'bg-neutral-100 font-semibold text-neutral-900 dark:bg-neutral-800 dark:text-neutral-100'
@@ -549,7 +595,10 @@ function ReadyBody({ scrollContainerRef }: { scrollContainerRef: RefObject<HTMLD
                     type="button"
                     role="tab"
                     aria-selected={activeTab === tab}
-                    onClick={() => setActiveTab(tab)}
+                    onClick={() => {
+                      setActiveTab(tab);
+                      void savePanelLastTab(tab);
+                    }}
                     className={`flex-1 border-0 py-2.5 text-[12px] ${
                       activeTab === tab
                         ? 'font-semibold text-neutral-900 shadow-[inset_0_-2px_0_0_currentColor] dark:text-neutral-100'
