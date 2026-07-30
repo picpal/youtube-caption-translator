@@ -1,11 +1,13 @@
 import { Fragment, useEffect, useRef, useState } from 'react';
 import { Button } from '~/components/Button';
 import { StatusBadge } from '~/components/StatusBadge';
+import { SummaryPanel } from '~/components/SummaryPanel';
 import { TranscriptList, type DisplayMode } from '~/components/TranscriptList';
 import { UnsupportedBanner } from '~/components/UnsupportedBanner';
 import { VideoCard } from '~/components/VideoCard';
 import { useApiKey } from '~/features/api-key/useApiKey';
 import { usePlaybackSync } from '~/features/playback/usePlaybackSync';
+import { useSummary } from '~/features/summary/useSummary';
 import { translationErrorDisplay } from '~/features/translation/error-display';
 import {
   formatElapsedTime,
@@ -322,6 +324,13 @@ function ReadyBody() {
       ? activeSegmentIndex(record.segments, playback.currentTime)
       : null;
 
+  // Summary tab (M3 spec §5). All three hooks live above the no-metadata
+  // early return for the same Rules-of-Hooks reason documented on
+  // showTranscriptList above.
+  const [activeTab, setActiveTab] = useState<'transcript' | 'summary'>('transcript');
+  const summaryState = useSummary({ videoId, enabled: showTranscriptList });
+  const summaryElapsedSeconds = useElapsedSeconds(summaryState.status === 'generating');
+
   // `no-metadata`: the pipeline settled for this watch-page tab (`loading`
   // is false — see useCurrentVideo's doc comment on what that requires) and
   // still produced no video record. This is the one UnsupportedReason that
@@ -384,17 +393,46 @@ function ReadyBody() {
 
       {showTranscriptList && record !== null && (
         <div className="border-t border-neutral-200 dark:border-neutral-800">
-          <div className="px-4 pt-3.5">
-            <span className="text-[10.5px] font-semibold tracking-wide text-neutral-400 dark:text-neutral-500">
-              번역 결과
-            </span>
+          <div className="flex border-b border-neutral-200 dark:border-neutral-800" role="tablist">
+            {(
+              [
+                ['transcript', 'Transcript'],
+                ['summary', 'Summary'],
+              ] as const
+            ).map(([tab, label]) => (
+              <button
+                key={tab}
+                type="button"
+                role="tab"
+                aria-selected={activeTab === tab}
+                onClick={() => setActiveTab(tab)}
+                className={`flex-1 border-0 py-2.5 text-[12px] ${
+                  activeTab === tab
+                    ? 'font-semibold text-neutral-900 shadow-[inset_0_-2px_0_0_currentColor] dark:text-neutral-100'
+                    : 'text-neutral-400 hover:text-neutral-600 dark:text-neutral-500 dark:hover:text-neutral-300'
+                }`}
+              >
+                {label}
+              </button>
+            ))}
           </div>
-          <TranscriptList
-            segments={record.segments}
-            displayMode={displayMode}
-            activeIndex={activeIndex}
-            onSeekRow={(segment) => playback.seek(segment.startSec)}
-          />
+          {activeTab === 'transcript' ? (
+            <TranscriptList
+              segments={record.segments}
+              displayMode={displayMode}
+              activeIndex={activeIndex}
+              onSeekRow={(segment) => playback.seek(segment.startSec)}
+            />
+          ) : (
+            <SummaryPanel
+              summary={summaryState.summary}
+              status={summaryState.status}
+              error={summaryState.error}
+              elapsedSeconds={summaryElapsedSeconds}
+              onGenerate={summaryState.generate}
+              onSeekSection={(startSec) => playback.seek(startSec)}
+            />
+          )}
         </div>
       )}
     </>
