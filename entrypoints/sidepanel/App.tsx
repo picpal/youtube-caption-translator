@@ -288,7 +288,7 @@ function useScrollTopVisible(containerRef: RefObject<HTMLDivElement | null>, thr
 }
 
 // The 자막 표시 selector options (Task R7, Fix 1) — data-driven so the
-// buttons below are a plain `.map`, not three hand-copied `<button>`s that
+// buttons below are a plain `.map`, not two hand-copied `<button>`s that
 // could drift out of sync with each other.
 const DISPLAY_MODE_OPTIONS: ReadonlyArray<{ mode: DisplayMode; label: string }> = [
   { mode: 'both', label: '원문+한국어' },
