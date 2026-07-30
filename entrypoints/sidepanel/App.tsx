@@ -402,8 +402,20 @@ function ReadyBody({ scrollContainerRef }: { scrollContainerRef: RefObject<HTMLD
   // ~5s when switching back to Transcript (its capture-phase scroll
   // listener can't distinguish this from a real user scroll) — accepted
   // per the brief, not coupled around.
+  //
+  // Fix round 2 (Moderate) — this effect also fired on ReadyBody's first
+  // render (the tab section can already be mounted at first paint, e.g.
+  // reopening the panel on a video that's already `done`), snapping the
+  // freshly opened panel's scroll away from the header the instant it
+  // appeared. `firstTabRenderRef` skips exactly that one mount-time run;
+  // every subsequent `activeTab` change still resets to the top as before.
   const tabSectionRef = useRef<HTMLDivElement>(null);
+  const firstTabRenderRef = useRef(true);
   useEffect(() => {
+    if (firstTabRenderRef.current) {
+      firstTabRenderRef.current = false;
+      return;
+    }
     tabSectionRef.current?.scrollIntoView({ block: 'start', behavior: 'instant' });
   }, [activeTab]);
 
