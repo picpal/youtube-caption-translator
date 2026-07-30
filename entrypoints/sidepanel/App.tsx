@@ -127,7 +127,20 @@ export function App() {
   }, []);
 
   return (
-    <div className="flex min-h-screen flex-col">
+    // Fix round 3 — `min-h-screen` GROWS with content instead of pinning to
+    // the viewport, so the `flex-1 overflow-auto` div below never actually
+    // becomes shorter than its content and never gets a real internal
+    // scrollbar: the DOCUMENT scrolls instead (confirmed live via CDP — no
+    // element had scrollHeight > clientHeight except document.scrollingElement).
+    // That made B3's `useScrollTopVisible` listener (attached to this ref'd
+    // div) never fire and its `scrollTo` target a div that never moves.
+    // `h-screen` pins this shell to exactly the viewport height instead, so
+    // the header takes its fixed portion and `flex-1` is constrained to
+    // what's left — the div genuinely scrolls, and the document doesn't
+    // (globals.css sets no explicit html/body height, so body's rendered
+    // height just follows this single `h-screen` child with no left-over
+    // document-level overflow).
+    <div className="flex h-screen flex-col">
       <header className="flex items-center justify-between border-b border-neutral-200 px-4 py-3 dark:border-neutral-800">
         <div className="min-w-0">
           <h1 className="truncate text-sm font-semibold">YouTube Play Assistant</h1>
