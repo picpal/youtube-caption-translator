@@ -329,11 +329,13 @@ function ReadyBody({ scrollContainerRef }: { scrollContainerRef: RefObject<HTMLD
   const [storedLastTab, setStoredLastTab] = useState<PanelTab | null>(null); // null = not loaded yet
   useEffect(() => {
     let cancelled = false;
-    void loadPanelPrefs().then((prefs) => {
-      if (cancelled) return;
-      if (!displayModeTouchedRef.current) setDisplayMode(prefs.displayMode);
-      setStoredLastTab(prefs.lastTab);
-    });
+    void loadPanelPrefs()
+      .then((prefs) => {
+        if (cancelled) return;
+        if (!displayModeTouchedRef.current) setDisplayMode(prefs.displayMode);
+        setStoredLastTab(prefs.lastTab);
+      })
+      .catch(() => {}); // swallow rejection if extension context invalidated mid-session
     return () => {
       cancelled = true;
     };
@@ -445,10 +447,14 @@ function ReadyBody({ scrollContainerRef }: { scrollContainerRef: RefObject<HTMLD
   // it once-per-mount: a mid-session retry that closes and reopens the gate
   // gets the snap-back's 'transcript', not a surprise jump back to Summary.
   const lastTabRestoredRef = useRef(false);
+  const restoringTabRef = useRef(false);
   useEffect(() => {
     if (!showSummaryTab || lastTabRestoredRef.current || storedLastTab === null) return;
     lastTabRestoredRef.current = true;
-    if (storedLastTab === 'summary') setActiveTab('summary');
+    if (storedLastTab === 'summary') {
+      restoringTabRef.current = true;
+      setActiveTab('summary');
+    }
   }, [showSummaryTab, storedLastTab]);
 
   // Fix round B2 — switching tabs must never leave the newly-active tab
@@ -499,6 +505,10 @@ function ReadyBody({ scrollContainerRef }: { scrollContainerRef: RefObject<HTMLD
       firstTabRenderRef.current = false;
       return;
     }
+    if (restoringTabRef.current) {
+      restoringTabRef.current = false;
+      return;
+    }
     if (activeTab === 'transcript' && activeIndexRef.current !== null) return;
     tabSectionRef.current?.scrollIntoView({ block: 'start', behavior: 'instant' });
   }, [activeTab]);
@@ -540,7 +550,7 @@ function ReadyBody({ scrollContainerRef }: { scrollContainerRef: RefObject<HTMLD
                 onClick={() => {
                   displayModeTouchedRef.current = true;
                   setDisplayMode(mode);
-                  void savePanelDisplayMode(mode);
+                  void savePanelDisplayMode(mode).catch(() => {}); // swallow rejection if extension context invalidated
                 }}
                 className={`flex-1 border-0 py-2 text-[11.5px] ${i > 0 ? 'border-l border-neutral-200 dark:border-neutral-800' : ''} ${
                   selected
@@ -597,7 +607,7 @@ function ReadyBody({ scrollContainerRef }: { scrollContainerRef: RefObject<HTMLD
                     aria-selected={activeTab === tab}
                     onClick={() => {
                       setActiveTab(tab);
-                      void savePanelLastTab(tab);
+                      void savePanelLastTab(tab).catch(() => {}); // swallow rejection if extension context invalidated
                     }}
                     className={`flex-1 border-0 py-2.5 text-[12px] ${
                       activeTab === tab

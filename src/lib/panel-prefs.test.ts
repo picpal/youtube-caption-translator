@@ -30,6 +30,12 @@ beforeEach(() => {
 });
 
 describe('loadPanelPrefs', () => {
+  it('loads both keys in a single get call', async () => {
+    await loadPanelPrefs();
+    expect(chrome.storage.local.get).toHaveBeenCalledOnce();
+    expect(chrome.storage.local.get).toHaveBeenCalledWith(['panelDisplayMode', 'panelLastTab']);
+  });
+
   it('returns defaults when nothing is stored', async () => {
     expect(await loadPanelPrefs()).toEqual({ displayMode: 'both', lastTab: 'transcript' });
     expect(DEFAULT_PANEL_PREFS).toEqual({ displayMode: 'both', lastTab: 'transcript' });
@@ -67,6 +73,15 @@ describe('save functions', () => {
     await savePanelLastTab('summary');
     expect(store.panelLastTab).toBe('summary');
     expect(store.panelDisplayMode).toBe('ko');
+  });
+
+  it('never touch API-key fields', async () => {
+    store.geminiApiKey = 'secret-key';
+    store.geminiApiKeySavedAt = 1234567890;
+    await savePanelDisplayMode('ko');
+    await savePanelLastTab('summary');
+    expect(store.geminiApiKey).toBe('secret-key');
+    expect(store.geminiApiKeySavedAt).toBe(1234567890);
   });
 
   it('round-trips through loadPanelPrefs', async () => {
