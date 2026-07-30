@@ -13,3 +13,19 @@ body {
     @apply bg-neutral-950 text-neutral-100;
   }
 }
+
+/* Thin, unobtrusive scrollbar for the panel's own scroll container
+   (App.tsx's `overflow-auto` div) — `scrollbar-width`/`scrollbar-color` are
+   the standard properties, supported by MV3's Chromium target without a
+   vendor prefix. Track stays transparent so it never competes with the
+   panel's background; thumb color follows the existing neutral palette. */
+.panel-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: theme('colors.neutral.300') transparent;
+}
+
+@media (prefers-color-scheme: dark) {
+  .panel-scrollbar {
+    scrollbar-color: theme('colors.neutral.700') transparent;
+  }
+}

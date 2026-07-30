@@ -161,7 +161,7 @@ export function App() {
       </header>
 
       {ready ? (
-        <div ref={scrollContainerRef} className="flex-1 overflow-auto">
+        <div ref={scrollContainerRef} className="panel-scrollbar flex-1 overflow-auto">
           <ReadyBody scrollContainerRef={scrollContainerRef} />
         </div>
       ) : (
@@ -384,6 +384,14 @@ function ReadyBody({ scrollContainerRef }: { scrollContainerRef: RefObject<HTMLD
       ? activeSegmentIndex(record.segments, playback.currentTime)
       : null;
 
+  // Fix round C1 — mirrors `activeIndex` into a ref so the tab-switch effect
+  // below can read its current value without depending on it (that effect
+  // must stay keyed on `[activeTab]` alone — see its own comment). Assigned
+  // during render, same as every other hook here, so it's always current by
+  // the time an effect reads it.
+  const activeIndexRef = useRef(activeIndex);
+  activeIndexRef.current = activeIndex;
+
   // Summary tab (M3 spec §5). All hooks below live above the no-metadata
   // early return for the same Rules-of-Hooks reason documented on
   // showTranscriptList above.
@@ -405,23 +413,43 @@ function ReadyBody({ scrollContainerRef }: { scrollContainerRef: RefObject<HTMLD
   // showing wherever the previous tab happened to be scrolled to. The
   // panel's own page is the scroll container (App.tsx), not a per-tab
   // scroll area, so there is no separate scroll position to preserve or
-  // restore — this always resets to the top on every `activeTab` change.
+  // restore.
+  //
+  // Fix round C1 — the reset is now asymmetric, not "always top" (updates
+  // the B2 note above): switching TO Summary always resets to the top
+  // (a summary has no notion of "current playback position" to return to).
+  // Switching TO Transcript resets to the top only when there is no active
+  // row (`activeIndexRef.current === null` — nothing is playing, or the
+  // video hasn't reached any segment yet); when a row IS playing, this
+  // effect skips the reset entirely and leaves positioning to
+  // TranscriptList's OWN mount-time effect, which scrolls its active row
+  // into view every time it (re)mounts — including when the user switches
+  // back to the Transcript tab from Summary. That means returning to
+  // Transcript during playback restores the row you were on, instead of
+  // snapping to the top just to have TranscriptList immediately jump you
+  // back down.
+  //
   // `scrollIntoView` walks up to find the nearest scrollable ancestor on its
   // own; `block: 'start'` lands this wrapper's own top edge (where the
   // sticky tab bar sits, when it's rendered) flush with the viewport's top,
   // with the freshly-mounted tab's content immediately below it.
   // `behavior: 'instant'` — no animation, consistent with B3's button below.
-  // Note: this can trip TranscriptList's own user-scroll suspension for
-  // ~5s when switching back to Transcript (its capture-phase scroll
-  // listener can't distinguish this from a real user scroll) — accepted
-  // per the brief, not coupled around.
+  // Note: on the no-active-row path, this can still trip TranscriptList's
+  // own user-scroll suspension for ~5s (its capture-phase scroll listener
+  // can't distinguish this from a real user scroll) — accepted per the
+  // brief, not coupled around.
   //
   // Fix round 2 (Moderate) — this effect also fired on ReadyBody's first
   // render (the tab section can already be mounted at first paint, e.g.
   // reopening the panel on a video that's already `done`), snapping the
   // freshly opened panel's scroll away from the header the instant it
   // appeared. `firstTabRenderRef` skips exactly that one mount-time run;
-  // every subsequent `activeTab` change still resets to the top as before.
+  // every subsequent `activeTab` change still goes through the logic above.
+  //
+  // Kept keyed on `[activeTab]` ONLY — `activeIndexRef` (not `activeIndex`
+  // itself) is how this effect reads the current row without re-running on
+  // every playback tick, which would otherwise fight TranscriptList's own
+  // auto-scroll on every segment change.
   const tabSectionRef = useRef<HTMLDivElement>(null);
   const firstTabRenderRef = useRef(true);
   useEffect(() => {
@@ -429,6 +457,7 @@ function ReadyBody({ scrollContainerRef }: { scrollContainerRef: RefObject<HTMLD
       firstTabRenderRef.current = false;
       return;
     }
+    if (activeTab === 'transcript' && activeIndexRef.current !== null) return;
     tabSectionRef.current?.scrollIntoView({ block: 'start', behavior: 'instant' });
   }, [activeTab]);
 
@@ -577,7 +606,7 @@ function ReadyBody({ scrollContainerRef }: { scrollContainerRef: RefObject<HTMLD
           type="button"
           onClick={() => scrollContainerRef.current?.scrollTo({ top: 0, behavior: 'instant' })}
           aria-label="맨 위로"
-          className="fixed bottom-4 right-4 z-20 flex h-9 w-9 items-center justify-center rounded-full bg-neutral-900/85 text-sm text-white shadow-lg hover:bg-neutral-900 dark:bg-neutral-100/85 dark:text-neutral-900 dark:hover:bg-neutral-100"
+          className="fixed bottom-4 right-6 z-20 flex h-9 w-9 items-center justify-center rounded-full bg-neutral-900/85 text-sm text-white shadow-lg hover:bg-neutral-900 dark:bg-neutral-100/85 dark:text-neutral-900 dark:hover:bg-neutral-100"
         >
           ↑
         </button>
