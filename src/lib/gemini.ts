@@ -1,5 +1,7 @@
 import type { GeminiTestResult } from '~/types/message';
 import type { GlossaryEntry, TranscriptSegment } from '~/types/transcript';
+import { buildSummaryPrompt, normalizeSummaryPayload } from './summary';
+import type { SummaryPayload } from './summary';
 
 // Task R5 — switched from `gemini-3.6-flash`: real-Chrome DoD found
 // mandatory thinking on that model explodes on the rules-heavy translation
@@ -465,4 +467,65 @@ export async function translateBatch(
   }));
 
   return { ok: true, translations };
+}
+
+// ---------------------------------------------------------------------------
+// generateSummary — ONE call: whole-video Korean summary (M3 summary panel,
+// spec 2026-07-30 §4). Mirrors analyzeGlossary's skeleton; parse/validation
+// lives in src/lib/summary.ts so it is unit-testable without fetch.
+// ---------------------------------------------------------------------------
+
+export type GenerateSummaryReason = GeminiErrorReason | 'bad_json';
+
+export type GenerateSummaryResult =
+  | { ok: true; payload: SummaryPayload }
+  | { ok: false; reason: GenerateSummaryReason; message: string; retryDelayMs?: number };
+
+const SUMMARY_SCHEMA = {
+  type: 'OBJECT',
+  properties: {
+    purpose: { type: 'STRING' },
+    mainArguments: { type: 'ARRAY', items: { type: 'STRING' } },
+    sections: {
+      type: 'ARRAY',
+      items: {
+        type: 'OBJECT',
+        properties: {
+          startSec: { type: 'NUMBER' },
+          title: { type: 'STRING' },
+        },
+        required: ['startSec', 'title'],
+      },
+    },
+    keywords: { type: 'ARRAY', items: { type: 'STRING' } },
+    conclusion: { type: 'STRING' },
+  },
+  required: ['purpose', 'mainArguments', 'sections', 'keywords', 'conclusion'],
+};
+
+export async function generateSummary(
+  segments: readonly Pick<TranscriptSegment, 'startSec' | 'sourceText'>[],
+  key: string,
+  opts: GeminiCallOptions = {},
+): Promise<GenerateSummaryResult> {
+  const fetchImpl = opts.fetchImpl ?? fetch;
+  const requestBody = {
+    contents: [{ parts: [{ text: buildSummaryPrompt(segments) }] }],
+    generationConfig: {
+      responseMimeType: 'application/json',
+      responseSchema: SUMMARY_SCHEMA,
+      // No `thinkingConfig`, for the same reason documented on
+      // analyzeGlossary above (explicit budgets 400 on this model).
+    },
+  };
+
+  const result = await callGeminiJson(key, requestBody, fetchImpl);
+  if (!result.ok) return result;
+
+  const maxStartSec = segments.length > 0 ? segments[segments.length - 1].startSec : 0;
+  const payload = normalizeSummaryPayload(parseJsonResponseText(result.text), maxStartSec);
+  if (!payload) {
+    return { ok: false, reason: 'bad_json', message: 'Could not parse summary response' };
+  }
+  return { ok: true, payload };
 }

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { GEMINI_FETCH_TIMEOUT_MS, analyzeGlossary, parseRetryDelayMs, testGeminiKey, translateBatch, MODEL_ID } from './gemini';
+import { GEMINI_FETCH_TIMEOUT_MS, analyzeGlossary, generateSummary, parseRetryDelayMs, testGeminiKey, translateBatch, MODEL_ID } from './gemini';
 import type { GlossaryEntry, TranscriptSegment } from '~/types/transcript';
 
 describe('parseRetryDelayMs', () => {
@@ -553,5 +553,71 @@ describe('fetch timeout (Task R4)', () => {
     const result = await translateBatch(SEGS, GLOSSARY, 'AIzaFAKE', { fetchImpl });
 
     expect(result.ok).toBe(true);
+  });
+});
+
+describe('generateSummary', () => {
+  const segs = [
+    { startSec: 0, sourceText: 'intro' },
+    { startSec: 620, sourceText: 'main point' },
+  ];
+  const payload = {
+    purpose: '문제',
+    mainArguments: ['주장'],
+    sections: [{ startSec: 620, title: '본론' }],
+    keywords: ['Agent'],
+    conclusion: '결론',
+  };
+
+  it('returns the normalized payload on a valid JSON response', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(
+      jsonResponse({ candidates: [{ content: { parts: [{ text: JSON.stringify(payload) }] } }] }),
+    );
+    const result = await generateSummary(segs, 'AIzaFAKE', { fetchImpl });
+    expect(result).toEqual({ ok: true, payload });
+    const body = requestBody(fetchImpl);
+    expect(body.contents[0].parts[0].text).toContain('[620] main point');
+    expect(body.generationConfig.responseMimeType).toBe('application/json');
+    expect(body.generationConfig.thinkingConfig).toBeUndefined();
+  });
+
+  it('clamps out-of-range section startSec to the last segment start', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(
+      jsonResponse({
+        candidates: [{ content: { parts: [{ text: JSON.stringify({ ...payload, sections: [{ startSec: 99999, title: '끝' }] }) }] } }],
+      }),
+    );
+    const result = await generateSummary(segs, 'AIzaFAKE', { fetchImpl });
+    expect(result.ok).toBe(true);
+    expect(result.ok && result.payload.sections[0].startSec).toBe(620);
+  });
+
+  it('returns bad_json when the response is not a parseable summary', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(
+      jsonResponse({ candidates: [{ content: { parts: [{ text: 'not json' }] } }] }),
+    );
+    const result = await generateSummary(segs, 'AIzaFAKE', { fetchImpl });
+    expect(result).toEqual({
+      ok: false,
+      reason: 'bad_json',
+      message: 'Could not parse summary response',
+    });
+  });
+
+  it('propagates rate_limit with structured retryDelayMs', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(
+      jsonResponse(
+        {
+          error: {
+            message: 'quota exceeded',
+            details: [{ '@type': 'type.googleapis.com/google.rpc.RetryInfo', retryDelay: '55s' }],
+          },
+        },
+        { status: 429 },
+      ),
+    );
+    const result = await generateSummary(segs, 'AIzaFAKE', { fetchImpl });
+    expect(!result.ok && result.reason).toBe('rate_limit');
+    expect(!result.ok && result.retryDelayMs).toBe(55_000);
   });
 });

@@ -1,5 +1,6 @@
 import type { ExtractedVideoMeta } from '~/lib/video-meta';
 import type { TranslationRecord } from '~/types/transcript';
+import type { VideoSummary } from './summary';
 
 export type ApiKeyStatus =
   | { present: false }
@@ -66,7 +67,15 @@ export type AppMessage =
   // panel open/revisit, before deciding whether to call `START_TRANSLATION`
   // at all. Mirrors `GET_CURRENT_VIDEO`'s null-means-"nothing cached yet"
   // convention.
-  | { type: 'GET_TRANSLATION'; payload: { videoId: string } };
+  | { type: 'GET_TRANSLATION'; payload: { videoId: string } }
+  // panel -> background: read the cached summary for a video (summary spec
+  // §3). `null` follows GET_TRANSLATION's convention — nothing cached yet.
+  | { type: 'GET_SUMMARY'; payload: { videoId: string } }
+  // panel -> background: generate (or regenerate — same-key overwrite) the
+  // Korean summary for an already-`done` translation. Resolves once the
+  // summary is persisted or generation failed; a lost response (SW evicted)
+  // is covered by the panel's safety-timeout GET_SUMMARY refetch (spec §5).
+  | { type: 'GENERATE_SUMMARY'; payload: { videoId: string } };
 
 export type AppResponseMap = {
   SAVE_API_KEY: { ok: true; status: ApiKeyStatus } | { ok: false; error: string };
@@ -96,6 +105,10 @@ export type AppResponseMap = {
   // pipeline (`status` other than 'done'/'failed'); callers resume progress
   // via the Port rather than polling this.
   GET_TRANSLATION: TranslationRecord | null;
+  GET_SUMMARY: VideoSummary | null;
+  // `error` is the raw English reason message; the panel maps it to Korean
+  // via translationErrorDisplay. A missing key is exactly 'API key not set'.
+  GENERATE_SUMMARY: { ok: true; summary: VideoSummary } | { ok: false; error: string };
 };
 
 export type AppResponse<T extends AppMessage['type']> = AppResponseMap[T];

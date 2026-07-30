@@ -1,11 +1,12 @@
 import { defineBackground } from 'wxt/sandbox';
 import { saveApiKey, getApiKey, getApiKeyStatus, deleteApiKey } from '~/lib/storage';
-import { testGeminiKey, analyzeGlossary, translateBatch } from '~/lib/gemini';
-import { putVideo, getTranslation, putTranslation, upsertBatch } from '~/lib/db';
+import { testGeminiKey, analyzeGlossary, translateBatch, generateSummary, MODEL_ID } from '~/lib/gemini';
+import { putVideo, getTranslation, putTranslation, upsertBatch, getSummary, putSummary } from '~/lib/db';
 import { sendMessage } from '~/lib/messaging';
 import { runTranslationPipeline } from '~/features/translation/pipeline';
 import { broadcastToPorts } from '~/features/translation/progress-broadcast';
 import { RefCount } from '~/features/translation/keepalive-refcount';
+import { summaryRetryPlan } from '~/lib/summary';
 import { TRANSLATION_PROGRESS_PORT } from '~/types/message';
 import type {
   AppMessage,
@@ -16,6 +17,7 @@ import type {
   RequestTranscriptResponse,
 } from '~/types/message';
 import type { TranslationProgress } from '~/types/transcript';
+import type { VideoSummary } from '~/types/summary';
 
 // Latest known state per tab, keyed by the tab the content script's message
 // arrived FROM (`sender.tab.id`) — never by the panel's notion of "the
@@ -61,6 +63,53 @@ function broadcastProgress(progress: TranslationProgress): void {
 // nothing here needs to await the running job's result, only know that one
 // exists; see the `START_TRANSLATION` handler below for the add/delete.
 const inFlightTranslations = new Set<string>();
+
+// Summary spec §3 — GENERATE_SUMMARY dedup: concurrent requests for the same
+// video share one in-flight Promise instead of firing a second Gemini call
+// (the panel's retry-after-timeout path joins the running job for free).
+// The entry is removed when the promise settles, so a retry after a real
+// failure starts a fresh run.
+const inFlightSummaries = new Map<string, Promise<AppResponseMap['GENERATE_SUMMARY']>>();
+
+async function runSummaryGeneration(videoId: string): Promise<AppResponseMap['GENERATE_SUMMARY']> {
+  const key = await getApiKey();
+  if (key === null) return { ok: false, error: 'API key not set' };
+
+  const record = await getTranslation(videoId);
+  if (!record || record.status !== 'done' || record.segments.length === 0) {
+    // The panel gates the Summary tab on a done record, so reaching this is
+    // a caller bug or a race with cache clearing — fail explicitly.
+    return { ok: false, error: 'No completed translation for this video' };
+  }
+
+  // Same keepalive discipline as the translation pipeline (Task R4): hold
+  // the SW open for the duration of the (possibly retried) Gemini call.
+  acquireKeepalive();
+  try {
+    let attempt = 0;
+    for (;;) {
+      attempt += 1;
+      const result = await generateSummary(record.segments, key);
+      if (result.ok) {
+        const summary: VideoSummary = {
+          videoId,
+          ...result.payload,
+          model: MODEL_ID,
+          createdAt: new Date().toISOString(),
+        };
+        await putSummary(summary);
+        return { ok: true, summary };
+      }
+      const plan = summaryRetryPlan(result.reason, attempt, result.retryDelayMs);
+      if (!plan.retry) return { ok: false, error: result.message };
+      if (plan.delayMs > 0) {
+        await new Promise((resolve) => setTimeout(resolve, plan.delayMs));
+      }
+    }
+  } finally {
+    releaseKeepalive();
+  }
+}
 
 // Task R4 — MV3 service-worker keepalive spanning a translation pipeline's
 // ENTIRE run. Root cause (real-Chrome DoD): Chrome's ~30s SW idle-eviction
@@ -329,6 +378,21 @@ export async function handle<T extends AppMessage['type']>(
       const { payload } = msg as Extract<AppMessage, { type: 'GET_TRANSLATION' }>;
       return (await getTranslation(payload.videoId)) as AppResponseMap[T];
     }
+    case 'GET_SUMMARY': {
+      const { payload } = msg as Extract<AppMessage, { type: 'GET_SUMMARY' }>;
+      return (await getSummary(payload.videoId)) as AppResponseMap[T];
+    }
+    case 'GENERATE_SUMMARY': {
+      const { payload } = msg as Extract<AppMessage, { type: 'GENERATE_SUMMARY' }>;
+      let job = inFlightSummaries.get(payload.videoId);
+      if (!job) {
+        job = runSummaryGeneration(payload.videoId).finally(() => {
+          inFlightSummaries.delete(payload.videoId);
+        });
+        inFlightSummaries.set(payload.videoId, job);
+      }
+      return (await job) as AppResponseMap[T];
+    }
   }
   throw new Error(`Unhandled message type: ${(msg as AppMessage).type}`);
 }
@@ -356,5 +420,9 @@ function errorResponseFor(msg: AppMessage, err: unknown): AppResponseMap[AppMess
       return { ok: false, error: message };
     case 'GET_TRANSLATION':
       return null;
+    case 'GET_SUMMARY':
+      return null;
+    case 'GENERATE_SUMMARY':
+      return { ok: false, error: message };
   }
 }
