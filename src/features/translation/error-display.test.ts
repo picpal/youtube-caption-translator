@@ -42,6 +42,12 @@ describe('translationErrorDisplay', () => {
     );
   });
 
+  it('maps a bad_json summary-generation reason (background.ts GENERATE_SUMMARY, fix round Important #2)', () => {
+    expect(translationErrorDisplay('bad_json: Could not parse summary response')).toBe(
+      '요약 응답을 해석하지 못했어요. 다시 시도해주세요.',
+    );
+  });
+
   it('maps a multi-chunk summary by the first matching reason token present', () => {
     expect(
       translationErrorDisplay('chunk 0: network (offline); chunk 1: network (offline)'),

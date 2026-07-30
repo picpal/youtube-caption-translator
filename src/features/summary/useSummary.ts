@@ -8,8 +8,11 @@ export type SummaryStatus = 'idle' | 'loading' | 'generating' | 'done' | 'failed
 // arrives (SW evicted / channel dropped mid-call), refetch the cache once
 // after this long and converge: cache hit -> done, still nothing -> failed.
 // Longer than bg's common path (one 120s-capped fetch + one immediate
-// bad_json retry); a user retry after this joins bg's in-flight job via the
-// single-flight map, so no double billing.
+// bad_json retry). No double billing either way a user retries after this:
+// if bg's job is still running, the retry joins it via the single-flight
+// map; if it already finished, `generate`'s own cache pre-check below
+// (fix round, Important #4) finds the summary it left behind and never
+// calls GENERATE_SUMMARY again at all.
 export const SUMMARY_SAFETY_TIMEOUT_MS = 180_000;
 
 // Panel-authored copy (not a bg-originated reason string), deliberately
@@ -26,7 +29,13 @@ export interface UseSummaryResult {
   summary: VideoSummary | null;
   status: SummaryStatus;
   error: string | null;
+  // Cache-aware (fix round, Important #4): checks GET_SUMMARY first and only
+  // calls GENERATE_SUMMARY if nothing is cached yet. Used by the 빈 상태
+  // "요약 생성" button and the failed-state "다시 시도" button.
   generate: () => void;
+  // Always calls GENERATE_SUMMARY, overwriting any cached summary — the
+  // SummaryPanel's explicit "다시 생성" affordance, an intentional overwrite.
+  regenerate: () => void;
 }
 
 export function useSummary({ videoId, enabled }: UseSummaryParams): UseSummaryResult {
@@ -71,7 +80,10 @@ export function useSummary({ videoId, enabled }: UseSummaryParams): UseSummaryRe
     return clearTimer;
   }, [videoId, enabled]);
 
-  const generate = useCallback(() => {
+  // The actual billed call + safety timeout, unconditional overwrite —
+  // `regenerate`'s whole body, and also `generate`'s fallback once its own
+  // cache pre-check below comes back empty.
+  const startGenerate = useCallback(() => {
     if (videoId === null) return;
     const cycle = cycleRef.current;
     setStatus('generating');
@@ -115,5 +127,40 @@ export function useSummary({ videoId, enabled }: UseSummaryParams): UseSummaryRe
     );
   }, [videoId]);
 
-  return { summary, status, error, generate };
+  const regenerate = useCallback(() => {
+    startGenerate();
+  }, [startGenerate]);
+
+  // Fix round, Important #4 — a summary that lands AFTER the 180s safety
+  // timeout already marked this attempt `failed` is otherwise invisible to
+  // the panel: a plain retry click would re-bill a fresh Gemini call and
+  // overwrite the good summary that already landed. Check the cache first
+  // (cycle-guarded like every other async callback here); only fall through
+  // to an actual GENERATE_SUMMARY call when nothing is there yet. A failed
+  // pre-check (rejected sendMessage) falls through the same way — the
+  // pre-check is an optimization, not a gate the retry path can get stuck
+  // behind.
+  const generate = useCallback(() => {
+    if (videoId === null) return;
+    const cycle = cycleRef.current;
+    setStatus('loading');
+    setError(null);
+    void sendMessage({ type: 'GET_SUMMARY', payload: { videoId } }).then(
+      (cached) => {
+        if (cycleRef.current !== cycle) return;
+        if (cached) {
+          setSummary(cached);
+          setStatus('done');
+        } else {
+          startGenerate();
+        }
+      },
+      () => {
+        if (cycleRef.current !== cycle) return;
+        startGenerate();
+      },
+    );
+  }, [videoId, startGenerate]);
+
+  return { summary, status, error, generate, regenerate };
 }

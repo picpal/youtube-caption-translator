@@ -1,8 +1,24 @@
 import 'fake-indexeddb/auto';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { DB_NAME, getVideo, getTranslation } from '~/lib/db';
+import { DB_NAME, getVideo, getTranslation, getSummary, putTranslation } from '~/lib/db';
+import { generateSummary, MODEL_ID } from '~/lib/gemini';
+import type { GenerateSummaryResult } from '~/lib/gemini';
 import type { AppMessage } from '~/types/message';
+import type { TranslationRecord } from '~/types/transcript';
 import { handle } from '../entrypoints/background';
+
+// GENERATE_SUMMARY suite (fix round, Important #3) — `generateSummary` is
+// the one collaborator worth mocking here: it's the actual network/Gemini
+// call, everything else (getTranslation/putSummary, the in-flight dedup map,
+// summaryRetryPlan) is this repo's own code and already exercised for real
+// against fake-indexeddb, same as every other describe block in this file.
+// Partial mock (not a full auto-mock) so MODEL_ID and every OTHER gemini.ts
+// export stay real — nothing else in this file (or a future addition to it)
+// should silently start getting auto-mocked undefined stubs.
+vi.mock('~/lib/gemini', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('~/lib/gemini')>();
+  return { ...actual, generateSummary: vi.fn() };
+});
 
 // Closes the M0 review's "no test for the message dispatch layer" gap: this
 // drives the REAL `handle()` exported from entrypoints/background.ts — the
@@ -95,6 +111,44 @@ const SETTLED_META = {
   thumbnailUrl: 'https://i.ytimg.com/vi/zjkBMFhNj_g/hqdefault.jpg',
   durationSeconds: 3588,
   captionAvailability: 'auto-only' as const,
+};
+
+// Fix round, Important #3 — GENERATE_SUMMARY fixtures. A minimal but valid
+// `done` TranslationRecord: the one shape `runSummaryGeneration`'s guard
+// requires before it calls `generateSummary` at all.
+function doneTranslationRecord(videoId: string, overrides: Partial<TranslationRecord> = {}): TranslationRecord {
+  const now = new Date().toISOString();
+  return {
+    videoId,
+    captionHash: 'hash',
+    sourceLang: 'en',
+    status: 'done',
+    segments: [
+      {
+        segmentId: `${videoId}:0`,
+        videoId,
+        index: 0,
+        startSec: 0,
+        endSec: 5,
+        sourceText: 'Hello world',
+        translatedText: '안녕하세요',
+      },
+    ],
+    glossary: [],
+    completedBatches: 1,
+    totalBatches: 1,
+    createdAt: now,
+    updatedAt: now,
+    ...overrides,
+  };
+}
+
+const SUMMARY_PAYLOAD = {
+  purpose: '이 영상은 대규모 언어 모델의 기초를 설명합니다.',
+  mainArguments: ['LLM은 다음 토큰을 예측하도록 학습된다.'],
+  sections: [{ startSec: 0, title: '도입' }],
+  keywords: ['LLM', 'transformer'],
+  conclusion: '전반적인 개념을 정리하며 마칩니다.',
 };
 
 describe('VIDEO_DETECTED', () => {
@@ -351,5 +405,125 @@ describe('START_TRANSLATION dedup', () => {
     );
     expect(res).toEqual({ ok: false, error: 'API key not set' });
     expect(tabsSendMessageMock).not.toHaveBeenCalled();
+  });
+});
+
+// Fix round, Important #3 — drives the real `handle()` for GENERATE_SUMMARY,
+// same discipline as the START_TRANSLATION dedup suite above: real
+// fake-indexeddb, stubbed chrome.*, only `generateSummary` itself mocked.
+describe('GENERATE_SUMMARY', () => {
+  beforeEach(() => {
+    vi.mocked(generateSummary).mockReset();
+  });
+
+  async function withApiKey(): Promise<void> {
+    await chrome.storage.local.set({ geminiApiKey: 'test-key', geminiApiKeySavedAt: new Date().toISOString() });
+  }
+
+  it('rejects with the guard error and calls gemini zero times when no record exists', async () => {
+    await withApiKey();
+
+    const res = await handle({ type: 'GENERATE_SUMMARY', payload: { videoId: 'missing-video' } }, senderFor(undefined));
+
+    expect(res).toEqual({ ok: false, error: 'No completed translation for this video' });
+    expect(generateSummary).not.toHaveBeenCalled();
+  });
+
+  it('rejects with the guard error and calls gemini zero times when the record is not done', async () => {
+    await withApiKey();
+    await putTranslation(doneTranslationRecord('failed-video', { status: 'failed' }));
+
+    const res = await handle({ type: 'GENERATE_SUMMARY', payload: { videoId: 'failed-video' } }, senderFor(undefined));
+
+    expect(res).toEqual({ ok: false, error: 'No completed translation for this video' });
+    expect(generateSummary).not.toHaveBeenCalled();
+  });
+
+  it('happy path: one generateSummary call, persists the summary, and stamps videoId/model/createdAt', async () => {
+    await withApiKey();
+    await putTranslation(doneTranslationRecord('happy-video'));
+    vi.mocked(generateSummary).mockResolvedValueOnce({ ok: true, payload: SUMMARY_PAYLOAD });
+    const before = Date.now();
+
+    const res = await handle({ type: 'GENERATE_SUMMARY', payload: { videoId: 'happy-video' } }, senderFor(undefined));
+
+    expect(generateSummary).toHaveBeenCalledTimes(1);
+    if (!res.ok) throw new Error(`expected ok:true, got ${JSON.stringify(res)}`);
+    expect(res.summary.videoId).toBe('happy-video');
+    expect(res.summary.model).toBe(MODEL_ID);
+    expect(new Date(res.summary.createdAt).getTime()).toBeGreaterThanOrEqual(before);
+    expect(res.summary.purpose).toBe(SUMMARY_PAYLOAD.purpose);
+
+    const persisted = await getSummary('happy-video');
+    expect(persisted).toEqual(res.summary);
+  });
+
+  it('single-flight: two concurrent calls share one gemini call and get the same result; a third call afterward starts a fresh one', async () => {
+    await withApiKey();
+    await putTranslation(doneTranslationRecord('sf-video'));
+
+    let resolveGemini!: (value: GenerateSummaryResult) => void;
+    const stuck = new Promise<GenerateSummaryResult>((resolve) => {
+      resolveGemini = resolve;
+    });
+    vi.mocked(generateSummary).mockReturnValueOnce(stuck);
+
+    const call1 = handle({ type: 'GENERATE_SUMMARY', payload: { videoId: 'sf-video' } }, senderFor(undefined));
+    const call2 = handle({ type: 'GENERATE_SUMMARY', payload: { videoId: 'sf-video' } }, senderFor(undefined));
+
+    // Same reasoning as the START_TRANSLATION dedup test above: the dedup
+    // check itself is synchronous, but `getTranslation` is a genuine
+    // fake-indexeddb round trip `runSummaryGeneration` awaits BEFORE ever
+    // reaching `generateSummary`, so this waits for that to land rather than
+    // asserting immediately.
+    await vi.waitFor(() => {
+      expect(generateSummary).toHaveBeenCalledTimes(1);
+    });
+
+    resolveGemini({ ok: true, payload: SUMMARY_PAYLOAD });
+    const [res1, res2] = await Promise.all([call1, call2]);
+    expect(res1).toEqual(res2);
+    expect(generateSummary).toHaveBeenCalledTimes(1);
+
+    vi.mocked(generateSummary).mockResolvedValueOnce({ ok: true, payload: SUMMARY_PAYLOAD });
+    await handle({ type: 'GENERATE_SUMMARY', payload: { videoId: 'sf-video' } }, senderFor(undefined));
+    expect(generateSummary).toHaveBeenCalledTimes(2);
+  });
+
+  it('retries once on a bad_json reason then succeeds', async () => {
+    await withApiKey();
+    await putTranslation(doneTranslationRecord('retry-video'));
+    vi.mocked(generateSummary)
+      .mockResolvedValueOnce({ ok: false, reason: 'bad_json', message: 'Could not parse summary response' })
+      .mockResolvedValueOnce({ ok: true, payload: SUMMARY_PAYLOAD });
+
+    const res = await handle({ type: 'GENERATE_SUMMARY', payload: { videoId: 'retry-video' } }, senderFor(undefined));
+
+    expect(generateSummary).toHaveBeenCalledTimes(2);
+    expect(res.ok).toBe(true);
+  });
+
+  it('does not retry a terminal reason (unauthorized) and embeds the reason token in the error string (locks in Important #2)', async () => {
+    await withApiKey();
+    await putTranslation(doneTranslationRecord('terminal-video'));
+    vi.mocked(generateSummary).mockResolvedValueOnce({
+      ok: false,
+      reason: 'unauthorized',
+      message: 'API key not valid',
+    });
+
+    const res = await handle({ type: 'GENERATE_SUMMARY', payload: { videoId: 'terminal-video' } }, senderFor(undefined));
+
+    expect(generateSummary).toHaveBeenCalledTimes(1);
+    expect(res).toEqual({ ok: false, error: 'unauthorized: API key not valid' });
+  });
+
+  it('rejects with a missing-key error and calls gemini zero times when no API key is saved', async () => {
+    await putTranslation(doneTranslationRecord('no-key-video'));
+
+    const res = await handle({ type: 'GENERATE_SUMMARY', payload: { videoId: 'no-key-video' } }, senderFor(undefined));
+
+    expect(res).toEqual({ ok: false, error: 'API key not set' });
+    expect(generateSummary).not.toHaveBeenCalled();
   });
 });

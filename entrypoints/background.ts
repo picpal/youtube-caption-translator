@@ -77,8 +77,10 @@ async function runSummaryGeneration(videoId: string): Promise<AppResponseMap['GE
 
   const record = await getTranslation(videoId);
   if (!record || record.status !== 'done' || record.segments.length === 0) {
-    // The panel gates the Summary tab on a done record, so reaching this is
-    // a caller bug or a race with cache clearing — fail explicitly.
+    // Defense-in-depth: the panel now gates the Summary tab on a done record
+    // (fix round, Important #1 — `showSummaryTab` in App.tsx), so reaching
+    // this branch means a caller bug or a race with cache clearing, not a
+    // normal panel flow. Fail explicitly either way.
     return { ok: false, error: 'No completed translation for this video' };
   }
 
@@ -101,7 +103,13 @@ async function runSummaryGeneration(videoId: string): Promise<AppResponseMap['GE
         return { ok: true, summary };
       }
       const plan = summaryRetryPlan(result.reason, attempt, result.retryDelayMs);
-      if (!plan.retry) return { ok: false, error: result.message };
+      // Fix round, Important #2: embed `result.reason` in the returned error
+      // string (pipeline.ts's `summarizeFailures` convention — a reason
+      // TOKEN somewhere in the string) so `translationErrorDisplay`'s
+      // substring matching can actually map it to Korean; returning bare
+      // `result.message` dropped the reason entirely and always fell
+      // through to the raw-English default.
+      if (!plan.retry) return { ok: false, error: `${result.reason}: ${result.message}` };
       if (plan.delayMs > 0) {
         await new Promise((resolve) => setTimeout(resolve, plan.delayMs));
       }

@@ -36,6 +36,12 @@
 //   from `NO_TRANSCRIPT_PANEL_REASON` above: that one means "this video
 //   genuinely has no script," which is false in this case and was the live
 //   field bug this whole fix round exists to correct.
+// - src/lib/gemini.ts's `generateSummary` sets `reason: 'bad_json'` when the
+//   model's response fails schema validation (`normalizeSummaryPayload`,
+//   src/lib/summary.ts) — entrypoints/background.ts's GENERATE_SUMMARY
+//   handler (fix round, Important #2) embeds this as `"bad_json: <message>"`,
+//   the same reason-token convention as the translation reasons above, so
+//   this file's shared substring matching now covers summary failures too.
 const NO_TRANSCRIPT_PANEL_REASON = 'No transcript panel available for this video';
 const API_KEY_NOT_SET_REASON = 'API key not set';
 const TRANSCRIPT_OPEN_FAILED_REASON = 'Transcript panel failed to open';
@@ -55,6 +61,9 @@ export function translationErrorDisplay(reason: string): string {
   }
   if (reason.includes('network')) {
     return '네트워크 연결이 불안정해요. 잠시 후 다시 시도해주세요';
+  }
+  if (reason.includes('bad_json')) {
+    return '요약 응답을 해석하지 못했어요. 다시 시도해주세요.';
   }
   return reason;
 }

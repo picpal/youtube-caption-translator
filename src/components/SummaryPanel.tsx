@@ -13,7 +13,11 @@ interface SummaryPanelProps {
   status: SummaryStatus;
   error: string | null;
   elapsedSeconds: number;
+  // Cache-aware retry (fix round, Important #4) — 빈 상태's "요약 생성" and
+  // failed's "다시 시도" both use this.
   onGenerate: () => void;
+  // Unconditional overwrite — the done-state "다시 생성" affordance only.
+  onRegenerate: () => void;
   onSeekSection: (startSec: number) => void;
 }
 
@@ -23,6 +27,7 @@ export function SummaryPanel({
   error,
   elapsedSeconds,
   onGenerate,
+  onRegenerate,
   onSeekSection,
 }: SummaryPanelProps) {
   if (status === 'loading') {
@@ -82,7 +87,7 @@ export function SummaryPanel({
         <span className={LABEL_CLS}>이 영상이 다루는 문제</span>
         <button
           type="button"
-          onClick={onGenerate}
+          onClick={onRegenerate}
           className="text-[11px] text-neutral-400 hover:text-neutral-600 dark:text-neutral-500 dark:hover:text-neutral-300"
         >
           다시 생성

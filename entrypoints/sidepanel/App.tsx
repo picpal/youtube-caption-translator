@@ -317,6 +317,16 @@ function ReadyBody() {
     isRecordCurrentForStatus(status, record) &&
     record.segments.length > 0;
 
+  // Fix round, Important #1 — the Summary tab additionally requires a DONE
+  // translation: `showTranscriptList` alone is also true for `'failed'` (the
+  // transcript still shows whatever source/KO rows completed before the
+  // failure), but a failed video has no persisted `TranslationRecord` a
+  // summary could ever be generated from — background's `runSummaryGeneration`
+  // guard would just reject it. Gating the tab bar (and `useSummary` itself)
+  // on this, rather than `showTranscriptList`, keeps the Summary tab from
+  // ever appearing for a video that can't actually produce one.
+  const showSummaryTab = showTranscriptList && status === 'done';
+
   // Playback sync (spec §3.2): stream only while the list is on screen.
   const playback = usePlaybackSync({ videoId, tabId, enabled: showTranscriptList });
   const activeIndex =
@@ -324,12 +334,22 @@ function ReadyBody() {
       ? activeSegmentIndex(record.segments, playback.currentTime)
       : null;
 
-  // Summary tab (M3 spec §5). All three hooks live above the no-metadata
+  // Summary tab (M3 spec §5). All hooks below live above the no-metadata
   // early return for the same Rules-of-Hooks reason documented on
   // showTranscriptList above.
   const [activeTab, setActiveTab] = useState<'transcript' | 'summary'>('transcript');
-  const summaryState = useSummary({ videoId, enabled: showTranscriptList });
+  const summaryState = useSummary({ videoId, enabled: showSummaryTab });
   const summaryElapsedSeconds = useElapsedSeconds(summaryState.status === 'generating');
+
+  // Fix round, Important #1 — if a live retry flips `status` away from
+  // `'done'` while the Summary tab is showing (or the tab bar disappears for
+  // any other reason `showSummaryTab` can go false mid-session), snap the
+  // selection back to the one tab that's always safe to render; otherwise
+  // `activeTab` could be left as `'summary'` with no tab bar to ever change
+  // it back.
+  useEffect(() => {
+    if (!showSummaryTab) setActiveTab('transcript');
+  }, [showSummaryTab]);
 
   // `no-metadata`: the pipeline settled for this watch-page tab (`loading`
   // is false — see useCurrentVideo's doc comment on what that requires) and
@@ -393,45 +413,68 @@ function ReadyBody() {
 
       {showTranscriptList && record !== null && (
         <div className="border-t border-neutral-200 dark:border-neutral-800">
-          <div className="flex border-b border-neutral-200 dark:border-neutral-800" role="tablist">
-            {(
-              [
-                ['transcript', 'Transcript'],
-                ['summary', 'Summary'],
-              ] as const
-            ).map(([tab, label]) => (
-              <button
-                key={tab}
-                type="button"
-                role="tab"
-                aria-selected={activeTab === tab}
-                onClick={() => setActiveTab(tab)}
-                className={`flex-1 border-0 py-2.5 text-[12px] ${
-                  activeTab === tab
-                    ? 'font-semibold text-neutral-900 shadow-[inset_0_-2px_0_0_currentColor] dark:text-neutral-100'
-                    : 'text-neutral-400 hover:text-neutral-600 dark:text-neutral-500 dark:hover:text-neutral-300'
-                }`}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-          {activeTab === 'transcript' ? (
-            <TranscriptList
-              segments={record.segments}
-              displayMode={displayMode}
-              activeIndex={activeIndex}
-              onSeekRow={(segment) => playback.seek(segment.startSec)}
-            />
+          {showSummaryTab ? (
+            <>
+              <div className="flex border-b border-neutral-200 dark:border-neutral-800" role="tablist">
+                {(
+                  [
+                    ['transcript', 'Transcript'],
+                    ['summary', 'Summary'],
+                  ] as const
+                ).map(([tab, label]) => (
+                  <button
+                    key={tab}
+                    type="button"
+                    role="tab"
+                    aria-selected={activeTab === tab}
+                    onClick={() => setActiveTab(tab)}
+                    className={`flex-1 border-0 py-2.5 text-[12px] ${
+                      activeTab === tab
+                        ? 'font-semibold text-neutral-900 shadow-[inset_0_-2px_0_0_currentColor] dark:text-neutral-100'
+                        : 'text-neutral-400 hover:text-neutral-600 dark:text-neutral-500 dark:hover:text-neutral-300'
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+              {activeTab === 'transcript' ? (
+                <TranscriptList
+                  segments={record.segments}
+                  displayMode={displayMode}
+                  activeIndex={activeIndex}
+                  onSeekRow={(segment) => playback.seek(segment.startSec)}
+                />
+              ) : (
+                <SummaryPanel
+                  summary={summaryState.summary}
+                  status={summaryState.status}
+                  error={summaryState.error}
+                  elapsedSeconds={summaryElapsedSeconds}
+                  onGenerate={summaryState.generate}
+                  onRegenerate={summaryState.regenerate}
+                  onSeekSection={(startSec) => playback.seek(startSec)}
+                />
+              )}
+            </>
           ) : (
-            <SummaryPanel
-              summary={summaryState.summary}
-              status={summaryState.status}
-              error={summaryState.error}
-              elapsedSeconds={summaryElapsedSeconds}
-              onGenerate={summaryState.generate}
-              onSeekSection={(startSec) => playback.seek(startSec)}
-            />
+            // Fix round, Important #1 — a `failed` video (or any other case
+            // where `showSummaryTab` is false): no tab bar, transcript
+            // always renders, with the original pre-Summary-tab micro-label
+            // restored exactly as it looked before this feature existed.
+            <>
+              <div className="px-4 pt-3.5">
+                <span className="text-[10.5px] font-semibold tracking-wide text-neutral-400 dark:text-neutral-500">
+                  번역 결과
+                </span>
+              </div>
+              <TranscriptList
+                segments={record.segments}
+                displayMode={displayMode}
+                activeIndex={activeIndex}
+                onSeekRow={(segment) => playback.seek(segment.startSec)}
+              />
+            </>
           )}
         </div>
       )}
