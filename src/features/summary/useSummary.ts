@@ -12,6 +12,11 @@ export type SummaryStatus = 'idle' | 'loading' | 'generating' | 'done' | 'failed
 // single-flight map, so no double billing.
 export const SUMMARY_SAFETY_TIMEOUT_MS = 180_000;
 
+// Panel-authored copy (not a bg-originated reason string), deliberately
+// Korean since translationErrorDisplay passes unrecognized strings through
+// verbatim — the two safety-timer branches below share this one message.
+const SUMMARY_TIMEOUT_ERROR = '요약 생성 시간이 초과됐어요. 다시 시도해주세요.';
+
 interface UseSummaryParams {
   videoId: string | null;
   enabled: boolean;
@@ -81,13 +86,13 @@ export function useSummary({ videoId, enabled }: UseSummaryParams): UseSummaryRe
             setStatus('done');
           } else {
             setStatus('failed');
-            setError('Summary generation timed out');
+            setError(SUMMARY_TIMEOUT_ERROR);
           }
         },
         () => {
           if (cycleRef.current !== cycle) return;
           setStatus('failed');
-          setError('Summary generation timed out');
+          setError(SUMMARY_TIMEOUT_ERROR);
         },
       );
     }, SUMMARY_SAFETY_TIMEOUT_MS);
