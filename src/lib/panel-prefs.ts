@@ -17,7 +17,7 @@ export interface PanelPrefs {
 
 export const DEFAULT_PANEL_PREFS: PanelPrefs = { displayMode: 'both', lastTab: 'transcript' };
 
-const DISPLAY_MODES: readonly DisplayMode[] = ['both', 'ko', 'en'];
+const DISPLAY_MODES: readonly DisplayMode[] = ['both', 'ko'];
 const PANEL_TABS: readonly PanelTab[] = ['transcript', 'summary'];
 
 // Per-field fallback: a corrupt/legacy value in one key must not take the

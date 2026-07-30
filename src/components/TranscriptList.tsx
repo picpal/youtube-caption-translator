@@ -4,13 +4,14 @@ import { formatTimestamp } from '~/lib/transcript-parse';
 import type { TranscriptSegment } from '~/types/transcript';
 
 /**
- * Task R7 (Fix 1) — the panel's 자막 표시 selector, previously static markup
- * with no state behind it. `'both'` is the pre-R7 default look (EN muted +
- * KO primary); `'ko'`/`'en'` show a single line only. Session-local only —
- * this is NOT persisted (storage-backed display prefs are M3, per the R7
- * brief), so it lives as plain `useState` in `App.tsx`'s `ReadyBody`.
+ * Task R7 (Fix 1) — the panel's 자막 표시 selector. `'both'` is the pre-R7
+ * default look (source muted + KO primary); `'ko'` shows the translation
+ * alone. The `'en'` (source-only) mode was removed 2026-07-31 — YouTube's
+ * own player already shows the source captions, and `'both'` covers
+ * checking the source in the panel. Persisted to chrome.storage.local via
+ * `~/lib/panel-prefs` and restored on panel mount (M3).
  */
-export type DisplayMode = 'both' | 'ko' | 'en';
+export type DisplayMode = 'both' | 'ko';
 
 export interface TranscriptListProps {
   segments: TranscriptSegment[];
@@ -36,11 +37,11 @@ export interface TranscriptListProps {
  *   still-`null` translation: EN alone, in the muted style (never promoted
  *   to primary — changing that would alter `'both'`'s existing look, which
  *   the brief requires stay exactly as-is).
- * - `'primary-only'` — `'ko'`/`'en'` modes (real KO, `'ko'`'s own EN
- *   fallback when `translatedText` is still `null`, or plain EN for `'en'`):
- *   a SINGLE line, but rendered in the primary style — the brief is explicit
- *   that a single visible line must never be left looking like an
- *   orphaned secondary/muted line.
+ * - `'primary-only'` — `'ko'` mode (real KO, or its own source-text
+ *   fallback when `translatedText` is still `null`): a SINGLE line, but
+ *   rendered in the primary style — the brief is explicit that a single
+ *   visible line must never be left looking like an orphaned
+ *   secondary/muted line.
  */
 export type VisibleTexts =
   | { kind: 'dual'; secondaryText: string; primaryText: string }
@@ -53,13 +54,9 @@ export function visibleTexts(segment: TranscriptSegment, mode: DisplayMode): Vis
       ? { kind: 'dual', secondaryText: segment.sourceText, primaryText: segment.translatedText }
       : { kind: 'secondary-only', text: segment.sourceText };
   }
-  if (mode === 'ko') {
-    // "빈 행 금지" — a still-untranslated row falls back to the English
-    // source rather than rendering nothing.
-    return { kind: 'primary-only', text: segment.translatedText ?? segment.sourceText };
-  }
-  // mode === 'en'
-  return { kind: 'primary-only', text: segment.sourceText };
+  // mode === 'ko' — "빈 행 금지": a still-untranslated row falls back to
+  // the source text rather than rendering nothing.
+  return { kind: 'primary-only', text: segment.translatedText ?? segment.sourceText };
 }
 
 /**

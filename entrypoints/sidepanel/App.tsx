@@ -291,9 +291,8 @@ function useScrollTopVisible(containerRef: RefObject<HTMLDivElement | null>, thr
 // buttons below are a plain `.map`, not three hand-copied `<button>`s that
 // could drift out of sync with each other.
 const DISPLAY_MODE_OPTIONS: ReadonlyArray<{ mode: DisplayMode; label: string }> = [
-  { mode: 'both', label: '영한 동시' },
-  { mode: 'ko', label: '한국어' },
-  { mode: 'en', label: '영어' },
+  { mode: 'both', label: '원문+한국어' },
+  { mode: 'ko', label: '한국어만' },
 ];
 
 // The thumbnail/title/channel block and the caption-availability bar are

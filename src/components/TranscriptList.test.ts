@@ -51,16 +51,4 @@ describe('visibleTexts', () => {
     });
   });
 
-  describe("mode: 'en'", () => {
-    it('shows EN alone, in primary style', () => {
-      expect(visibleTexts(segment(), 'en')).toEqual({ kind: 'primary-only', text: 'Hello world' });
-    });
-
-    it('shows EN alone even when translatedText is null', () => {
-      expect(visibleTexts(segment({ translatedText: null }), 'en')).toEqual({
-        kind: 'primary-only',
-        text: 'Hello world',
-      });
-    });
-  });
 });

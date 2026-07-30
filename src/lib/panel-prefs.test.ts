@@ -54,17 +54,23 @@ describe('loadPanelPrefs', () => {
   });
 
   it('falls back per field on non-string garbage', async () => {
-    store.panelDisplayMode = 'en';
+    store.panelDisplayMode = 'ko';
     store.panelLastTab = 42;
-    expect(await loadPanelPrefs()).toEqual({ displayMode: 'en', lastTab: 'transcript' });
+    expect(await loadPanelPrefs()).toEqual({ displayMode: 'ko', lastTab: 'transcript' });
+  });
+
+  it("treats the removed legacy 'en' mode as invalid and falls back to 'both'", async () => {
+    store.panelDisplayMode = 'en'; // persisted by a pre-2-option version
+    store.panelLastTab = 'summary';
+    expect(await loadPanelPrefs()).toEqual({ displayMode: 'both', lastTab: 'summary' });
   });
 });
 
 describe('save functions', () => {
   it('savePanelDisplayMode writes only its own key', async () => {
     store.panelLastTab = 'summary';
-    await savePanelDisplayMode('en');
-    expect(store.panelDisplayMode).toBe('en');
+    await savePanelDisplayMode('ko');
+    expect(store.panelDisplayMode).toBe('ko');
     expect(store.panelLastTab).toBe('summary');
   });
 
