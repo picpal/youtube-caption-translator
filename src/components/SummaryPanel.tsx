@@ -78,8 +78,9 @@ export function SummaryPanel({
     );
   }
 
+  // fixed bottom-4 '맨 위로' 버튼(h-9)이 결론 블록의 끝부분을 가리므로 하단 패딩을 pb-9로 확보
   return (
-    <div className="flex flex-col gap-5 px-4 py-4">
+    <div className="flex flex-col gap-5 px-4 pb-9 pt-4">
       <span className={LABEL_CLS}>이 영상이 다루는 문제</span>
       <p className="-mt-3 text-[12.5px] leading-relaxed text-neutral-800 dark:text-neutral-200">
         {summary.purpose}
