@@ -1,5 +1,11 @@
 import type { TranslatePhase } from '~/types/transcript';
 
+// Pure, framework-agnostic helpers for the panel's live progress display.
+// Extracted to their own module so they're unit-testable without mounting a
+// component or mocking chrome.* — mirrors this codebase's existing pattern of
+// pulling pure logic out of UI/chrome-API code (progress-broadcast.ts,
+// `shouldResume` in useTranslation.ts).
+
 // M2 refactor (single large request + stage progress) — Korean labels for
 // step 3's request/response sub-phases (요청 전송 → 응답 수신 → 파싱·정합성),
 // replacing the dropped per-segment "N / total" counter.

@@ -294,11 +294,11 @@ const DISPLAY_MODE_OPTIONS: ReadonlyArray<{ mode: DisplayMode; label: string }> 
 
 // The thumbnail/title/channel block and the caption-availability bar are
 // real data as of Task 9, via VideoCard + useCurrentVideo. The
-// `AI 자막 생성` button and the 처리 단계 footer are wired to the live
-// translation state as of M2 Task 8, via useTranslation (below). The
-// finished transcript list (M2 Task 9) renders below the stepper once a
-// `done`/`failed` record has segments. The 자막 표시 selector (Task R7, Fix
-// 1) now actually switches `TranscriptList`'s `displayMode` — persisted to
+// `AI 자막 생성` button is wired to the live translation state as of
+// M2 Task 8, via useTranslation (below). The finished transcript list
+// (M2 Task 9) renders below the 생성 button once a `done`/`failed` record
+// has segments. The 자막 표시 selector (Task R7, Fix 1) now actually
+// switches `TranscriptList`'s `displayMode` — persisted to
 // `chrome.storage.local` via `panel-prefs` (M3, spec 2026-07-30-panel-prefs)
 // and restored on mount.
 function ReadyBody({ scrollContainerRef }: { scrollContainerRef: RefObject<HTMLDivElement | null> }) {
@@ -341,9 +341,9 @@ function ReadyBody({ scrollContainerRef }: { scrollContainerRef: RefObject<HTMLD
   // completion. Keyed on `videoId` (not a plain boolean) so switching to a
   // different already-`done` video dumps that video's own transcript too,
   // but re-rendering the SAME video's `done` state (e.g. a progress-unrelated
-  // re-render, or the stepper's percent ticking on the way there) never
-  // re-logs. A ref rather than state: this is a one-shot side effect with no
-  // corresponding UI, so it doesn't need to trigger a re-render itself.
+  // re-render, or the button label's elapsed-time tick while translating)
+  // never re-logs. A ref rather than state: this is a one-shot side effect
+  // with no corresponding UI, so it doesn't need to trigger a re-render itself.
   //
   // Gated through `isRecordCurrentForStatus` (not just `status === 'done'`):
   // without it, the stale-record render on a fail -> retry -> succeed
@@ -367,10 +367,11 @@ function ReadyBody({ scrollContainerRef }: { scrollContainerRef: RefObject<HTMLD
   // whatever KO batches completed before the failure — Task 9's "실패 →
   // 원문만이라도 표시", handled row-by-row inside TranscriptList itself via
   // each segment's own `translatedText`). Never during
-  // `extracting`/`analyzing`/`translating` — the stepper above already owns
-  // that phase, and `record` can still hold a stale prior-video snapshot or
-  // partially-filled segments mid-flight (see useTranslation's `record` doc
-  // comment) that would be misleading to render as if finished.
+  // `extracting`/`analyzing`/`translating` — the TranslateButton's own
+  // processing label already owns that phase, and `record` can still hold a
+  // stale prior-video snapshot or partially-filled segments mid-flight (see
+  // useTranslation's `record` doc comment) that would be misleading to render
+  // as if finished.
   //
   // `isRecordCurrentForStatus` (not just `record !== null`) additionally
   // excludes the fail -> retry -> succeed transition's one-render window
