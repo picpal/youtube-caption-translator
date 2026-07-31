@@ -151,7 +151,7 @@ export function App() {
     <div className="flex h-screen flex-col">
       <header className="flex items-center justify-between border-b border-neutral-200 px-4 py-3 dark:border-neutral-800">
         <div className="min-w-0">
-          <h1 className="truncate text-sm font-semibold">YouTube Play Assistant</h1>
+          <h1 className="truncate text-sm font-semibold">YouTube Caption Translator</h1>
         </div>
         <div className="flex items-center gap-3">
           <StatusBadge tone={loading ? 'muted' : present ? 'ok' : 'warn'}>
@@ -393,7 +393,7 @@ function ReadyBody({ scrollContainerRef }: { scrollContainerRef: RefObject<HTMLD
     const rows = record.segments
       .map((s) => `${formatTimestamp(s.startSec)} | ${s.sourceText} | ${s.translatedText ?? ''}`)
       .join('\n');
-    console.log(`[YT Play Assistant] translation done — ${videoId}\n${rows}`);
+    console.log(`[YT Caption Translator] translation done — ${videoId}\n${rows}`);
   }, [status, record, videoId]);
 
   // The list is only meaningful once the job has reached a terminal state

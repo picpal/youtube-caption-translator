@@ -10,7 +10,9 @@ import type { VideoSummary } from '~/types/summary';
 // cursors, indexes, or more complex multi-store transactions, `idb` is
 // worth revisiting then — YAGNI applies.
 
-export const DB_NAME = 'youtube-play-assistant';
+// Storage key, not a display name — changing it starts a fresh empty
+// database (existing rows under the old name are orphaned, not migrated).
+export const DB_NAME = 'youtube-caption-translator';
 export const DB_VERSION = 3;
 export const STORE_NAME = 'videos';
 // M2: one record per video, keyed the same way as `videos` so it can be

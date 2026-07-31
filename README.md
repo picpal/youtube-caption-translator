@@ -1,8 +1,8 @@
-# YouTube Play Assistant
+# YouTube Caption Translator
 
-Personal-use Chrome extension that translates English YouTube tech talks into
-Korean subtitles, provides a synchronized transcript, search, bookmarks, and
-Markdown export.
+Personal-use Chrome extension that translates YouTube tech-talk captions
+into a selectable target language, with a synchronized click-to-seek
+transcript, AI summary, and Markdown/PDF export.
 
 See [PRD.md](./PRD.md) and [IMPLEMENTATION_PLAN.md](./IMPLEMENTATION_PLAN.md)
 for scope and roadmap. Per-milestone plans live in

@@ -1,8 +1,8 @@
-# PRD: YouTube Play Assistant (개인용)
+# PRD: YouTube Caption Translator (개인용)
 
 ## 0. 문서 정보
 
-- 문서명: YouTube Play Assistant PRD
+- 문서명: YouTube Caption Translator PRD
 - 버전: v0.2 (개인용 리비전)
 - 원본: `ai_technical_video_player_prd.md` v0.1
 - 목적: YouTube 영어 기술 영상을 한국어 자막·스크립트·북마크로 학습하기 위한 **개인용 Chrome 확장 프로그램** 정의

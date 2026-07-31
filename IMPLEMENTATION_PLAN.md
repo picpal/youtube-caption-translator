@@ -1,7 +1,7 @@
-# Implementation Plan — YouTube Play Assistant
+# Implementation Plan — YouTube Caption Translator
 
 - 관련 문서: [PRD.md](./PRD.md)
-- 저장소: https://github.com/picpal/youtube-play-assistant.git
+- 저장소: https://github.com/picpal/youtube-caption-translator.git
 - 작성일: 2026-07-25
 - 원칙: 개인용 · MVP 우선 · 각 마일스톤마다 실제로 유튜브에서 동작 확인
 
@@ -19,7 +19,7 @@
 | Side Panel | Chrome Side Panel API |
 | Content Script | 자막 오버레이 + 재생 시간 동기화만 |
 | Background SW | API 키 접근·Gemini 호출·캐시 관리 |
-| 저장소 호스팅 | GitHub (`picpal/youtube-play-assistant`) |
+| 저장소 호스팅 | GitHub (`picpal/youtube-caption-translator`) |
 
 ---
 

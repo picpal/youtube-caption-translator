@@ -1,9 +1,9 @@
 {
-  "name": "youtube-play-assistant",
+  "name": "youtube-caption-translator",
   "version": "0.0.1",
   "private": true,
   "type": "module",
-  "description": "Personal YouTube learning Chrome extension (Korean subtitles + transcript)",
+  "description": "Personal YouTube learning Chrome extension that translates tech-talk captions into a selectable language, with synchronized transcript",
   "scripts": {
     "dev": "wxt",
     "build": "wxt build",

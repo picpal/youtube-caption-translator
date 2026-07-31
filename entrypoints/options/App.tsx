@@ -52,7 +52,7 @@ export function App() {
         <div className="flex items-center gap-2.5 border-b border-[#eeeeef] bg-[#fbfbfc] px-6 py-3.5 dark:border-[#262626] dark:bg-[#171717]">
           <span className="block h-4 w-4 rounded-[4px] bg-[#17181a] dark:bg-[#ededed]" />
           <span className="text-[13px] font-semibold text-[#17181a] dark:text-[#ededed]">
-            YouTube Play Assistant
+            YouTube Caption Translator
           </span>
           <span className="text-[13px] text-[#b3b6bb] dark:text-[#6f6f6f]">/</span>
           <span className="text-[13px] text-[#3d4045] dark:text-[#c9c9c9]">설정</span>

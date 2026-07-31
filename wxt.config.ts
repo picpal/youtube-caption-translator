@@ -5,8 +5,8 @@ export default defineConfig({
   srcDir: './src',
   entrypointsDir: '../entrypoints',
   manifest: {
-    name: 'YouTube Play Assistant',
-    description: 'YouTube tech talks with Korean subtitles and transcript',
+    name: 'YouTube Caption Translator',
+    description: 'Translate YouTube tech-talk captions into your chosen language, with synchronized transcript, summary, and export',
     permissions: ['storage', 'sidePanel'],
     host_permissions: [
       'https://www.youtube.com/*',
@@ -22,7 +22,7 @@ export default defineConfig({
       128: 'icons/128.png',
     },
     action: {
-      default_title: 'YouTube Play Assistant',
+      default_title: 'YouTube Caption Translator',
       default_icon: {
         16: 'icons/16.png',
         32: 'icons/32.png',
