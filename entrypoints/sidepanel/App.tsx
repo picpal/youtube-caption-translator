@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type RefObject } from 'react';
 import { Button } from '~/components/Button';
+import { DownloadMenu } from '~/components/DownloadMenu';
 import { StatusBadge } from '~/components/StatusBadge';
 import { SummaryPanel } from '~/components/SummaryPanel';
 import { TranscriptList, type DisplayMode } from '~/components/TranscriptList';
@@ -156,6 +157,7 @@ export function App() {
           <StatusBadge tone={loading ? 'muted' : present ? 'ok' : 'warn'}>
             {loading ? '확인 중' : present ? '준비됨' : '설정 필요'}
           </StatusBadge>
+          {ready && <DownloadMenu />}
           <button
             type="button"
             onClick={() => chrome.runtime.openOptionsPage()}
