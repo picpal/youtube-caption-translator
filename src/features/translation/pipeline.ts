@@ -310,8 +310,7 @@ async function failPipeline(
     // Best-effort chunk counts for a step-1/2 failure: `rec.totalBatches` is
     // only meaningfully nonzero here when `base` (a preserved prior record)
     // already had chunk progress from an earlier attempt — a fresh failure
-    // has nothing chunk-level to report yet, which is exactly what 0/0 (and
-    // progressPercent's divide-by-zero guard) conveys.
+    // has nothing chunk-level to report yet, which is exactly what 0/0 conveys.
     chunkIndex: rec.completedBatches,
     totalChunks: rec.totalBatches,
   });

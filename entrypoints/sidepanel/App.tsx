@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useRef, useState, type RefObject } from 'react';
+import { useEffect, useRef, useState, type RefObject } from 'react';
 import { Button } from '~/components/Button';
 import { StatusBadge } from '~/components/StatusBadge';
 import { SummaryPanel } from '~/components/SummaryPanel';
@@ -11,10 +11,7 @@ import { useSummary } from '~/features/summary/useSummary';
 import { translationErrorDisplay } from '~/features/translation/error-display';
 import {
   formatElapsedTime,
-  progressPercent,
-  stepForStatus,
   translatePhaseLabel,
-  type ProcessingStep,
 } from '~/features/translation/progress-display';
 import { useTranslation, type TranslationProgressState } from '~/features/translation/useTranslation';
 import { useCurrentVideo } from '~/features/video/useCurrentVideo';
@@ -581,8 +578,6 @@ function ReadyBody({ scrollContainerRef }: { scrollContainerRef: RefObject<HTMLD
         />
       </div>
 
-      <ProcessingStepper status={status} progress={progress} record={record} elapsedSeconds={elapsedSeconds} />
-
       {showTranscriptList && record !== null && (
         <div ref={tabSectionRef} className="border-t border-neutral-200 dark:border-neutral-800">
           {showSummaryTab ? (
@@ -693,8 +688,7 @@ function ReadyBody({ scrollContainerRef }: { scrollContainerRef: RefObject<HTMLD
 //   there is nothing to generate from and the button is disabled with that
 //   explained instead.
 // - `extracting`/`analyzing`/`translating`: disabled with a step-aware
-//   label; `translating` additionally shows the live, divide-by-zero-safe
-//   percent via `progressPercent`.
+//   label (phase, chunk, and elapsed-time detail while translating).
 // - `done`: disabled, reads as complete, PLUS (Task 10) a secondary
 //   `다시 생성` affordance calling the same `start()` — otherwise a cached
 //   `done` video could never be re-checked against YouTube's current
@@ -842,129 +836,6 @@ function processingLabel(
   const chunkSuffix = progress.totalChunks > 1 ? ` (${progress.chunkIndex}/${progress.totalChunks})` : '';
   const base = phaseLabel ? `한국어 번역 중… ${phaseLabel}${chunkSuffix}` : `한국어 번역 중…${chunkSuffix}`;
   return `${base}${elapsedSuffix}`;
-}
-
-const STEP_LABELS = ['Transcript 추출', '용어 분석', '한국어 번역', '자막 적용'] as const;
-
-type StepVisualState = 'done' | 'active' | 'failed' | 'pending';
-
-const STEP_TEXT_CLASS: Record<StepVisualState, string> = {
-  done: 'text-neutral-600 dark:text-neutral-400',
-  active: 'font-semibold text-neutral-900 dark:text-neutral-100',
-  failed: 'font-semibold text-red-600 dark:text-red-400',
-  pending: 'text-neutral-400 dark:text-neutral-600',
-};
-
-// `status === 'done'` marks every step done regardless of `activeStep`'s
-// exact value — once the whole job is done there is nothing left mid-flight
-// to distinguish between steps.
-function stepVisualState(
-  stepNum: number,
-  activeStep: ProcessingStep,
-  status: TranslationStatus | 'idle',
-): StepVisualState {
-  if (status === 'done') return 'done';
-  if (stepNum < activeStep) return 'done';
-  if (stepNum === activeStep && activeStep !== 0) return status === 'failed' ? 'failed' : 'active';
-  return 'pending';
-}
-
-// The idle-state hint is the original static copy; while a translate-step
-// job is actively processing it is replaced with the live sending/
-// receiving/parsing phase label (M2 refactor §4 — no more per-segment
-// counter) plus (Task R2) the panel-local elapsed-time counter, joined with
-// ` · ` and filtered for whichever parts apply — `translatePhaseLabel`
-// returning `null` (no phase yet, or a step other than translating) just
-// omits that one clause rather than the whole caption.
-function stepperCaption(
-  status: TranslationStatus | 'idle',
-  progress: TranslationProgressState | null,
-  elapsedSeconds: number,
-): string {
-  if (status === 'failed') return '실패한 단계부터 다시 시도할 수 있습니다';
-  if (status === 'done') return '번역이 완료되었습니다';
-  if (status === 'idle') return '약 40초 소요 · 처리 중에도 영상은 계속 재생됩니다';
-  if (status === 'translating') {
-    const phaseLabel = translatePhaseLabel(progress?.phase);
-    const parts = [phaseLabel, formatElapsedTime(elapsedSeconds), '처리 중에도 영상은 계속 재생됩니다'].filter(
-      (part): part is string => part !== null,
-    );
-    return parts.join(' · ');
-  }
-  return '처리 중에도 영상은 계속 재생됩니다';
-}
-
-// M2 Task 8 — live 처리 단계 stepper. `stepForStatus` covers the plain
-// status->step mapping (extracting=1/analyzing=2/translating=3/done=4); the
-// `activeStep` resolution below layers on top of it for the one case that
-// mapping alone cannot express — WHICH step a `failed` status stopped at:
-// 1) prefer the live Port's `progress.step` (most current, and set together
-//    with `status` in useTranslation's own port-message handler, so this
-//    covers a failure that happened live in this session);
-// 2) fall back to the persisted record's `error.step` for a job that failed
-//    in a past session and was never resumed here (no Port message ever
-//    arrives for it this time — this is the common "reopen the panel on an
-//    old failure" path);
-// 3) finally fall back to the plain mapping (idle, or a done/failed video
-//    this session never streamed any progress for at all).
-function ProcessingStepper({
-  status,
-  progress,
-  record,
-  elapsedSeconds,
-}: {
-  status: TranslationStatus | 'idle';
-  progress: TranslationProgressState | null;
-  record: TranslationRecord | null;
-  elapsedSeconds: number;
-}) {
-  const activeStep = progress?.step ?? stepForStatus(record?.error?.step ?? status);
-
-  return (
-    <div className="flex flex-col gap-2 border-t border-neutral-200 px-4 py-3.5 dark:border-neutral-800">
-      <span className="text-[10.5px] font-semibold tracking-wide text-neutral-400 dark:text-neutral-500">
-        처리 단계
-      </span>
-      <div className="flex flex-wrap items-center gap-2 text-[11px] tabular-nums text-neutral-500 dark:text-neutral-400">
-        {STEP_LABELS.map((label, i) => {
-          const stepNum = i + 1;
-          const state = stepVisualState(stepNum, activeStep, status);
-          const marker = state === 'done' ? '✓' : state === 'failed' ? '!' : String(stepNum);
-          // Task R2: the active step-3 marker pulses in place of the plain
-          // numeral while a chunk is genuinely in flight — a subtle,
-          // fixed-size swap (no layout shift) so the stepper itself echoes
-          // the same liveness signal as the button above.
-          const isActiveTranslating = state === 'active' && status === 'translating';
-          // Chunk-based percent (M2 refactor §4) — monotonic across the
-          // job: `chunkIndex` only ever advances forward as chunks complete,
-          // never regresses on a same-chunk retry.
-          const percent =
-            state === 'active' && status === 'translating' && progress
-              ? ` ${progressPercent(progress.chunkIndex, progress.totalChunks)}%`
-              : '';
-          return (
-            <Fragment key={label}>
-              {i > 0 && <span className="text-neutral-300 dark:text-neutral-700">→</span>}
-              <span className={`inline-flex items-center gap-1 ${STEP_TEXT_CLASS[state]}`}>
-                {isActiveTranslating ? (
-                  <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-current" aria-hidden />
-                ) : (
-                  <span>{marker}</span>
-                )}
-                <span>
-                  {label}
-                  {percent}
-                </span>
-              </span>
-            </Fragment>
-          );
-        })}
-      </div>
-      <span className="text-[10.5px] text-neutral-400 dark:text-neutral-600">
-        {stepperCaption(status, progress, elapsedSeconds)}
-      </span>
-    </div>
-  );
 }
 
 // The `no-metadata` retry affordance: forces a full page reload of the
