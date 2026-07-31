@@ -594,7 +594,7 @@ function ReadyBody({ scrollContainerRef }: { scrollContainerRef: RefObject<HTMLD
       <VideoCard video={video} loading={loading} />
 
       <div className="flex gap-3 px-4">
-        <div className="min-w-0 flex-1">
+        <div className="flex min-w-0 flex-1 flex-col">
           <span className="text-[10.5px] font-semibold tracking-wide text-neutral-400 dark:text-neutral-500">
             자막 표시
           </span>
@@ -627,21 +627,31 @@ function ReadyBody({ scrollContainerRef }: { scrollContainerRef: RefObject<HTMLD
           <span className="text-[10.5px] font-semibold tracking-wide text-neutral-400 dark:text-neutral-500">
             번역 언어
           </span>
-          <select
-            value={targetLang}
-            onChange={(e) => {
-              const lang = e.target.value as TargetLang;
-              setTargetLang(lang);
-              void saveTargetLang(lang).catch(() => {});
-            }}
-            className="mt-2 w-full rounded-[7px] border border-neutral-200 bg-white py-2 pl-2 pr-1 text-[11.5px] text-neutral-900 dark:border-neutral-800 dark:bg-neutral-950 dark:text-neutral-100"
-          >
-            {TARGET_LANGS.map((lang) => (
-              <option key={lang} value={lang}>
-                {TARGET_LANG_LABELS[lang]}
-              </option>
-            ))}
-          </select>
+          <div className="relative mt-2 w-full">
+            <select
+              value={targetLang}
+              onChange={(e) => {
+                const lang = e.target.value as TargetLang;
+                setTargetLang(lang);
+                void saveTargetLang(lang).catch(() => {});
+              }}
+              className="h-[35px] w-full appearance-none rounded-[7px] border border-neutral-200 bg-white pl-2 pr-6 text-[11.5px] text-neutral-900 dark:border-neutral-800 dark:bg-neutral-950 dark:text-neutral-100"
+            >
+              {TARGET_LANGS.map((lang) => (
+                <option key={lang} value={lang}>
+                  {TARGET_LANG_LABELS[lang]}
+                </option>
+              ))}
+            </select>
+            {/* appearance-none removes the native arrow (whose position can't
+                be balanced); this chevron is centered in the pr-6 gutter. */}
+            <span
+              aria-hidden
+              className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-[9px] text-neutral-400 dark:text-neutral-500"
+            >
+              ▼
+            </span>
+          </div>
         </div>
       </div>
 
