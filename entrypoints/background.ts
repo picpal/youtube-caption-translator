@@ -370,14 +370,17 @@ export async function handle<T extends AppMessage['type']>(
                 type: 'REQUEST_TRANSCRIPT',
                 videoId,
               } satisfies RequestTranscriptMessage)) as RequestTranscriptResponse,
-            // Deliberately forward the CALL's `targetLang` argument, not
-            // this closure's own `targetLang` const above: the pipeline
-            // decides the EFFECTIVE language itself (resume rule — a
-            // non-terminal existing record resumes in ITS stamped language,
-            // which can differ from the setting read here), so background
-            // must never bake this closure's value into the call.
-            analyzeGlossary: (fullText, key, targetLang) => analyzeGlossary(fullText, key, targetLang),
-            translateBatch: (segs, glossary, key, targetLang) => translateBatch(segs, glossary, key, targetLang),
+            // Deliberately forward the CALL's language argument, not this
+            // closure's own `targetLang` const above: the pipeline decides
+            // the EFFECTIVE language itself (resume rule — a non-terminal
+            // existing record resumes in ITS stamped language, which can
+            // differ from the setting read here), so background must never
+            // bake this closure's value into the call. Named `lang` (not
+            // `targetLang`) so it cannot shadow the outer const — dropping
+            // this parameter would then be a compile error instead of a
+            // silent rebind to the closure.
+            analyzeGlossary: (fullText, key, lang) => analyzeGlossary(fullText, key, lang),
+            translateBatch: (segs, glossary, key, lang) => translateBatch(segs, glossary, key, lang),
             getTranslation,
             putTranslation,
             upsertBatch,

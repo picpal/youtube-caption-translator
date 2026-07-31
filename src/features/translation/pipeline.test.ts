@@ -757,8 +757,8 @@ describe('runTranslationPipeline', () => {
       expect(result.targetLang).toBe('ko');
     });
 
-    it('a TERMINAL record (failed, glossary already resolved) with a differing stamped language is treated as absent — no glossary/batch reuse, fresh restart in the incoming targetLang', async () => {
-      const rows = makeRows(5); // 1 chunk
+    it('a TERMINAL record (failed, glossary already resolved, one chunk already translated) with a differing stamped language is treated as absent — no glossary/batch reuse, fresh restart in the incoming targetLang', async () => {
+      const rows = makeRows(70); // 2 chunks: [50, 20]
       const parsedSegments = rowsToSegments(reconstructSentences(dedupeRows(rows)), 'v1');
       const hash = captionHash(parsedSegments.map((s) => s.sourceText).join('\n'));
 
@@ -771,10 +771,17 @@ describe('runTranslationPipeline', () => {
         // same-language resume would reuse it (glossaryResolved(record) is
         // true for this shape); the language mismatch must override that.
         error: { step: 'translating', reason: 'rate_limit: exhausted' },
-        segments: parsedSegments,
+        // Chunk 0 (indices 0-49) is ALREADY fully translated from the prior
+        // 'ko' run — completedBatches: 1 records that, and a same-language
+        // RESUME would derive it as non-pending (no null segments in its
+        // range) and never re-send it. Chunk 1 (50-69) never landed.
+        segments: parsedSegments.map((s, i) => ({
+          ...s,
+          translatedText: i < 50 ? `기존-${i}` : null,
+        })),
         glossary: [{ term: 'OldTerm', translation: 'OldTranslation', keepOriginal: false }],
-        completedBatches: 0,
-        totalBatches: 1,
+        completedBatches: 1,
+        totalBatches: 2,
         targetLang: 'ko',
         createdAt: '2026-01-01T00:00:00.000Z',
         updatedAt: '2026-01-01T00:00:00.000Z',
@@ -802,10 +809,22 @@ describe('runTranslationPipeline', () => {
       // (glossaryResolved(record) === true) — the mismatch forces it anyway.
       expect(analyzeGlossary).toHaveBeenCalledOnce();
       expect(analyzeGlossary).toHaveBeenCalledWith(expect.any(String), 'k', 'ja');
+      // Both chunks re-sent, including chunk 0 — a same-language resume
+      // would have called translateBatch only once, for chunk 1 alone (the
+      // only one with a pending/null segment). The fresh skeleton discards
+      // the prior segments entirely, so chunk 0 becomes pending again too.
+      expect(translateBatch).toHaveBeenCalledTimes(2);
+      const requestedFirstIndices = translateBatch.mock.calls.map(([segs]) => (segs as TranscriptSegment[])[0].index);
+      expect(requestedFirstIndices).toEqual([0, 50]);
       expect(translateBatch).toHaveBeenCalledWith(expect.any(Array), expect.any(Array), 'k', 'ja');
       expect(result.status).toBe('done');
       expect(result.targetLang).toBe('ja');
       expect(result.glossary).toEqual([{ term: 'NewTerm', translation: 'NewTranslation', keepOriginal: false }]);
+      // None of the old 'ko' translations survive the restart, including
+      // the previously "already done" chunk 0 — every segment was
+      // re-translated fresh.
+      expect(result.segments.some((s) => s.translatedText?.startsWith('기존-'))).toBe(false);
+      expect(result.segments.every((s) => s.translatedText === `new-${s.index}`)).toBe(true);
     });
   });
 

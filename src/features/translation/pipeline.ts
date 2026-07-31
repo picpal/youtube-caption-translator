@@ -341,31 +341,36 @@ function escapeRegExp(term: string): string {
  * exactly that leftover-English case deterministically: for every
  * `keepOriginal:false` glossary entry whose term appears in a segment's
  * `sourceText`, if that segment's `translatedText` contains the literal
- * English term as a standalone token AND does NOT already contain the
- * glossary's canonical Korean translation anywhere, every such occurrence of
- * the term is replaced with that translation.
+ * original-language term as a standalone token AND does NOT already contain
+ * the glossary's canonical target-language translation anywhere, every such
+ * occurrence of the term is replaced with that translation.
  *
  * Two guards, both fixed after review-round-1 caught real corruption cases:
  * - `text.includes(entry.translation)` — `TRANSLATION_RULES` (gemini.ts)
- *   also tells the model it may "add the English term in parentheses when
- *   it helps clarity", e.g. `"리액트(React)를 사용합니다"`. That string
- *   already contains BOTH the Korean translation and the bare English term —
- *   without this guard, the old code rewrote it to `"리액트(리액트)를..."`,
- *   corrupting an already-correct translation. If the canonical Korean form
- *   is present anywhere in the text, the term was handled; leave it alone.
+ *   also tells the model it may "add the original term in parentheses when
+ *   it helps clarity" (`translationRulesFor` in gemini.ts), e.g. for a
+ *   Korean target: `"리액트(React)를 사용합니다"`. That string already
+ *   contains BOTH the target-language translation and the bare original
+ *   term — without this guard, the old code rewrote it to
+ *   `"리액트(리액트)를..."`, corrupting an already-correct translation. If
+ *   the canonical target-language form is present anywhere in the text, the
+ *   term was handled; leave it alone.
  * - `\b...\b` word-boundary anchors — without them, a short term like
  *   `"Go"` matched as a bare substring inside `"Google"`/`"ago"`. JS's `\b`
- *   is defined against `\w` ([A-Za-z0-9_]), and Korean characters are NOT
- *   `\w`, so the boundary still fires correctly at an English-term/Korean
+ *   is defined against `\w` ([A-Za-z0-9_]); none of the non-Latin-script
+ *   targets this pipeline supports (Korean, Japanese, Chinese) are `\w`, so
+ *   the boundary still fires correctly at an original-term/target-language
  *   transition with no whitespace needed (e.g. `"React훅"` still matches
- *   `\bReact\b`) — the anchors are only weak for terms glued to OTHER
- *   ASCII word characters, which is an acceptable, rare false-negative for
- *   a best-effort safety net.
+ *   `\bReact\b` for a Korean target) — the anchors are only weak for terms
+ *   glued to OTHER ASCII word characters, which is an acceptable, rare
+ *   false-negative for a best-effort safety net. For a Latin-script target
+ *   (English), `\b` already behaves as ordinary English word-boundary
+ *   matching, same as the source side.
  *
- * Segments where the model already used the Korean translation (with or
- * without a parenthetical English echo) are untouched. `keepOriginal:true`
- * entries are intentionally left alone — the term is SUPPOSED to stay in
- * the original language, so there is nothing to unify.
+ * Segments where the model already used the target-language translation
+ * (with or without a parenthetical original-term echo) are untouched.
+ * `keepOriginal:true` entries are intentionally left alone — the term is
+ * SUPPOSED to stay in the original language, so there is nothing to unify.
  */
 export function applyGlossaryConsistency(
   segments: TranscriptSegment[],
@@ -381,8 +386,8 @@ export function applyGlossaryConsistency(
       const escaped = escapeRegExp(entry.term);
       const testRe = new RegExp(`\\b${escaped}\\b`, 'i');
       if (!testRe.test(seg.sourceText)) continue;
-      if (!testRe.test(text)) continue; // nothing left in English to fix here
-      if (text.includes(entry.translation)) continue; // already has the canonical Korean form
+      if (!testRe.test(text)) continue; // nothing left in the original-language term to fix here
+      if (text.includes(entry.translation)) continue; // already has the canonical target-language form
       const replaceRe = new RegExp(`\\b${escaped}\\b`, 'gi');
       text = text.replace(replaceRe, entry.translation);
     }

@@ -13,7 +13,7 @@ export interface TranscriptSegment {
   index: number;             // original order (batch/resume key)
   startSec: number;
   endSec: number;            // next segment's start (last = video duration)
-  sourceText: string;        // reconstructed English after sentence-join/dedupe
+  sourceText: string;        // reconstructed source-language caption text after sentence-join/dedupe (not assumed English — see TranslationRecord.sourceLang)
   translatedText: string | null;  // null = not yet translated
 }
 
@@ -35,7 +35,12 @@ export type TranslationStatus =
 export interface TranslationRecord {
   videoId: string;           // key
   captionHash: string;       // hash of all sourceText — cache-invalidation key (PRD §12)
-  sourceLang: string;        // 'en'
+  // Hardcoded to 'en' by every write site (pipeline.ts) — a legacy
+  // placeholder predating source-language generalization (Task 2 made the
+  // Gemini prompts themselves source-agnostic, "it may be in any
+  // language"), NOT an actual detected source language. Nothing in the repo
+  // reads this field.
+  sourceLang: string;
   status: TranslationStatus;
   segments: TranscriptSegment[];
   glossary: GlossaryEntry[];

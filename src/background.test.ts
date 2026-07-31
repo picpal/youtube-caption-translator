@@ -1,9 +1,10 @@
 import 'fake-indexeddb/auto';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { DB_NAME, getVideo, getTranslation, getSummary, putTranslation } from '~/lib/db';
-import { generateSummary, MODEL_ID } from '~/lib/gemini';
+import { analyzeGlossary, generateSummary, MODEL_ID } from '~/lib/gemini';
 import type { GenerateSummaryResult } from '~/lib/gemini';
-import type { AppMessage } from '~/types/message';
+import { captionHash, dedupeRows, reconstructSentences, rowsToSegments } from '~/lib/transcript-parse';
+import type { AppMessage, RawTranscriptRow } from '~/types/message';
 import type { TranslationRecord } from '~/types/transcript';
 import { handle } from '../entrypoints/background';
 
@@ -12,12 +13,16 @@ import { handle } from '../entrypoints/background';
 // call, everything else (getTranslation/putSummary, the in-flight dedup map,
 // summaryRetryPlan) is this repo's own code and already exercised for real
 // against fake-indexeddb, same as every other describe block in this file.
-// Partial mock (not a full auto-mock) so MODEL_ID and every OTHER gemini.ts
-// export stay real — nothing else in this file (or a future addition to it)
-// should silently start getting auto-mocked undefined stubs.
+// `analyzeGlossary` (fix round 1, Important #1) is mocked for the same
+// reason — the START_TRANSLATION language-boundary test below needs to
+// assert on the argument it actually received, which would otherwise
+// require a real Gemini network call. Partial mock (not a full auto-mock)
+// so MODEL_ID and every OTHER gemini.ts export (notably `translateBatch`,
+// left real) stay real — nothing else in this file (or a future addition to
+// it) should silently start getting auto-mocked undefined stubs.
 vi.mock('~/lib/gemini', async (importOriginal) => {
   const actual = await importOriginal<typeof import('~/lib/gemini')>();
-  return { ...actual, generateSummary: vi.fn() };
+  return { ...actual, generateSummary: vi.fn(), analyzeGlossary: vi.fn() };
 });
 
 // Closes the M0 review's "no test for the message dispatch layer" gap: this
@@ -405,6 +410,65 @@ describe('START_TRANSLATION dedup', () => {
     );
     expect(res).toEqual({ ok: false, error: 'API key not set' });
     expect(tabsSendMessageMock).not.toHaveBeenCalled();
+  });
+});
+
+// Fix round 1, Important #1 — pins the deps boundary at the START_TRANSLATION
+// injection site: the pipeline decides the EFFECTIVE language itself (the
+// resume rule), and background's `analyzeGlossary`/`translateBatch` wrapper
+// lambdas must forward whatever the PIPELINE calls them with, never the
+// closure's own `targetLang` const read from the current setting. This is
+// the only test that would catch a regression where those wrappers get
+// "simplified" back into closing over the setting instead of forwarding the
+// call argument.
+describe('START_TRANSLATION language boundary', () => {
+  beforeEach(() => {
+    vi.mocked(analyzeGlossary).mockReset();
+  });
+
+  it('forwards the resuming record\'s own stamped language to analyzeGlossary, not the current (different) setting', async () => {
+    const tabId = freshTabId();
+    await chrome.storage.local.set({
+      geminiApiKey: 'test-key',
+      geminiApiKeySavedAt: new Date().toISOString(),
+      // The CURRENT setting is 'ja' — this must NOT be what analyzeGlossary
+      // receives below, since the existing record is non-terminal and the
+      // resume rule says record state decides.
+      translationTargetLang: 'ja',
+    });
+
+    const videoId = 'lang-boundary-video';
+    const rows: RawTranscriptRow[] = [{ tsText: '0:00', text: 'Hello world.' }];
+    const parsedSegments = rowsToSegments(reconstructSentences(dedupeRows(rows)), videoId);
+    const hash = captionHash(parsedSegments.map((s) => s.sourceText).join('\n'));
+
+    // Non-terminal — interrupted before glossary ever resolved (e.g. SW
+    // eviction), stamped 'ko' from an earlier run.
+    await putTranslation({
+      videoId,
+      captionHash: hash,
+      sourceLang: 'en',
+      status: 'analyzing',
+      segments: parsedSegments,
+      glossary: [],
+      completedBatches: 0,
+      totalBatches: 1,
+      targetLang: 'ko',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    });
+
+    tabsSendMessageMock.mockResolvedValueOnce(rows);
+    vi.mocked(analyzeGlossary).mockResolvedValue({ ok: true, topic: 't', glossary: [] });
+
+    await handle({ type: 'START_TRANSLATION', payload: { videoId, tabId } }, senderFor(undefined));
+
+    await vi.waitFor(() => {
+      expect(analyzeGlossary).toHaveBeenCalled();
+    });
+    // The record's own stamped 'ko' — never the 'ja' setting read from the
+    // outer closure.
+    expect(analyzeGlossary).toHaveBeenCalledWith(expect.any(String), 'test-key', 'ko');
   });
 });
 
