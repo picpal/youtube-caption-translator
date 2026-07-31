@@ -73,7 +73,10 @@ export type AppMessage =
   // convention.
   | { type: 'GET_TRANSLATION'; payload: { videoId: string } }
   // panel -> background: read the cached summary for a video (summary spec
-  // §3). `null` follows GET_TRANSLATION's convention — nothing cached yet.
+  // §3). Response is `{ summary, generating }`, not a bare nullable — see
+  // AppResponseMap's GET_SUMMARY doc comment below for why a plain
+  // `summary: null` stopped being enough once summary generation moved to
+  // running in parallel with translation.
   | { type: 'GET_SUMMARY'; payload: { videoId: string } }
   // panel/export page -> background: read the cached VideoMeta by videoId.
   // Deliberately videoId-scoped, unlike the tabId-scoped GET_CURRENT_VIDEO:
@@ -131,7 +134,22 @@ export type AppResponseMap = {
   // pipeline (`status` other than 'done'/'failed'); callers resume progress
   // via the Port rather than polling this.
   GET_TRANSLATION: TranslationRecord | null;
-  GET_SUMMARY: VideoSummary | null;
+  // `summary`/`generating` pair (2026-07-31, summary-inflight fix) — replaces
+  // the old bare `VideoSummary | null`. Since `9197809` the summary job
+  // starts automatically in parallel with translation (background.ts's
+  // `triggerParallelSummary`), and its latency is wildly variable on
+  // identical-size input — real measurements the same day ranged from 35s to
+  // ~5 minutes for what should be a comparable call. That means translation
+  // reaching `done` (which opens the Summary tab) no longer implies the
+  // summary is anywhere near ready: `summary === null` used to mean only "no
+  // summary yet, show the 요약 생성 button", but now it also covers "still
+  // being generated in the background, will show up any second" — two
+  // states the panel MUST render differently (spinner vs. button), and a
+  // bare `null` can't tell them apart. `generating` is exactly
+  // `inFlightSummaries.has(videoId)` in background.ts — the SAME map that
+  // already single-flights GENERATE_SUMMARY calls, not a new source of
+  // truth.
+  GET_SUMMARY: { summary: VideoSummary | null; generating: boolean };
   GET_VIDEO_META: VideoMeta | null;
   // `error` is the raw English reason message; the panel maps it to Korean
   // via translationErrorDisplay. A missing key is exactly 'API key not set'.

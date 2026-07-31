@@ -577,7 +577,15 @@ export async function handle<T extends AppMessage['type']>(
     }
     case 'GET_SUMMARY': {
       const { payload } = msg as Extract<AppMessage, { type: 'GET_SUMMARY' }>;
-      return (await getSummary(payload.videoId)) as AppResponseMap[T];
+      // `generating` is read straight off `inFlightSummaries` — no separate
+      // "is this job running" state to keep in sync, that map already IS the
+      // single truth `startSummaryJob`/`triggerParallelSummary` use for
+      // single-flighting. This is what lets `useSummary`'s initial load tell
+      // "nothing cached yet" apart from "still being generated" now that a
+      // summary job can be running with no GENERATE_SUMMARY call behind it at
+      // all (the parallel auto-trigger from `9197809`).
+      const summary = await getSummary(payload.videoId);
+      return { summary, generating: inFlightSummaries.has(payload.videoId) } as AppResponseMap[T];
     }
     case 'GENERATE_SUMMARY': {
       const { payload } = msg as Extract<AppMessage, { type: 'GENERATE_SUMMARY' }>;
@@ -619,7 +627,7 @@ function errorResponseFor(msg: AppMessage, err: unknown): AppResponseMap[AppMess
     case 'GET_VIDEO_META':
       return null;
     case 'GET_SUMMARY':
-      return null;
+      return { summary: null, generating: false };
     case 'GENERATE_SUMMARY':
       return { ok: false, error: message };
     case 'SUMMARY_REFRESHED':

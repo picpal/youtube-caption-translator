@@ -8,11 +8,16 @@ const VIDEO_ID = 'zjkBMFhNj_g';
 const VIDEO = { videoId: VIDEO_ID, title: 't', channelName: null, durationSeconds: null };
 const DONE = { videoId: VIDEO_ID, status: 'done', segments: [] };
 
+// summary-inflight fix — GET_SUMMARY's response is now `{ summary,
+// generating }`, not a bare nullable (see AppResponseMap's doc comment in
+// message.ts). `generating: false` here since none of these tests exercise
+// an in-flight summary job — fetchExportData only ever reads `.summary`
+// (see its own comment) and drops the flag entirely.
 function routeResponses(over: Record<string, unknown> = {}) {
   const table: Record<string, unknown> = {
     GET_VIDEO_META: VIDEO,
     GET_TRANSLATION: DONE,
-    GET_SUMMARY: null,
+    GET_SUMMARY: { summary: null, generating: false },
     ...over,
   };
   sendMessage.mockImplementation((msg: { type: string }) => Promise.resolve(table[msg.type]));
@@ -24,7 +29,7 @@ describe('fetchExportData', () => {
   });
 
   it('returns ready with all three records when the translation is done', async () => {
-    routeResponses({ GET_SUMMARY: { videoId: VIDEO_ID } });
+    routeResponses({ GET_SUMMARY: { summary: { videoId: VIDEO_ID }, generating: false } });
     const state = await fetchExportData(VIDEO_ID);
     expect(state.status).toBe('ready');
     if (state.status !== 'ready') throw new Error('unreachable');
@@ -78,7 +83,7 @@ describe('fetchExportData', () => {
 
     resolvers.GET_VIDEO_META(VIDEO);
     resolvers.GET_TRANSLATION(DONE);
-    resolvers.GET_SUMMARY(null);
+    resolvers.GET_SUMMARY({ summary: null, generating: false });
 
     const state = await resultPromise;
     expect(state.status).toBe('ready');

@@ -4,9 +4,34 @@ import {
   buildSummaryPrompt,
   normalizeSummaryPayload,
   summaryRetryPlan,
+  summaryStateFor,
 } from './summary';
+import type { VideoSummary } from '~/types/summary';
 
 const seg = (startSec: number, sourceText: string) => ({ startSec, sourceText });
+
+const SOME_SUMMARY = { videoId: 'v1' } as unknown as VideoSummary;
+
+describe('summaryStateFor', () => {
+  // summary-inflight fix — the three-way split `useSummary`'s initial
+  // GET_SUMMARY load branches on. `summary !== null` wins regardless of
+  // `generating`: a cache hit means the job (if any) already finished, and a
+  // stale `generating: true` racing the cache write is not a state this
+  // function needs to defend against — background flips `inFlightSummaries`
+  // before `SUMMARY_REFRESHED`/the response ever reach the panel.
+  it('is `done` whenever a summary is cached, regardless of `generating`', () => {
+    expect(summaryStateFor({ summary: SOME_SUMMARY, generating: false })).toBe('done');
+    expect(summaryStateFor({ summary: SOME_SUMMARY, generating: true })).toBe('done');
+  });
+
+  it('is `generating` when nothing is cached yet but a job is running', () => {
+    expect(summaryStateFor({ summary: null, generating: true })).toBe('generating');
+  });
+
+  it('is `idle` when nothing is cached and no job is running', () => {
+    expect(summaryStateFor({ summary: null, generating: false })).toBe('idle');
+  });
+});
 
 describe('buildSummaryPrompt', () => {
   it('renders one [startSec] line per segment in order', () => {

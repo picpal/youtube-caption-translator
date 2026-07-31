@@ -19,6 +19,32 @@ export const SUMMARY_MAX_ATTEMPTS = 3;
 export const SUMMARY_RATE_LIMIT_MAX_DELAY_MS = 60_000;
 export const SUMMARY_DEFAULT_RETRY_DELAY_MS = 5_000;
 
+// summary-inflight fix (2026-07-31/08-01) — the panel-side decision for
+// `useSummary`'s initial GET_SUMMARY load, pulled out as a pure function for
+// the same reason `activeSegmentIndex`/`shouldEmitTick` live in
+// playback-sync.ts rather than inline in a hook: this repo has no
+// hook-rendering test harness (see useSummary.test.ts's constant-only
+// coverage), so any branching worth locking in has to live somewhere a plain
+// vitest `it()` can call it directly.
+//
+// The three-way split matters because summary generation now starts
+// automatically alongside translation (`triggerParallelSummary`,
+// background.ts) instead of waiting for a panel-initiated GENERATE_SUMMARY.
+// Before that change, `summary === null` on load only ever meant "nothing
+// requested yet" — the 빈 상태 + 요약 생성 button was the only honest
+// response. Now a job can already be running with nobody having clicked
+// anything, so `null` splits into two states the panel must render
+// differently: still-cooking (spinner) vs. genuinely nothing (button).
+// `generating` (== `inFlightSummaries.has(videoId)` in background.ts) is
+// exactly the signal that tells the two apart.
+export function summaryStateFor(res: {
+  summary: VideoSummary | null;
+  generating: boolean;
+}): 'done' | 'generating' | 'idle' {
+  if (res.summary !== null) return 'done';
+  return res.generating ? 'generating' : 'idle';
+}
+
 export function buildSummaryPrompt(
   segments: readonly Pick<TranscriptSegment, 'startSec' | 'sourceText'>[],
   targetLang: TargetLang,

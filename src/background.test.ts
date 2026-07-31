@@ -729,6 +729,82 @@ describe('GENERATE_SUMMARY', () => {
   });
 });
 
+// summary-inflight fix (2026-08-01) — `generating` is read straight off
+// `inFlightSummaries`, the SAME map GENERATE_SUMMARY's single-flight suite
+// above exercises, so these tests use the identical stuck-promise technique
+// to hold a job open: `generateSummary` never mocked to actually resolve
+// until the test says so, giving a window to prove GET_SUMMARY sees
+// `generating: true` while it's still running.
+describe('GET_SUMMARY', () => {
+  beforeEach(() => {
+    vi.mocked(generateSummary).mockReset();
+  });
+
+  async function withApiKey(): Promise<void> {
+    await chrome.storage.local.set({ geminiApiKey: 'test-key', geminiApiKeySavedAt: new Date().toISOString() });
+  }
+
+  it('returns { summary: null, generating: false } when nothing is cached and no job is running', async () => {
+    const res = await handle({ type: 'GET_SUMMARY', payload: { videoId: 'nothing-video' } }, senderFor(undefined));
+
+    expect(res).toEqual({ summary: null, generating: false });
+  });
+
+  it('returns the cached summary alongside generating: false once persisted', async () => {
+    const summary = existingSummary('cached-video');
+    await putSummary(summary);
+
+    const res = await handle({ type: 'GET_SUMMARY', payload: { videoId: 'cached-video' } }, senderFor(undefined));
+
+    expect(res).toEqual({ summary, generating: false });
+  });
+
+  // The whole reason this fix exists: a job started by GENERATE_SUMMARY (or,
+  // in production, the parallel auto-trigger from `9197809`) but not yet
+  // resolved must read back as `generating: true` with nothing cached yet —
+  // NOT the same `{ summary: null, generating: false }` as "nothing
+  // requested at all", which is exactly what `useSummary`'s panel-side
+  // regression (spinner vs. empty-state button) turned on.
+  it('reports generating: true while a job is in flight, then generating: false with the summary once it lands', async () => {
+    await withApiKey();
+    await putTranslation(doneTranslationRecord('inflight-video'));
+
+    let resolveGemini!: (value: GenerateSummaryResult) => void;
+    const stuck = new Promise<GenerateSummaryResult>((resolve) => {
+      resolveGemini = resolve;
+    });
+    vi.mocked(generateSummary).mockReturnValueOnce(stuck);
+
+    const generateCall = handle(
+      { type: 'GENERATE_SUMMARY', payload: { videoId: 'inflight-video' } },
+      senderFor(undefined),
+    );
+    // Same reasoning as the single-flight test above: the dedup check is
+    // synchronous, but a real fake-indexeddb round trip happens before
+    // `generateSummary` is ever reached, so wait for that rather than
+    // asserting immediately.
+    await vi.waitFor(() => {
+      expect(generateSummary).toHaveBeenCalledTimes(1);
+    });
+
+    const midFlight = await handle(
+      { type: 'GET_SUMMARY', payload: { videoId: 'inflight-video' } },
+      senderFor(undefined),
+    );
+    expect(midFlight).toEqual({ summary: null, generating: true });
+
+    resolveGemini({ ok: true, payload: SUMMARY_PAYLOAD });
+    await generateCall;
+
+    const settled = await handle(
+      { type: 'GET_SUMMARY', payload: { videoId: 'inflight-video' } },
+      senderFor(undefined),
+    );
+    expect(settled.generating).toBe(false);
+    expect(settled.summary).not.toBeNull();
+  });
+});
+
 // Parallel-summary trigger (spec 2026-07-31-summary-parallel-design.md,
 // §3-4) — the transcript-side 다시 생성 button (a normal START_TRANSLATION
 // call) is a normal `runTranslationPipeline` invocation like any other; a

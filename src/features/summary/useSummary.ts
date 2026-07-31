@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { sendMessage } from '~/lib/messaging';
+import { summaryStateFor } from '~/lib/summary';
 import type { AppMessage } from '~/types/message';
 import type { VideoSummary } from '~/types/summary';
 
@@ -32,6 +33,31 @@ export const SUMMARY_SAFETY_TIMEOUT_MS = 360_000;
 // verbatim — the two safety-timer branches below share this one message.
 const SUMMARY_TIMEOUT_ERROR = '요약 생성 시간이 초과됐어요. 다시 시도해주세요.';
 
+// summary-inflight fix (2026-07-31/08-01) — how often the initial-load
+// convergence poll (below) re-sends GET_SUMMARY while a summary job it
+// noticed but did not itself start is still `generating`. There is no
+// promise to await here (unlike `startGenerate`'s GENERATE_SUMMARY call):
+// nobody on the panel side kicked this job off, it was already running in
+// the background when this hook's first GET_SUMMARY read caught it
+// mid-flight (spec background: since `9197809` a summary starts
+// automatically alongside translation). 5s is a plain "check back
+// periodically" cadence, not derived from the job's own timing — that
+// timing swings from ~35s to ~5 minutes on same-size input (see
+// SUMMARY_SAFETY_TIMEOUT_MS's doc comment), so no fixed interval could be
+// "tuned" to it anyway; this just needs to be short enough that the panel
+// notices convergence promptly without hammering background every render.
+const SUMMARY_POLL_INTERVAL_MS = 5_000;
+
+// Poll-path failure copy — distinct from SUMMARY_TIMEOUT_ERROR above because
+// this is a different convergence path with a different reason: the poll
+// isn't racing a fixed timeout, it's watching `inFlightSummaries` (via
+// `generating`) go from true to false with nothing cached at the end, i.e.
+// the job the panel noticed already failed on background's side. Background
+// never hands back WHY (GET_SUMMARY is a cache read, not a result channel),
+// so — same as SUMMARY_TIMEOUT_ERROR — this is panel-authored, not a
+// bg-originated reason string.
+const SUMMARY_GENERATING_FAILED_ERROR = '요약 생성에 실패했어요. 다시 시도해주세요.';
+
 interface UseSummaryParams {
   videoId: string | null;
   enabled: boolean;
@@ -59,6 +85,14 @@ export function useSummary({ videoId, enabled }: UseSummaryParams): UseSummaryRe
   // generation guards and usePlaybackSync's cancelled flag.
   const cycleRef = useRef(0);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Separate from `timerRef` on purpose: `timerRef` is `startGenerate`'s
+  // one-shot safety timeout for the MANUAL generate path (a promise it is
+  // actually awaiting). `pollTimerRef` below is the initial-load path's
+  // repeating convergence poll for a job THIS hook never started — the two
+  // timers have independent lifecycles (one fires once, the other
+  // reschedules itself) and can be live at the same time in principle, so
+  // they get their own ref/clear pair rather than sharing one.
+  const pollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const clearTimer = () => {
     if (timerRef.current !== null) {
@@ -67,22 +101,88 @@ export function useSummary({ videoId, enabled }: UseSummaryParams): UseSummaryRe
     }
   };
 
+  const clearPoll = () => {
+    if (pollTimerRef.current !== null) {
+      clearTimeout(pollTimerRef.current);
+      pollTimerRef.current = null;
+    }
+  };
+
   useEffect(() => {
     cycleRef.current += 1;
     const cycle = cycleRef.current;
     clearTimer();
+    clearPoll();
     setSummary(null);
     setError(null);
     if (!enabled || videoId === null) {
       setStatus('idle');
-      return clearTimer;
+      return () => {
+        clearTimer();
+        clearPoll();
+      };
     }
     setStatus('loading');
+
+    // summary-inflight fix — convergence poll for a summary job this hook
+    // noticed via `generating: true` but did not itself start (the parallel
+    // auto-trigger from `9197809` means one can already be running the
+    // moment this hook's very first GET_SUMMARY read lands). There is no
+    // GENERATE_SUMMARY promise to await here, so the only way to learn how
+    // it ends is to keep asking. Re-sends GET_SUMMARY every
+    // SUMMARY_POLL_INTERVAL_MS and folds the result through the SAME
+    // `summaryStateFor` used for the first read, so both call sites agree on
+    // what each response shape means:
+    // - 'done'       -> show it, stop polling.
+    // - 'idle'       -> the job that was running has since finished with
+    //                   nothing cached, i.e. it failed; surface that as
+    //                   `failed` (with panel-authored copy — background
+    //                   doesn't hand back a reason on a cache read) so the
+    //                   existing `failed` UI's 다시 시도 button becomes the
+    //                   recovery path, and stop polling.
+    // - 'generating' -> still running; schedule the next poll.
+    const pollUntilSettled = () => {
+      pollTimerRef.current = setTimeout(() => {
+        void sendMessage({ type: 'GET_SUMMARY', payload: { videoId } }).then(
+          (res) => {
+            if (cycleRef.current !== cycle) return;
+            const next = summaryStateFor(res);
+            if (next === 'generating') {
+              pollUntilSettled();
+              return;
+            }
+            pollTimerRef.current = null;
+            if (next === 'done') {
+              setSummary(res.summary);
+              setStatus('done');
+            } else {
+              setStatus('failed');
+              setError(SUMMARY_GENERATING_FAILED_ERROR);
+            }
+          },
+          () => {
+            // Background unreachable this round — retry on the next tick
+            // rather than giving up; same spirit as startGenerate's own
+            // rejection handling below (a dropped channel isn't proof the
+            // job itself failed).
+            if (cycleRef.current !== cycle) return;
+            pollUntilSettled();
+          },
+        );
+      }, SUMMARY_POLL_INTERVAL_MS);
+    };
+
     void sendMessage({ type: 'GET_SUMMARY', payload: { videoId } }).then(
-      (cached) => {
+      (res) => {
         if (cycleRef.current !== cycle) return;
-        setSummary(cached);
-        setStatus(cached ? 'done' : 'idle');
+        const next = summaryStateFor(res);
+        setSummary(res.summary);
+        setStatus(next);
+        // Only the initial read can kick off polling — once `generate()`
+        // takes over (status flips through 'loading'/'generating' there
+        // instead) this effect's own cycle guard means these callbacks are
+        // for a stale run anyway, so there is no risk of double-polling.
+        if (next === 'generating') pollUntilSettled();
       },
       () => {
         if (cycleRef.current !== cycle) return;
@@ -107,11 +207,15 @@ export function useSummary({ videoId, enabled }: UseSummaryParams): UseSummaryRe
         (refreshed) => {
           if (cycleRef.current !== cycle) return;
           // Background only broadcasts this AFTER `putSummary` persisted the
-          // new summary, so a `null` refetch here would mean the cache was
-          // cleared out from under us mid-flight — leave state as-is rather
-          // than regress a shown summary back to empty.
-          if (refreshed) {
-            setSummary(refreshed);
+          // new summary, so a `summary: null` refetch here would mean the
+          // cache was cleared out from under us mid-flight — leave state
+          // as-is rather than regress a shown summary back to empty.
+          if (refreshed.summary) {
+            // This can race the poll above (both noticed the same job, this
+            // arrived first) — stop polling so a stray in-flight poll
+            // doesn't overwrite the `done` state this just set.
+            clearPoll();
+            setSummary(refreshed.summary);
             setStatus('done');
           }
         },
@@ -124,6 +228,7 @@ export function useSummary({ videoId, enabled }: UseSummaryParams): UseSummaryRe
 
     return () => {
       clearTimer();
+      clearPoll();
       chrome.runtime.onMessage.removeListener(handleSummaryRefreshed);
     };
   }, [videoId, enabled]);
@@ -140,10 +245,10 @@ export function useSummary({ videoId, enabled }: UseSummaryParams): UseSummaryRe
     clearTimer();
     timerRef.current = setTimeout(() => {
       void sendMessage({ type: 'GET_SUMMARY', payload: { videoId } }).then(
-        (cached) => {
+        (res) => {
           if (cycleRef.current !== cycle) return;
-          if (cached) {
-            setSummary(cached);
+          if (res.summary) {
+            setSummary(res.summary);
             setStatus('done');
           } else {
             setStatus('failed');
@@ -192,10 +297,10 @@ export function useSummary({ videoId, enabled }: UseSummaryParams): UseSummaryRe
     setStatus('loading');
     setError(null);
     void sendMessage({ type: 'GET_SUMMARY', payload: { videoId } }).then(
-      (cached) => {
+      (res) => {
         if (cycleRef.current !== cycle) return;
-        if (cached) {
-          setSummary(cached);
+        if (res.summary) {
+          setSummary(res.summary);
           setStatus('done');
         } else {
           startGenerate();

@@ -33,7 +33,11 @@ export async function fetchExportData(videoId: string): Promise<ExportDataState>
 
     if (!video) return { status: 'unavailable', reason: 'no-video' };
     if (!record || record.status !== 'done') return { status: 'unavailable', reason: 'not-done' };
-    return { status: 'ready', video, record, summary: summary ?? null };
+    // Export only ever cares about a summary that's actually persisted — an
+    // in-flight one (summary.generating) has nothing to embed yet, so this
+    // deliberately drops that flag rather than threading a fourth "still
+    // generating" export state through export.html.
+    return { status: 'ready', video, record, summary: summary.summary };
   } catch {
     return { status: 'unavailable', reason: 'no-video' };
   }
