@@ -785,8 +785,9 @@ function ReadyBody({ scrollContainerRef }: { scrollContainerRef: RefObject<HTMLD
 //   explained instead.
 // - `extracting`/`analyzing`/`translating`: disabled with a step-aware
 //   label (phase, chunk, and elapsed-time detail while translating).
-// - `done`: disabled, reads as complete, PLUS (Task 10) a secondary
-//   `다시 생성` affordance calling the same `start()` — otherwise a cached
+// - `done`: renders one full-width secondary `다시 생성` button calling
+//   `start()`; the separate disabled `번역 완료` button was removed because
+//   the rendered transcript below already signals completion. Otherwise a cached
 //   `done` video could never be re-checked against YouTube's current
 //   captions. `start()` re-runs `START_TRANSLATION`, and the pipeline's own
 //   cache decision (pipeline.ts, untouched by Task 10) takes it from there:
@@ -871,19 +872,14 @@ function TranslateButton({
 
   if (status === 'done') {
     return (
-      <div className="flex items-center gap-2">
-        <Button disabled aria-disabled className="flex-1">
-          번역 완료
-        </Button>
-        <Button
-          variant="secondary"
-          onClick={onStart}
-          className="shrink-0"
-          title="번역과 요약을 함께 갱신합니다"
-        >
-          다시 생성
-        </Button>
-      </div>
+      <Button
+        variant="secondary"
+        onClick={onStart}
+        className="w-full"
+        title="번역과 요약을 함께 갱신합니다"
+      >
+        다시 생성
+      </Button>
     );
   }
 
