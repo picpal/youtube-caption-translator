@@ -18,6 +18,15 @@ import { useCurrentVideo } from '~/features/video/useCurrentVideo';
 import { activeSegmentIndex } from '~/lib/playback-sync';
 import { formatTimestamp } from '~/lib/transcript-parse';
 import { loadPanelPrefs, savePanelDisplayMode, savePanelLastTab, type PanelTab } from '~/lib/panel-prefs';
+import {
+  DEFAULT_TARGET_LANG,
+  getTargetLang,
+  saveTargetLang,
+  TARGET_LANG_LABELS,
+  TARGET_LANG_STORAGE_KEY,
+  TARGET_LANGS,
+  type TargetLang,
+} from '~/lib/target-lang';
 import { classifyYoutubeUrl, type YoutubePageKind } from '~/lib/youtube';
 import type { TranslationRecord, TranslationStatus } from '~/types/transcript';
 import type { CaptionAvailability } from '~/types/video';
@@ -288,8 +297,8 @@ function useScrollTopVisible(containerRef: RefObject<HTMLDivElement | null>, thr
 // buttons below are a plain `.map`, not two hand-copied `<button>`s that
 // could drift out of sync with each other.
 const DISPLAY_MODE_OPTIONS: ReadonlyArray<{ mode: DisplayMode; label: string }> = [
-  { mode: 'both', label: '원문+한국어' },
-  { mode: 'ko', label: '한국어만' },
+  { mode: 'both', label: '원문+번역' },
+  { mode: 'ko', label: '번역만' },
 ];
 
 // The thumbnail/title/channel block and the caption-availability bar are
@@ -334,6 +343,29 @@ function ReadyBody({ scrollContainerRef }: { scrollContainerRef: RefObject<HTMLD
       .catch(() => {}); // swallow rejection if extension context invalidated mid-session
     return () => {
       cancelled = true;
+    };
+  }, []);
+
+  // 번역 언어 — the global translation target (spec 2026-07-31-lang-…).
+  // Mirrors chrome.storage so a change made on the Options page while the
+  // panel is open is reflected here too (and vice versa — both surfaces
+  // edit the same key). Reading never writes; only the select's onChange
+  // persists.
+  const [targetLang, setTargetLang] = useState<TargetLang>(DEFAULT_TARGET_LANG);
+  useEffect(() => {
+    let cancelled = false;
+    void getTargetLang().then((lang) => {
+      if (!cancelled) setTargetLang(lang);
+    }).catch(() => {});
+    const onChanged = (changes: Record<string, chrome.storage.StorageChange>, area: string) => {
+      if (area !== 'local' || !(TARGET_LANG_STORAGE_KEY in changes)) return;
+      const next = changes[TARGET_LANG_STORAGE_KEY].newValue;
+      if (TARGET_LANGS.includes(next as TargetLang)) setTargetLang(next as TargetLang);
+    };
+    chrome.storage.onChanged.addListener(onChanged);
+    return () => {
+      cancelled = true;
+      chrome.storage.onChanged.removeListener(onChanged);
     };
   }, []);
 
@@ -405,6 +437,18 @@ function ReadyBody({ scrollContainerRef }: { scrollContainerRef: RefObject<HTMLD
   // ever appearing for a video that can't actually produce one.
   const showSummaryTab = showTranscriptList && status === 'done';
 
+  // 번역 언어 mismatch (spec 2026-07-31-lang-…) — a cached record was
+  // translated under a PAST `번역 언어` setting that no longer matches the
+  // current one. Missing `targetLang` (records persisted before Task 3)
+  // reads as `'ko'`, the only language that ever existed pre-generalization.
+  const translationLangMismatch =
+    showTranscriptList && record !== null && (record.targetLang ?? 'ko') !== targetLang;
+  const translationLangMismatchBanner = translationLangMismatch && (
+    <p className="mx-4 mt-3 rounded-[7px] bg-amber-50 px-3 py-2 text-[11.5px] leading-relaxed text-amber-800 dark:bg-amber-950/40 dark:text-amber-300">
+      이 번역은 {TARGET_LANG_LABELS[record?.targetLang ?? 'ko']}본입니다 · 현재 설정 {TARGET_LANG_LABELS[targetLang]} — 다시 생성으로 교체할 수 있어요
+    </p>
+  );
+
   // Playback sync (spec §3.2): stream only while the list is on screen.
   const playback = usePlaybackSync({ videoId, tabId, enabled: showTranscriptList });
   const activeIndex =
@@ -426,6 +470,19 @@ function ReadyBody({ scrollContainerRef }: { scrollContainerRef: RefObject<HTMLD
   const [activeTab, setActiveTab] = useState<'transcript' | 'summary'>('transcript');
   const summaryState = useSummary({ videoId, enabled: showSummaryTab });
   const summaryElapsedSeconds = useElapsedSeconds(summaryState.status === 'generating');
+
+  // 번역 언어 mismatch, summary side — the summary itself has no other
+  // language check (it's Gemini-generated prose, not per-segment data a
+  // reader could otherwise tell apart), so this is load-bearing: without it
+  // a cached summary in a stale language would render with no signal at all
+  // that it doesn't match the current `번역 언어` setting.
+  const summaryLangMismatch =
+    summaryState.summary !== null && (summaryState.summary.targetLang ?? 'ko') !== targetLang;
+  const summaryLangMismatchBanner = summaryLangMismatch && (
+    <p className="mx-4 mt-3 rounded-[7px] bg-amber-50 px-3 py-2 text-[11.5px] leading-relaxed text-amber-800 dark:bg-amber-950/40 dark:text-amber-300">
+      이 요약은 {TARGET_LANG_LABELS[summaryState.summary?.targetLang ?? 'ko']}본입니다 · 현재 설정 {TARGET_LANG_LABELS[targetLang]} — 다시 생성으로 교체할 수 있어요
+    </p>
+  );
 
   // Fix round, Important #1 — if a live retry flips `status` away from
   // `'done'` while the Summary tab is showing (or the tab bar disappears for
@@ -536,33 +593,55 @@ function ReadyBody({ scrollContainerRef }: { scrollContainerRef: RefObject<HTMLD
     <>
       <VideoCard video={video} loading={loading} />
 
-      <div className="px-4">
-        <span className="text-[10.5px] font-semibold tracking-wide text-neutral-400 dark:text-neutral-500">
-          자막 표시
-        </span>
-        <div className="mt-2 flex overflow-hidden rounded-[7px] border border-neutral-200 dark:border-neutral-800">
-          {DISPLAY_MODE_OPTIONS.map(({ mode, label }, i) => {
-            const selected = displayMode === mode;
-            return (
-              <button
-                key={mode}
-                type="button"
-                aria-pressed={selected}
-                onClick={() => {
-                  displayModeTouchedRef.current = true;
-                  setDisplayMode(mode);
-                  void savePanelDisplayMode(mode).catch(() => {}); // swallow rejection if extension context invalidated
-                }}
-                className={`flex-1 border-0 py-2 text-[11.5px] ${i > 0 ? 'border-l border-neutral-200 dark:border-neutral-800' : ''} ${
-                  selected
-                    ? 'bg-neutral-100 font-semibold text-neutral-900 dark:bg-neutral-800 dark:text-neutral-100'
-                    : 'bg-white text-neutral-600 hover:bg-neutral-50 dark:bg-neutral-950 dark:text-neutral-400 dark:hover:bg-neutral-900'
-                }`}
-              >
-                {label}
-              </button>
-            );
-          })}
+      <div className="flex gap-3 px-4">
+        <div className="min-w-0 flex-1">
+          <span className="text-[10.5px] font-semibold tracking-wide text-neutral-400 dark:text-neutral-500">
+            자막 표시
+          </span>
+          <div className="mt-2 flex overflow-hidden rounded-[7px] border border-neutral-200 dark:border-neutral-800">
+            {DISPLAY_MODE_OPTIONS.map(({ mode, label }, i) => {
+              const selected = displayMode === mode;
+              return (
+                <button
+                  key={mode}
+                  type="button"
+                  aria-pressed={selected}
+                  onClick={() => {
+                    displayModeTouchedRef.current = true;
+                    setDisplayMode(mode);
+                    void savePanelDisplayMode(mode).catch(() => {}); // swallow rejection if extension context invalidated
+                  }}
+                  className={`flex-1 border-0 py-2 text-[11.5px] ${i > 0 ? 'border-l border-neutral-200 dark:border-neutral-800' : ''} ${
+                    selected
+                      ? 'bg-neutral-100 font-semibold text-neutral-900 dark:bg-neutral-800 dark:text-neutral-100'
+                      : 'bg-white text-neutral-600 hover:bg-neutral-50 dark:bg-neutral-950 dark:text-neutral-400 dark:hover:bg-neutral-900'
+                  }`}
+                >
+                  {label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+        <div className="flex w-[104px] shrink-0 flex-col">
+          <span className="text-[10.5px] font-semibold tracking-wide text-neutral-400 dark:text-neutral-500">
+            번역 언어
+          </span>
+          <select
+            value={targetLang}
+            onChange={(e) => {
+              const lang = e.target.value as TargetLang;
+              setTargetLang(lang);
+              void saveTargetLang(lang).catch(() => {});
+            }}
+            className="mt-2 w-full rounded-[7px] border border-neutral-200 bg-white py-2 pl-2 pr-1 text-[11.5px] text-neutral-900 dark:border-neutral-800 dark:bg-neutral-950 dark:text-neutral-100"
+          >
+            {TARGET_LANGS.map((lang) => (
+              <option key={lang} value={lang}>
+                {TARGET_LANG_LABELS[lang]}
+              </option>
+            ))}
+          </select>
         </div>
       </div>
 
@@ -619,22 +698,28 @@ function ReadyBody({ scrollContainerRef }: { scrollContainerRef: RefObject<HTMLD
                 ))}
               </div>
               {activeTab === 'transcript' ? (
-                <TranscriptList
-                  segments={record.segments}
-                  displayMode={displayMode}
-                  activeIndex={activeIndex}
-                  onSeekRow={(segment) => playback.seek(segment.startSec)}
-                />
+                <>
+                  {translationLangMismatchBanner}
+                  <TranscriptList
+                    segments={record.segments}
+                    displayMode={displayMode}
+                    activeIndex={activeIndex}
+                    onSeekRow={(segment) => playback.seek(segment.startSec)}
+                  />
+                </>
               ) : (
-                <SummaryPanel
-                  summary={summaryState.summary}
-                  status={summaryState.status}
-                  error={summaryState.error}
-                  elapsedSeconds={summaryElapsedSeconds}
-                  onGenerate={summaryState.generate}
-                  onRegenerate={summaryState.regenerate}
-                  onSeekSection={(startSec) => playback.seek(startSec)}
-                />
+                <>
+                  {summaryLangMismatchBanner}
+                  <SummaryPanel
+                    summary={summaryState.summary}
+                    status={summaryState.status}
+                    error={summaryState.error}
+                    elapsedSeconds={summaryElapsedSeconds}
+                    onGenerate={summaryState.generate}
+                    onRegenerate={summaryState.regenerate}
+                    onSeekSection={(startSec) => playback.seek(startSec)}
+                  />
+                </>
               )}
             </>
           ) : (
@@ -648,6 +733,7 @@ function ReadyBody({ scrollContainerRef }: { scrollContainerRef: RefObject<HTMLD
                   번역 결과
                 </span>
               </div>
+              {translationLangMismatchBanner}
               <TranscriptList
                 segments={record.segments}
                 displayMode={displayMode}
@@ -829,13 +915,13 @@ function processingLabel(
   // signal the pulsing dot alone doesn't fully cover, and it's available
   // regardless of whether a Port message has arrived yet.
   const elapsedSuffix = ` · ${formatElapsedTime(elapsedSeconds)}`;
-  if (progress === null) return `한국어 번역 중…${elapsedSuffix}`;
+  if (progress === null) return `번역 중…${elapsedSuffix}`;
   const phaseLabel = translatePhaseLabel(progress.phase);
   // Multi-chunk videos (2hr+) additionally show which chunk is in progress;
   // most videos are a single chunk, where this suffix would just be a
   // redundant "1/1" — omitted in that case.
   const chunkSuffix = progress.totalChunks > 1 ? ` (${progress.chunkIndex}/${progress.totalChunks})` : '';
-  const base = phaseLabel ? `한국어 번역 중… ${phaseLabel}${chunkSuffix}` : `한국어 번역 중…${chunkSuffix}`;
+  const base = phaseLabel ? `번역 중… ${phaseLabel}${chunkSuffix}` : `번역 중…${chunkSuffix}`;
   return `${base}${elapsedSuffix}`;
 }
 
