@@ -256,7 +256,8 @@ export function App() {
             shipped as dead links */}
         <div className="flex items-center gap-3 border-t border-[#eeeeef] bg-[#fbfbfc] px-6 py-3 dark:border-[#262626] dark:bg-[#171717]">
           <span className="font-mono text-[10.5px] tabular-nums text-[#9a9da2] dark:text-[#6f6f6f]">
-            v0.0.1 · Manifest V3
+            {/* Read from the manifest (not a literal) so this can't drift from package.json/manifest.json again */}
+            v{chrome.runtime.getManifest().version} · Manifest V3
           </span>
         </div>
       </div>

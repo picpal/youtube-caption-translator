@@ -13,6 +13,7 @@
 // `GeminiTestResult` selected by the dev panel (see ./dev-panel.ts), after a
 // small artificial delay so the "testing" spinner is visible.
 
+import pkg from '../package.json';
 import { deleteApiKey, getApiKey, getApiKeyStatus, saveApiKey } from '~/lib/storage';
 import type { AppMessage, AppResponseMap, GeminiTestResult } from '~/types/message';
 import { applyStoredTheme, mountDevPanel } from './dev-panel';
@@ -128,6 +129,10 @@ const mockChrome = {
     openOptionsPage: async () => {
       window.location.href = './options.html';
     },
+    // Sourced from package.json (not hardcoded) so this mock can't drift from
+    // the real manifest version the way entrypoints/options/App.tsx's footer
+    // used to before it started reading chrome.runtime.getManifest() itself.
+    getManifest: () => ({ manifest_version: 3, version: pkg.version }),
   },
   tabs: {
     // `queryInfo.url` drives the entrypoints/options/App.tsx "YouTube 탭으로
