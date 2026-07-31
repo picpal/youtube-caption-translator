@@ -1,7 +1,7 @@
 import { defineBackground } from 'wxt/sandbox';
 import { saveApiKey, getApiKey, getApiKeyStatus, deleteApiKey } from '~/lib/storage';
 import { testGeminiKey, analyzeGlossary, translateBatch, generateSummary, MODEL_ID } from '~/lib/gemini';
-import { putVideo, getTranslation, putTranslation, upsertBatch, getSummary, putSummary } from '~/lib/db';
+import { putVideo, getVideo, getTranslation, putTranslation, upsertBatch, getSummary, putSummary } from '~/lib/db';
 import { sendMessage } from '~/lib/messaging';
 import { getTargetLang } from '~/lib/target-lang';
 import { runTranslationPipeline } from '~/features/translation/pipeline';
@@ -462,6 +462,10 @@ export async function handle<T extends AppMessage['type']>(
       const { payload } = msg as Extract<AppMessage, { type: 'GET_TRANSLATION' }>;
       return (await getTranslation(payload.videoId)) as AppResponseMap[T];
     }
+    case 'GET_VIDEO_META': {
+      const { payload } = msg as Extract<AppMessage, { type: 'GET_VIDEO_META' }>;
+      return (await getVideo(payload.videoId)) as AppResponseMap[T];
+    }
     case 'GET_SUMMARY': {
       const { payload } = msg as Extract<AppMessage, { type: 'GET_SUMMARY' }>;
       return (await getSummary(payload.videoId)) as AppResponseMap[T];
@@ -502,6 +506,8 @@ function errorResponseFor(msg: AppMessage, err: unknown): AppResponseMap[AppMess
     case 'START_TRANSLATION':
       return { ok: false, error: message };
     case 'GET_TRANSLATION':
+      return null;
+    case 'GET_VIDEO_META':
       return null;
     case 'GET_SUMMARY':
       return null;

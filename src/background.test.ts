@@ -877,3 +877,31 @@ describe('START_TRANSLATION summary cascade', () => {
     expect(generateSummary).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('GET_VIDEO_META', () => {
+  it('returns the cached VideoMeta for a videoId', async () => {
+    const tabId = freshTabId();
+    await handle(
+      { type: 'VIDEO_DETECTED', payload: { status: 'settled', meta: SETTLED_META } },
+      senderFor(tabId),
+    );
+
+    const res = await handle(
+      { type: 'GET_VIDEO_META', payload: { videoId: SETTLED_META.videoId } },
+      senderFor(undefined),
+    );
+
+    expect(res).not.toBeNull();
+    expect((res as { title: string }).title).toBe(SETTLED_META.title);
+    expect((res as { videoId: string }).videoId).toBe(SETTLED_META.videoId);
+  });
+
+  it('returns null for a videoId that was never cached', async () => {
+    const res = await handle(
+      { type: 'GET_VIDEO_META', payload: { videoId: 'nEvErSeEn11' } },
+      senderFor(undefined),
+    );
+
+    expect(res).toBeNull();
+  });
+});

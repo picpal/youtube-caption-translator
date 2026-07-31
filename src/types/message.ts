@@ -1,6 +1,7 @@
 import type { ExtractedVideoMeta } from '~/lib/video-meta';
 import type { TranslationRecord } from '~/types/transcript';
 import type { VideoSummary } from './summary';
+import type { VideoMeta } from './video';
 
 export type ApiKeyStatus =
   | { present: false }
@@ -71,6 +72,13 @@ export type AppMessage =
   // panel -> background: read the cached summary for a video (summary spec
   // §3). `null` follows GET_TRANSLATION's convention — nothing cached yet.
   | { type: 'GET_SUMMARY'; payload: { videoId: string } }
+  // panel/export page -> background: read the cached VideoMeta by videoId.
+  // Deliberately videoId-scoped, unlike the tabId-scoped GET_CURRENT_VIDEO:
+  // the export page (export.html) is its own tab and has no YouTube tabId to
+  // ask about, and both surfaces must read the SAME record or the exported
+  // document would disagree with the panel. `null` follows GET_TRANSLATION's
+  // convention — nothing cached for this video yet.
+  | { type: 'GET_VIDEO_META'; payload: { videoId: string } }
   // panel -> background: generate (or regenerate — same-key overwrite) the
   // Korean summary for an already-`done` translation. Resolves once the
   // summary is persisted or generation failed; a lost response (SW evicted)
@@ -121,6 +129,7 @@ export type AppResponseMap = {
   // via the Port rather than polling this.
   GET_TRANSLATION: TranslationRecord | null;
   GET_SUMMARY: VideoSummary | null;
+  GET_VIDEO_META: VideoMeta | null;
   // `error` is the raw English reason message; the panel maps it to Korean
   // via translationErrorDisplay. A missing key is exactly 'API key not set'.
   GENERATE_SUMMARY: { ok: true; summary: VideoSummary } | { ok: false; error: string };
