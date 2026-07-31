@@ -153,7 +153,7 @@ function MenuItem({
 /** 헤더의 GearIcon과 같은 방식의 인라인 SVG — 아이콘 라이브러리를 추가하지 않는다. */
 function DownloadIcon() {
   return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
       <path d="M12 3v12" />
       <path d="m7 11 5 5 5-5" />
       <path d="M4 20h16" />

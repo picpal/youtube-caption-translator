@@ -63,8 +63,9 @@ export function visibleTexts(segment: TranscriptSegment, mode: DisplayMode): Vis
  * M2 Task 9 — the finished-translation transcript list: one row per
  * `TranscriptSegment`, timestamp + English source + Korean translation.
  * Design source: docs/design/side-panel.dc.html (the "완료"/"오류 및 재시도"
- * blocks' row markup) — timestamp in a fixed-width tabular-nums column, then
- * a stacked English (muted, smaller) / Korean (primary, larger) pair.
+ * blocks' row markup) — timestamp in a right-aligned fixed-width tabular-nums
+ * column (`w-12` for `h:mm:ss`), then a stacked English (muted, smaller) /
+ * Korean (primary, larger) pair. (Fix: 긴 `1:06:13` 표기가 `w-10`을 넘쳐 갭을 먹던 문제.)
  *
  * `displayMode` (Task R7, Fix 1) defaults to `'both'` — the original,
  * only-mode-that-ever-existed look — so any caller that doesn't yet thread
@@ -134,11 +135,11 @@ export function TranscriptList({ segments, displayMode = 'both', activeIndex = n
                   },
                 }
               : {})}
-            className={`flex gap-2.5 px-4 py-3 ${
+            className={`flex gap-3 px-4 py-3 ${
               active ? 'bg-neutral-100 dark:bg-neutral-800/60' : ''
             } ${interactive ? 'cursor-pointer hover:bg-neutral-50 dark:hover:bg-neutral-900' : ''}`}
           >
-            <span className="w-10 flex-none font-mono text-[11px] tabular-nums text-neutral-500 dark:text-neutral-400">
+            <span className="w-12 flex-none text-right font-mono text-[11px] tabular-nums text-neutral-500 dark:text-neutral-400">
               {formatTimestamp(segment.startSec)}
             </span>
             <div className="flex min-w-0 flex-col gap-1">
