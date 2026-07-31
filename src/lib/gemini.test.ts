@@ -601,7 +601,7 @@ describe('generateSummary', () => {
     const fetchImpl = vi.fn().mockResolvedValue(
       jsonResponse({ candidates: [{ content: { parts: [{ text: JSON.stringify(payload) }] } }] }),
     );
-    const result = await generateSummary(segs, 'AIzaFAKE', { fetchImpl });
+    const result = await generateSummary(segs, 'AIzaFAKE', 'ko', { fetchImpl });
     expect(result).toEqual({ ok: true, payload });
     const body = requestBody(fetchImpl);
     expect(body.contents[0].parts[0].text).toContain('[620] main point');
@@ -615,7 +615,7 @@ describe('generateSummary', () => {
         candidates: [{ content: { parts: [{ text: JSON.stringify({ ...payload, sections: [{ startSec: 99999, title: '끝' }] }) }] } }],
       }),
     );
-    const result = await generateSummary(segs, 'AIzaFAKE', { fetchImpl });
+    const result = await generateSummary(segs, 'AIzaFAKE', 'ko', { fetchImpl });
     expect(result.ok).toBe(true);
     expect(result.ok && result.payload.sections[0].startSec).toBe(620);
   });
@@ -624,7 +624,7 @@ describe('generateSummary', () => {
     const fetchImpl = vi.fn().mockResolvedValue(
       jsonResponse({ candidates: [{ content: { parts: [{ text: 'not json' }] } }] }),
     );
-    const result = await generateSummary(segs, 'AIzaFAKE', { fetchImpl });
+    const result = await generateSummary(segs, 'AIzaFAKE', 'ko', { fetchImpl });
     expect(result).toEqual({
       ok: false,
       reason: 'bad_json',
@@ -644,7 +644,7 @@ describe('generateSummary', () => {
         { status: 429 },
       ),
     );
-    const result = await generateSummary(segs, 'AIzaFAKE', { fetchImpl });
+    const result = await generateSummary(segs, 'AIzaFAKE', 'ko', { fetchImpl });
     expect(!result.ok && result.reason).toBe('rate_limit');
     expect(!result.ok && result.retryDelayMs).toBe(55_000);
   });

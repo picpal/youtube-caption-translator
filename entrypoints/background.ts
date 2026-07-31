@@ -3,6 +3,7 @@ import { saveApiKey, getApiKey, getApiKeyStatus, deleteApiKey } from '~/lib/stor
 import { testGeminiKey, analyzeGlossary, translateBatch, generateSummary, MODEL_ID } from '~/lib/gemini';
 import { putVideo, getTranslation, putTranslation, upsertBatch, getSummary, putSummary } from '~/lib/db';
 import { sendMessage } from '~/lib/messaging';
+import { getTargetLang } from '~/lib/target-lang';
 import { runTranslationPipeline } from '~/features/translation/pipeline';
 import { broadcastToPorts } from '~/features/translation/progress-broadcast';
 import { RefCount } from '~/features/translation/keepalive-refcount';
@@ -84,6 +85,11 @@ async function runSummaryGeneration(videoId: string): Promise<AppResponseMap['GE
     return { ok: false, error: 'No completed translation for this video' };
   }
 
+  // Read once, outside the retry loop — the setting cannot change mid-run,
+  // and every retry attempt (and the persisted summary itself) must agree
+  // on the same target language.
+  const targetLang = await getTargetLang();
+
   // Same keepalive discipline as the translation pipeline (Task R4): hold
   // the SW open for the duration of the (possibly retried) Gemini call.
   acquireKeepalive();
@@ -91,12 +97,13 @@ async function runSummaryGeneration(videoId: string): Promise<AppResponseMap['GE
     let attempt = 0;
     for (;;) {
       attempt += 1;
-      const result = await generateSummary(record.segments, key);
+      const result = await generateSummary(record.segments, key, targetLang);
       if (result.ok) {
         const summary: VideoSummary = {
           videoId,
           ...result.payload,
           model: MODEL_ID,
+          targetLang,
           createdAt: new Date().toISOString(),
         };
         await putSummary(summary);
@@ -331,6 +338,7 @@ export async function handle<T extends AppMessage['type']>(
       if (!key) {
         return { ok: false, error: 'API key not set' } as AppResponseMap[T];
       }
+      const targetLang = await getTargetLang();
 
       // Dedup (see `inFlightTranslations` above): a job for this video is
       // already running — this call is either a genuine double-click, two
@@ -355,17 +363,21 @@ export async function handle<T extends AppMessage['type']>(
         // dedup'd against a job that has already settled, and the shared
         // interval is torn down once nothing needs it anymore.
         void runTranslationPipeline(
-          { videoId: payload.videoId, tabId: payload.tabId, key },
+          { videoId: payload.videoId, tabId: payload.tabId, key, targetLang },
           {
             requestTranscript: async (tabId, videoId) =>
               (await chrome.tabs.sendMessage(tabId, {
                 type: 'REQUEST_TRANSCRIPT',
                 videoId,
               } satisfies RequestTranscriptMessage)) as RequestTranscriptResponse,
-            // Task 3 threads the real setting: 'ko' is a placeholder until
-            // background.ts reads the actual target-lang setting.
-            analyzeGlossary: (fullText, key) => analyzeGlossary(fullText, key, 'ko'),
-            translateBatch: (segs, glossary, key) => translateBatch(segs, glossary, key, 'ko'),
+            // Deliberately forward the CALL's `targetLang` argument, not
+            // this closure's own `targetLang` const above: the pipeline
+            // decides the EFFECTIVE language itself (resume rule — a
+            // non-terminal existing record resumes in ITS stamped language,
+            // which can differ from the setting read here), so background
+            // must never bake this closure's value into the call.
+            analyzeGlossary: (fullText, key, targetLang) => analyzeGlossary(fullText, key, targetLang),
+            translateBatch: (segs, glossary, key, targetLang) => translateBatch(segs, glossary, key, targetLang),
             getTranslation,
             putTranslation,
             upsertBatch,

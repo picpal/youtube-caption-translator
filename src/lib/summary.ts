@@ -1,5 +1,7 @@
 import type { TranscriptSegment } from '~/types/transcript';
 import type { VideoSummary } from '~/types/summary';
+import { TARGET_LANG_NAMES } from './target-lang';
+import type { TargetLang } from './target-lang';
 
 // The model-facing payload: VideoSummary minus the fields background stamps
 // itself (videoId / model / createdAt). Task 3's generateSummary returns
@@ -18,13 +20,15 @@ export const SUMMARY_DEFAULT_RETRY_DELAY_MS = 5_000;
 
 export function buildSummaryPrompt(
   segments: readonly Pick<TranscriptSegment, 'startSec' | 'sourceText'>[],
+  targetLang: TargetLang,
 ): string {
+  const name = TARGET_LANG_NAMES[targetLang];
   const lines = segments.map((s) => `[${s.startSec}] ${s.sourceText}`).join('\n');
-  return `You are summarizing the English transcript of a technical YouTube video for a Korean-speaking learner.
+  return `You are summarizing the transcript of a technical YouTube video (it may be in any language) for a learner who reads ${name}.
 
 Rules:
 - Base every statement strictly on the transcript content. Do NOT add your own opinions, commentary, or outside knowledge.
-- Write ALL output values in Korean (keep well-known English technical terms as-is where natural).
+- Write ALL output values in ${name} (keep well-known technical terms in their original form where natural).
 - "sections" must follow the talk's actual flow in order. Each section's startSec MUST be one of the [startSec] values present in the transcript below.
 
 Respond with JSON only, matching this shape:
@@ -36,7 +40,7 @@ Respond with JSON only, matching this shape:
 - keywords: 4-8 key technical terms.
 - conclusion: the talk's conclusion, one or two sentences.
 
-Transcript ([startSec] English text):
+Transcript ([startSec] source text):
 """
 ${lines}
 """`;

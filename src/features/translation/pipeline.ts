@@ -1,6 +1,7 @@
 import { captionHash, dedupeRows, reconstructSentences, rowsToSegments } from '~/lib/transcript-parse';
 import { parseRetryDelayMs } from '~/lib/gemini';
 import type { AnalyzeGlossaryResult, TranslateBatchResult } from '~/lib/gemini';
+import type { TargetLang } from '~/lib/target-lang';
 import type { RequestTranscriptResponse } from '~/types/message';
 import type {
   GlossaryEntry,
@@ -116,11 +117,12 @@ export interface TranslationPipelineDeps {
   /** Asks the content script on `tabId` for the raw transcript rows of
    * `videoId` (background -> content `REQUEST_TRANSCRIPT`, Task 4). */
   requestTranscript: (tabId: number, videoId: string) => Promise<RequestTranscriptResponse>;
-  analyzeGlossary: (fullText: string, key: string) => Promise<AnalyzeGlossaryResult>;
+  analyzeGlossary: (fullText: string, key: string, targetLang: TargetLang) => Promise<AnalyzeGlossaryResult>;
   translateBatch: (
     segs: TranscriptSegment[],
     glossary: GlossaryEntry[],
     key: string,
+    targetLang: TargetLang,
   ) => Promise<TranslateBatchResult>;
   getTranslation: (videoId: string) => Promise<TranslationRecord | null>;
   putTranslation: (rec: TranslationRecord) => Promise<void>;
@@ -139,6 +141,7 @@ export interface RunTranslationPipelineParams {
   videoId: string;
   tabId: number;
   key: string;
+  targetLang: TargetLang;
 }
 
 /**
@@ -281,12 +284,18 @@ async function persistBestEffort(deps: TranslationPipelineDeps, rec: Translation
 async function failPipeline(
   deps: TranslationPipelineDeps,
   videoId: string,
+  targetLang: TargetLang,
   errorStep: TranslationStatus,
   progressStep: 1 | 2 | 3,
   reason: string,
   base?: TranslationRecord,
 ): Promise<TranslationRecord> {
   const now = new Date().toISOString();
+  // `base` (a preserved prior record) already carries its OWN stamped
+  // targetLang via the spread — never overwritten here by this attempt's
+  // `targetLang` param, same "preserve the prior good record" discipline as
+  // every other field on that branch. Only the base-less fresh-failure
+  // literal stamps the incoming `targetLang` directly.
   const rec: TranslationRecord = base
     ? { ...base, status: 'failed', error: { step: errorStep, reason }, updatedAt: now }
     : {
@@ -298,6 +307,7 @@ async function failPipeline(
         glossary: [],
         completedBatches: 0,
         totalBatches: 0,
+        targetLang,
         error: { step: errorStep, reason },
         createdAt: now,
         updatedAt: now,
@@ -384,7 +394,7 @@ export async function runTranslationPipeline(
   params: RunTranslationPipelineParams,
   deps: TranslationPipelineDeps,
 ): Promise<TranslationRecord> {
-  const { videoId, tabId, key } = params;
+  const { videoId, tabId, key, targetLang } = params;
 
   // --- Step 1: extract -------------------------------------------------
   deps.onProgress({ videoId, status: 'extracting', step: 1, chunkIndex: 0, totalChunks: 0 });
@@ -413,7 +423,7 @@ export async function runTranslationPipeline(
   } catch (err) {
     // Nothing persisted (or unreadable) — no `base` to preserve here, same
     // as every other base-less failPipeline call below.
-    return failPipeline(deps, videoId, 'analyzing', 2, `Could not read cached translation: ${errorMessage(err)}`);
+    return failPipeline(deps, videoId, targetLang, 'analyzing', 2, `Could not read cached translation: ${errorMessage(err)}`);
   }
 
   let rawResult: RequestTranscriptResponse;
@@ -424,6 +434,7 @@ export async function runTranslationPipeline(
     return failPipeline(
       deps,
       videoId,
+      targetLang,
       'extracting',
       1,
       `Could not reach content script: ${message}`,
@@ -443,6 +454,7 @@ export async function runTranslationPipeline(
     return failPipeline(
       deps,
       videoId,
+      targetLang,
       'extracting',
       1,
       unavailableReasonMessage(rawResult.reason),
@@ -465,6 +477,7 @@ export async function runTranslationPipeline(
     return failPipeline(
       deps,
       videoId,
+      targetLang,
       'extracting',
       1,
       `Failed to parse transcript: ${message}`,
@@ -481,28 +494,53 @@ export async function runTranslationPipeline(
   const totalChunks = segments.length === 0 ? 0 : Math.ceil(segments.length / MAX_SEGMENTS_PER_REQUEST);
 
   // --- Step 2: cache/resume decision ------------------------------------
-  if (existing && existing.captionHash === hash && existing.status === 'done') {
-    // Same captions, already fully translated — reuse as-is, no re-work.
+  // The two language rules (brief "Resume consistency" / "Mismatch
+  // restart" — record state decides which one applies):
+  // - a NON-terminal existing record (`analyzing`/`translating` — the job
+  //   was interrupted mid-flight, e.g. SW eviction) ALWAYS resumes in ITS
+  //   OWN stamped language, regardless of the incoming `targetLang` param.
+  // - a TERMINAL existing record (`done`/`failed`) whose stamped language
+  //   differs from the incoming param is treated as ABSENT: full fresh
+  //   start below, no glossary/batch reuse, stamped with the incoming
+  //   `targetLang` — a differing language on a terminal record means the
+  //   user deliberately switched settings and wants a fresh result.
+  // `effectiveTargetLang` is assigned once here and used for every
+  // prompt/stamp call below, per the resume rule.
+  let usableExisting: TranslationRecord | null =
+    existing !== null && existing.captionHash === hash ? existing : null;
+  let effectiveTargetLang = targetLang;
+  if (usableExisting !== null) {
+    const recordLang = usableExisting.targetLang ?? 'ko';
+    if (usableExisting.status === 'analyzing' || usableExisting.status === 'translating') {
+      effectiveTargetLang = recordLang; // non-terminal: resume rule wins, regardless of `targetLang`
+    } else if (recordLang !== targetLang) {
+      usableExisting = null; // terminal (done/failed) + language mismatch: mismatch-restart rule
+    }
+  }
+
+  if (usableExisting !== null && usableExisting.status === 'done') {
+    // Same captions, same language, already fully translated — reuse as-is, no re-work.
     deps.onProgress({
       videoId,
       status: 'done',
       step: 4,
-      chunkIndex: existing.totalBatches,
-      totalChunks: existing.totalBatches,
+      chunkIndex: usableExisting.totalBatches,
+      totalChunks: usableExisting.totalBatches,
     });
-    return existing;
+    return usableExisting;
   }
 
-  // Same captionHash but not done (any non-'done' status, including a
-  // previous 'failed' — a prior failure may still have persisted partial
-  // batch progress worth keeping) -> RESUME. Different hash or no record at
+  // Same captionHash, same-or-resumable language, but not done (any
+  // non-'done' status, including a previous 'failed' — a prior failure may
+  // still have persisted partial batch progress worth keeping) -> RESUME.
+  // Different hash, a mismatch-restarted terminal record, or no record at
   // all -> fresh skeleton, persisted FIRST (before any batch work) so
   // upsertBatch (Task 3: throws on an absent record) always has something
   // to merge into.
-  const resuming = existing !== null && existing.captionHash === hash;
+  const resuming = usableExisting !== null;
   let record: TranslationRecord;
   if (resuming) {
-    record = existing as TranslationRecord;
+    record = usableExisting as TranslationRecord;
   } else {
     const now = new Date().toISOString();
     record = {
@@ -514,6 +552,7 @@ export async function runTranslationPipeline(
       glossary: [],
       completedBatches: 0,
       totalBatches: totalChunks,
+      targetLang: effectiveTargetLang,
       createdAt: now,
       updatedAt: now,
     };
@@ -524,7 +563,7 @@ export async function runTranslationPipeline(
     try {
       await deps.putTranslation(record);
     } catch (err) {
-      return failPipeline(deps, videoId, 'analyzing', 2, `Could not persist translation record: ${errorMessage(err)}`, record);
+      return failPipeline(deps, videoId, effectiveTargetLang, 'analyzing', 2, `Could not persist translation record: ${errorMessage(err)}`, record);
     }
   }
 
@@ -558,7 +597,9 @@ export async function runTranslationPipeline(
     // handles an empty glossary as a no-op, see `buildGlossaryBlock` in
     // gemini.ts). Translation is the core deliverable and must not be
     // killed by a glossary hiccup.
-    const glossaryResult = await callWithRateLimitRetry(deps, () => deps.analyzeGlossary(fullText, key));
+    const glossaryResult = await callWithRateLimitRetry(deps, () =>
+      deps.analyzeGlossary(fullText, key, effectiveTargetLang),
+    );
     if (glossaryResult.ok) {
       glossary = glossaryResult.glossary;
     } else {
@@ -571,7 +612,7 @@ export async function runTranslationPipeline(
     try {
       await deps.putTranslation(record);
     } catch (err) {
-      return failPipeline(deps, videoId, 'analyzing', 2, `Could not persist glossary: ${errorMessage(err)}`, record);
+      return failPipeline(deps, videoId, effectiveTargetLang, 'analyzing', 2, `Could not persist glossary: ${errorMessage(err)}`, record);
     }
   }
 
@@ -635,7 +676,7 @@ export async function runTranslationPipeline(
         chunkIndex: completedChunks,
         totalChunks,
       });
-      return deps.translateBatch(segs, glossary, key);
+      return deps.translateBatch(segs, glossary, key, effectiveTargetLang);
     });
 
     if (!result.ok) {
@@ -750,7 +791,9 @@ export async function runTranslationPipeline(
     for (let i = 0; i < pending.length; i += MAX_SEGMENTS_PER_REQUEST) {
       const segs = pending.slice(i, i + MAX_SEGMENTS_PER_REQUEST);
 
-      const result = await callWithRateLimitRetry(deps, () => deps.translateBatch(segs, glossary, key));
+      const result = await callWithRateLimitRetry(deps, () =>
+        deps.translateBatch(segs, glossary, key, effectiveTargetLang),
+      );
       if (!result.ok) continue; // still not translated — left null; NOT added to `failures` (see R6 doc comments above)
 
       const byIndex = new Map(result.translations.map((t) => [t.index, t.translatedText]));

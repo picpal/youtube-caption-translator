@@ -10,15 +10,20 @@ const seg = (startSec: number, sourceText: string) => ({ startSec, sourceText })
 
 describe('buildSummaryPrompt', () => {
   it('renders one [startSec] line per segment in order', () => {
-    const prompt = buildSummaryPrompt([seg(0, 'hello world'), seg(11, 'second line')]);
+    const prompt = buildSummaryPrompt([seg(0, 'hello world'), seg(11, 'second line')], 'ko');
     expect(prompt).toContain('[0] hello world\n[11] second line');
   });
 
   it('includes the PRD guardrails, Korean-output rule, and the JSON shape', () => {
-    const prompt = buildSummaryPrompt([seg(0, 'x')]);
+    const prompt = buildSummaryPrompt([seg(0, 'x')], 'ko');
     expect(prompt).toContain('Do NOT add your own opinions');
     expect(prompt).toContain('Korean');
     expect(prompt).toContain('"purpose": string');
+  });
+
+  it('embeds the target language name in the output-language rule', () => {
+    const segs = [seg(0, 'x')];
+    expect(buildSummaryPrompt(segs, 'ja')).toContain('Japanese');
   });
 });
 

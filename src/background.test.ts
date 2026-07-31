@@ -458,6 +458,27 @@ describe('GENERATE_SUMMARY', () => {
     expect(persisted).toEqual(res.summary);
   });
 
+  // Language generalization (2026-07-31) — `runSummaryGeneration` reads the
+  // configured target-lang setting and both passes it to `generateSummary`
+  // and stamps it onto the persisted `VideoSummary`.
+  it('stamps the persisted summary with the configured target language', async () => {
+    await withApiKey();
+    await chrome.storage.local.set({ translationTargetLang: 'ja' });
+    await putTranslation(doneTranslationRecord('lang-video'));
+    vi.mocked(generateSummary).mockResolvedValueOnce({ ok: true, payload: SUMMARY_PAYLOAD });
+
+    const res = await handle({ type: 'GENERATE_SUMMARY', payload: { videoId: 'lang-video' } }, senderFor(undefined));
+
+    expect(generateSummary).toHaveBeenCalledWith(expect.any(Array), 'test-key', 'ja');
+    if (!res.ok) throw new Error(`expected ok:true, got ${JSON.stringify(res)}`);
+    expect(res.summary.targetLang).toBe('ja');
+
+    // putSummary itself is real (fake-indexeddb) here — reading it back is
+    // the observable proof that the write it received carried targetLang.
+    const persisted = await getSummary('lang-video');
+    expect(persisted?.targetLang).toBe('ja');
+  });
+
   it('single-flight: two concurrent calls share one gemini call and get the same result; a third call afterward starts a fresh one', async () => {
     await withApiKey();
     await putTranslation(doneTranslationRecord('sf-video'));

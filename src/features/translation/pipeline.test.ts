@@ -93,7 +93,7 @@ describe('runTranslationPipeline', () => {
       }));
       const deps = makeDeps({ requestTranscript: async () => rows, translateBatch });
 
-      const result = await runTranslationPipeline({ videoId: 'v1', tabId: 1, key: 'k' }, deps);
+      const result = await runTranslationPipeline({ videoId: 'v1', tabId: 1, key: 'k', targetLang: 'ko' }, deps);
 
       expect(translateBatch).toHaveBeenCalledTimes(2);
       const sizes = translateBatch.mock.calls.map(([segs]) => segs.length);
@@ -117,7 +117,7 @@ describe('runTranslationPipeline', () => {
       }));
       const deps = makeDeps({ requestTranscript: async () => rows, translateBatch });
 
-      const result = await runTranslationPipeline({ videoId: 'v1', tabId: 1, key: 'k' }, deps);
+      const result = await runTranslationPipeline({ videoId: 'v1', tabId: 1, key: 'k', targetLang: 'ko' }, deps);
 
       expect(translateBatch).toHaveBeenCalledTimes(5);
       const sizes = translateBatch.mock.calls.map(([segs]) => segs.length);
@@ -150,7 +150,7 @@ describe('runTranslationPipeline', () => {
       });
       const deps = makeDeps({ requestTranscript: async () => rows, translateBatch: translateBatch as any });
 
-      const resultPromise = runTranslationPipeline({ videoId: 'v1', tabId: 1, key: 'k' }, deps);
+      const resultPromise = runTranslationPipeline({ videoId: 'v1', tabId: 1, key: 'k', targetLang: 'ko' }, deps);
 
       // Flush the microtask queue (extract/resume-decision/glossary awaits)
       // so the first chunk's request has actually been sent.
@@ -202,7 +202,7 @@ describe('runTranslationPipeline', () => {
       });
       const deps = makeDeps({ requestTranscript: async () => rows, translateBatch, sleep });
 
-      const result = await runTranslationPipeline({ videoId: 'v1', tabId: 1, key: 'k' }, deps);
+      const result = await runTranslationPipeline({ videoId: 'v1', tabId: 1, key: 'k', targetLang: 'ko' }, deps);
 
       expect(sleepCalls).toEqual([2500, 2500]);
       expect(translateBatch).toHaveBeenCalledTimes(3);
@@ -226,7 +226,7 @@ describe('runTranslationPipeline', () => {
       });
       const deps = makeDeps({ requestTranscript: async () => rows, translateBatch, sleep });
 
-      const result = await runTranslationPipeline({ videoId: 'v1', tabId: 1, key: 'k' }, deps);
+      const result = await runTranslationPipeline({ videoId: 'v1', tabId: 1, key: 'k', targetLang: 'ko' }, deps);
 
       expect(sleepCalls).toEqual([DEFAULT_RETRY_DELAY_MS]);
       expect(result.status).toBe('done');
@@ -261,7 +261,7 @@ describe('runTranslationPipeline', () => {
       });
       const deps = makeDeps({ requestTranscript: async () => rows, translateBatch, sleep });
 
-      const result = await runTranslationPipeline({ videoId: 'v1', tabId: 1, key: 'k' }, deps);
+      const result = await runTranslationPipeline({ videoId: 'v1', tabId: 1, key: 'k', targetLang: 'ko' }, deps);
 
       expect(sleepCalls).toEqual([56_000]);
       expect(result.status).toBe('done');
@@ -291,7 +291,7 @@ describe('runTranslationPipeline', () => {
       });
       const deps = makeDeps({ requestTranscript: async () => rows, translateBatch, sleep });
 
-      await runTranslationPipeline({ videoId: 'v1', tabId: 1, key: 'k' }, deps);
+      await runTranslationPipeline({ videoId: 'v1', tabId: 1, key: 'k', targetLang: 'ko' }, deps);
 
       expect(sleepCalls).toEqual([3_000]);
     });
@@ -313,7 +313,7 @@ describe('runTranslationPipeline', () => {
       });
       const deps = makeDeps({ requestTranscript: async () => rows, translateBatch, sleep });
 
-      await runTranslationPipeline({ videoId: 'v1', tabId: 1, key: 'k' }, deps);
+      await runTranslationPipeline({ videoId: 'v1', tabId: 1, key: 'k', targetLang: 'ko' }, deps);
 
       expect(sleepCalls).toEqual([MAX_RETRY_DELAY_MS]);
     });
@@ -328,7 +328,7 @@ describe('runTranslationPipeline', () => {
       const sleep = vi.fn(async () => {});
       const deps = makeDeps({ requestTranscript: async () => rows, translateBatch, sleep });
 
-      const result = await runTranslationPipeline({ videoId: 'v1', tabId: 1, key: 'k' }, deps);
+      const result = await runTranslationPipeline({ videoId: 'v1', tabId: 1, key: 'k', targetLang: 'ko' }, deps);
 
       // 1 initial attempt + MAX_RATE_LIMIT_RETRIES retries.
       expect(translateBatch).toHaveBeenCalledTimes(MAX_RATE_LIMIT_RETRIES + 1);
@@ -374,14 +374,14 @@ describe('runTranslationPipeline', () => {
       }));
       const deps = makeDeps({ requestTranscript: async () => rows, analyzeGlossary, sleep, translateBatch });
 
-      const result = await runTranslationPipeline({ videoId: 'v1', tabId: 1, key: 'k' }, deps);
+      const result = await runTranslationPipeline({ videoId: 'v1', tabId: 1, key: 'k', targetLang: 'ko' }, deps);
 
       expect(analyzeGlossary).toHaveBeenCalledTimes(2);
       expect(sleepCalls).toEqual([53_200]);
       expect(result.status).toBe('done');
       expect(result.glossary).toEqual([{ term: 'React', translation: '리액트', keepOriginal: false }]);
       // translateBatch received the resolved (non-empty) glossary.
-      expect(translateBatch).toHaveBeenCalledWith(expect.any(Array), result.glossary, 'k');
+      expect(translateBatch).toHaveBeenCalledWith(expect.any(Array), result.glossary, 'k', 'ko');
     });
 
     it('proceeds with an empty glossary (never fails the pipeline) when the glossary call exhausts its retries', async () => {
@@ -399,7 +399,7 @@ describe('runTranslationPipeline', () => {
       const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
       const deps = makeDeps({ requestTranscript: async () => rows, analyzeGlossary, sleep, translateBatch });
 
-      const result = await runTranslationPipeline({ videoId: 'v1', tabId: 1, key: 'k' }, deps);
+      const result = await runTranslationPipeline({ videoId: 'v1', tabId: 1, key: 'k', targetLang: 'ko' }, deps);
 
       // 1 initial attempt + MAX_RATE_LIMIT_RETRIES retries, same budget as
       // a translate chunk.
@@ -410,7 +410,7 @@ describe('runTranslationPipeline', () => {
       expect(result.status).toBe('done');
       expect(result.glossary).toEqual([]);
       // Translation still ran, with an empty glossary passed through.
-      expect(translateBatch).toHaveBeenCalledWith(expect.any(Array), [], 'k');
+      expect(translateBatch).toHaveBeenCalledWith(expect.any(Array), [], 'k', 'ko');
       expect(warnSpy).toHaveBeenCalled();
 
       warnSpy.mockRestore();
@@ -431,7 +431,7 @@ describe('runTranslationPipeline', () => {
       const onProgress = vi.fn((p: TranslationProgress) => progress.push(p));
       const deps = makeDeps({ requestTranscript: async () => rows, analyzeGlossary, sleep, onProgress });
 
-      await runTranslationPipeline({ videoId: 'v1', tabId: 1, key: 'k' }, deps);
+      await runTranslationPipeline({ videoId: 'v1', tabId: 1, key: 'k', targetLang: 'ko' }, deps);
 
       const analyzingEvents = progress.filter((p) => p.status === 'analyzing');
       expect(analyzingEvents).toHaveLength(1);
@@ -451,7 +451,7 @@ describe('runTranslationPipeline', () => {
       const upsertBatch = vi.fn(async () => {});
       const deps = makeDeps({ requestTranscript: async () => rows, translateBatch, sleep, upsertBatch });
 
-      const result = await runTranslationPipeline({ videoId: 'v1', tabId: 1, key: 'k' }, deps);
+      const result = await runTranslationPipeline({ videoId: 'v1', tabId: 1, key: 'k', targetLang: 'ko' }, deps);
 
       expect(translateBatch).toHaveBeenCalledTimes(1); // no retry for a truncation
       expect(sleep).not.toHaveBeenCalled();
@@ -470,7 +470,7 @@ describe('runTranslationPipeline', () => {
       }));
       const deps = makeDeps({ requestTranscript: async () => rows, translateBatch });
 
-      const result = await runTranslationPipeline({ videoId: 'v1', tabId: 1, key: 'k' }, deps);
+      const result = await runTranslationPipeline({ videoId: 'v1', tabId: 1, key: 'k', targetLang: 'ko' }, deps);
 
       expect(translateBatch).toHaveBeenCalledTimes(1);
       expect(result.status).toBe('failed');
@@ -510,7 +510,7 @@ describe('runTranslationPipeline', () => {
       });
       const deps = makeDeps({ requestTranscript: async () => rows, translateBatch });
 
-      const result = await runTranslationPipeline({ videoId: 'v1', tabId: 1, key: 'k' }, deps);
+      const result = await runTranslationPipeline({ videoId: 'v1', tabId: 1, key: 'k', targetLang: 'ko' }, deps);
 
       expect(translateBatch).toHaveBeenCalledTimes(2); // main chunk + 1 completeness pass
       const completenessCallSegs = translateBatch.mock.calls[1][0] as TranscriptSegment[];
@@ -532,7 +532,7 @@ describe('runTranslationPipeline', () => {
       }));
       const deps = makeDeps({ requestTranscript: async () => rows, translateBatch });
 
-      const result = await runTranslationPipeline({ videoId: 'v1', tabId: 1, key: 'k' }, deps);
+      const result = await runTranslationPipeline({ videoId: 'v1', tabId: 1, key: 'k', targetLang: 'ko' }, deps);
 
       // 1 main chunk call + MAX_COMPLETENESS_PASSES extra attempts, all
       // omitting the same index — bounded, not retried forever.
@@ -559,7 +559,7 @@ describe('runTranslationPipeline', () => {
       const sleep = vi.fn(async () => {});
       const deps = makeDeps({ requestTranscript: async () => rows, translateBatch, sleep });
 
-      const result = await runTranslationPipeline({ videoId: 'v1', tabId: 1, key: 'k' }, deps);
+      const result = await runTranslationPipeline({ videoId: 'v1', tabId: 1, key: 'k', targetLang: 'ko' }, deps);
 
       // chunk 0 (1 call) + chunk 1 (1 initial + MAX_RATE_LIMIT_RETRIES retries).
       expect(translateBatch).toHaveBeenCalledTimes(1 + (MAX_RATE_LIMIT_RETRIES + 1));
@@ -582,7 +582,7 @@ describe('runTranslationPipeline', () => {
       }));
       const deps = makeDeps({ requestTranscript: async () => rows, translateBatch });
 
-      const result = await runTranslationPipeline({ videoId: 'v1', tabId: 1, key: 'k' }, deps);
+      const result = await runTranslationPipeline({ videoId: 'v1', tabId: 1, key: 'k', targetLang: 'ko' }, deps);
 
       expect(translateBatch).toHaveBeenCalledTimes(1 + MAX_COMPLETENESS_PASSES);
       expect(result.status).toBe('failed');
@@ -636,7 +636,7 @@ describe('runTranslationPipeline', () => {
         analyzeGlossary,
       });
 
-      const result = await runTranslationPipeline({ videoId: 'v1', tabId: 1, key: 'k' }, deps);
+      const result = await runTranslationPipeline({ videoId: 'v1', tabId: 1, key: 'k', targetLang: 'ko' }, deps);
 
       // Glossary was already resolved (status was 'translating') — must not
       // be re-analyzed on resume.
@@ -684,10 +684,128 @@ describe('runTranslationPipeline', () => {
         analyzeGlossary,
       });
 
-      const result = await runTranslationPipeline({ videoId: 'v1', tabId: 1, key: 'k' }, deps);
+      const result = await runTranslationPipeline({ videoId: 'v1', tabId: 1, key: 'k', targetLang: 'ko' }, deps);
 
       expect(analyzeGlossary).toHaveBeenCalledOnce();
       expect(result.status).toBe('done');
+    });
+  });
+
+  // Language generalization (2026-07-31) — the two rules from the pipeline's
+  // own "Step 2: cache/resume decision" comment: a NON-terminal existing
+  // record always resumes in ITS OWN stamped language (record state
+  // decides, ignoring a differing incoming param), while a TERMINAL record
+  // (done/failed) with a differing stamped language is treated as absent —
+  // full fresh start, no glossary/batch reuse, stamped with the incoming
+  // param.
+  describe('target language rules', () => {
+    it('stamps a fresh run (no existing record) with the incoming targetLang param', async () => {
+      const rows = makeRows(5);
+      const analyzeGlossary = vi.fn(async () => ({ ok: true as const, topic: 't', glossary: [] }));
+      const translateBatch = vi.fn(async (segs: TranscriptSegment[]) => ({
+        ok: true as const,
+        translations: segs.map((s) => ({ index: s.index, translatedText: `t${s.index}` })),
+      }));
+      const deps = makeDeps({ requestTranscript: async () => rows, analyzeGlossary, translateBatch });
+
+      const result = await runTranslationPipeline({ videoId: 'v1', tabId: 1, key: 'k', targetLang: 'ja' }, deps);
+
+      expect(result.status).toBe('done');
+      expect(result.targetLang).toBe('ja');
+      expect(analyzeGlossary).toHaveBeenCalledWith(expect.any(String), 'k', 'ja');
+      expect(translateBatch).toHaveBeenCalledWith(expect.any(Array), expect.any(Array), 'k', 'ja');
+    });
+
+    it('a NON-terminal existing record (mid-flight resume after eviction) ALWAYS resumes in its own stamped language, ignoring a differing incoming param', async () => {
+      const rows = makeRows(5); // 1 chunk
+      const parsedSegments = rowsToSegments(reconstructSentences(dedupeRows(rows)), 'v1');
+      const hash = captionHash(parsedSegments.map((s) => s.sourceText).join('\n'));
+
+      const interrupted: TranslationRecord = {
+        videoId: 'v1',
+        captionHash: hash,
+        sourceLang: 'en',
+        status: 'analyzing', // interrupted before glossary ever resolved (e.g. SW eviction)
+        segments: parsedSegments,
+        glossary: [],
+        completedBatches: 0,
+        totalBatches: 1,
+        targetLang: 'ko',
+        createdAt: '2026-01-01T00:00:00.000Z',
+        updatedAt: '2026-01-01T00:00:00.000Z',
+      };
+
+      const analyzeGlossary = vi.fn(async () => ({ ok: true as const, topic: 't', glossary: [] }));
+      const translateBatch = vi.fn(async (segs: TranscriptSegment[]) => ({
+        ok: true as const,
+        translations: segs.map((s) => ({ index: s.index, translatedText: `t${s.index}` })),
+      }));
+      const deps = makeDeps({
+        requestTranscript: async () => rows,
+        getTranslation: vi.fn(async () => interrupted),
+        analyzeGlossary,
+        translateBatch,
+      });
+
+      // The setting has since changed to 'ja', but the interrupted job must
+      // finish in the record's own stamped 'ko' — record state decides.
+      const result = await runTranslationPipeline({ videoId: 'v1', tabId: 1, key: 'k', targetLang: 'ja' }, deps);
+
+      expect(analyzeGlossary).toHaveBeenCalledWith(expect.any(String), 'k', 'ko');
+      expect(translateBatch).toHaveBeenCalledWith(expect.any(Array), expect.any(Array), 'k', 'ko');
+      expect(result.status).toBe('done');
+      expect(result.targetLang).toBe('ko');
+    });
+
+    it('a TERMINAL record (failed, glossary already resolved) with a differing stamped language is treated as absent — no glossary/batch reuse, fresh restart in the incoming targetLang', async () => {
+      const rows = makeRows(5); // 1 chunk
+      const parsedSegments = rowsToSegments(reconstructSentences(dedupeRows(rows)), 'v1');
+      const hash = captionHash(parsedSegments.map((s) => s.sourceText).join('\n'));
+
+      const failedWithResolvedGlossary: TranslationRecord = {
+        videoId: 'v1',
+        captionHash: hash,
+        sourceLang: 'en',
+        status: 'failed',
+        // Glossary WAS resolved before the translate step failed — a
+        // same-language resume would reuse it (glossaryResolved(record) is
+        // true for this shape); the language mismatch must override that.
+        error: { step: 'translating', reason: 'rate_limit: exhausted' },
+        segments: parsedSegments,
+        glossary: [{ term: 'OldTerm', translation: 'OldTranslation', keepOriginal: false }],
+        completedBatches: 0,
+        totalBatches: 1,
+        targetLang: 'ko',
+        createdAt: '2026-01-01T00:00:00.000Z',
+        updatedAt: '2026-01-01T00:00:00.000Z',
+      };
+
+      const analyzeGlossary = vi.fn(async () => ({
+        ok: true as const,
+        topic: 't',
+        glossary: [{ term: 'NewTerm', translation: 'NewTranslation', keepOriginal: false }],
+      }));
+      const translateBatch = vi.fn(async (segs: TranscriptSegment[]) => ({
+        ok: true as const,
+        translations: segs.map((s) => ({ index: s.index, translatedText: `new-${s.index}` })),
+      }));
+      const deps = makeDeps({
+        requestTranscript: async () => rows,
+        getTranslation: vi.fn(async () => failedWithResolvedGlossary),
+        analyzeGlossary,
+        translateBatch,
+      });
+
+      const result = await runTranslationPipeline({ videoId: 'v1', tabId: 1, key: 'k', targetLang: 'ja' }, deps);
+
+      // A same-language resume would have skipped this call entirely
+      // (glossaryResolved(record) === true) — the mismatch forces it anyway.
+      expect(analyzeGlossary).toHaveBeenCalledOnce();
+      expect(analyzeGlossary).toHaveBeenCalledWith(expect.any(String), 'k', 'ja');
+      expect(translateBatch).toHaveBeenCalledWith(expect.any(Array), expect.any(Array), 'k', 'ja');
+      expect(result.status).toBe('done');
+      expect(result.targetLang).toBe('ja');
+      expect(result.glossary).toEqual([{ term: 'NewTerm', translation: 'NewTranslation', keepOriginal: false }]);
     });
   });
 
@@ -718,7 +836,7 @@ describe('runTranslationPipeline', () => {
         translateBatch: translateBatch as any,
       });
 
-      const result = await runTranslationPipeline({ videoId: 'v1', tabId: 1, key: 'k' }, deps);
+      const result = await runTranslationPipeline({ videoId: 'v1', tabId: 1, key: 'k', targetLang: 'ko' }, deps);
 
       expect(result).toBe(done);
       expect(analyzeGlossary).not.toHaveBeenCalled();
@@ -731,7 +849,7 @@ describe('runTranslationPipeline', () => {
     it('persists a clean failed record and does not throw', async () => {
       const deps = makeDeps({ requestTranscript: async () => ({ unavailable: true }) });
 
-      const result = await runTranslationPipeline({ videoId: 'v1', tabId: 1, key: 'k' }, deps);
+      const result = await runTranslationPipeline({ videoId: 'v1', tabId: 1, key: 'k', targetLang: 'ko' }, deps);
 
       expect(result.status).toBe('failed');
       expect(result.error?.step).toBe('extracting');
@@ -744,7 +862,7 @@ describe('runTranslationPipeline', () => {
     it('reports the original "no transcript panel" reason when `reason` is absent (back-compat)', async () => {
       const deps = makeDeps({ requestTranscript: async () => ({ unavailable: true }) });
 
-      const result = await runTranslationPipeline({ videoId: 'v1', tabId: 1, key: 'k' }, deps);
+      const result = await runTranslationPipeline({ videoId: 'v1', tabId: 1, key: 'k', targetLang: 'ko' }, deps);
 
       expect(result.error?.reason).toBe('No transcript panel available for this video');
     });
@@ -754,7 +872,7 @@ describe('runTranslationPipeline', () => {
         requestTranscript: async () => ({ unavailable: true, reason: 'no-panel' as const }),
       });
 
-      const result = await runTranslationPipeline({ videoId: 'v1', tabId: 1, key: 'k' }, deps);
+      const result = await runTranslationPipeline({ videoId: 'v1', tabId: 1, key: 'k', targetLang: 'ko' }, deps);
 
       expect(result.error?.reason).toBe('No transcript panel available for this video');
     });
@@ -764,7 +882,7 @@ describe('runTranslationPipeline', () => {
         requestTranscript: async () => ({ unavailable: true, reason: 'open-failed' as const }),
       });
 
-      const result = await runTranslationPipeline({ videoId: 'v1', tabId: 1, key: 'k' }, deps);
+      const result = await runTranslationPipeline({ videoId: 'v1', tabId: 1, key: 'k', targetLang: 'ko' }, deps);
 
       expect(result.status).toBe('failed');
       expect(result.error?.reason).toBe('Transcript panel failed to open');
@@ -786,7 +904,7 @@ describe('runTranslationPipeline', () => {
       const deps = makeDeps({ requestTranscript: async () => rows, getTranslation });
 
       await expect(
-        runTranslationPipeline({ videoId: 'v1', tabId: 1, key: 'k' }, deps),
+        runTranslationPipeline({ videoId: 'v1', tabId: 1, key: 'k', targetLang: 'ko' }, deps),
       ).resolves.toMatchObject({ status: 'failed' });
     });
 
@@ -802,7 +920,7 @@ describe('runTranslationPipeline', () => {
         translateBatch: translateBatch as any,
       });
 
-      const result = await runTranslationPipeline({ videoId: 'v1', tabId: 1, key: 'k' }, deps);
+      const result = await runTranslationPipeline({ videoId: 'v1', tabId: 1, key: 'k', targetLang: 'ko' }, deps);
 
       expect(result.status).toBe('failed');
       // The load-bearing skeleton write never landed, so the pipeline must
@@ -819,7 +937,7 @@ describe('runTranslationPipeline', () => {
       const deps = makeDeps({ requestTranscript: async () => rows, upsertBatch });
 
       await expect(
-        runTranslationPipeline({ videoId: 'v1', tabId: 1, key: 'k' }, deps),
+        runTranslationPipeline({ videoId: 'v1', tabId: 1, key: 'k', targetLang: 'ko' }, deps),
       ).resolves.toMatchObject({ status: 'failed' });
     });
   });
@@ -830,7 +948,7 @@ describe('runTranslationPipeline', () => {
       const deps = makeDeps({ requestTranscript: async () => rows });
 
       await expect(
-        runTranslationPipeline({ videoId: 'v1', tabId: 1, key: 'k' }, deps),
+        runTranslationPipeline({ videoId: 'v1', tabId: 1, key: 'k', targetLang: 'ko' }, deps),
       ).resolves.toMatchObject({
         status: 'failed',
         error: { step: 'extracting' },
@@ -872,7 +990,7 @@ describe('runTranslationPipeline', () => {
         putTranslation,
       });
 
-      const result = await runTranslationPipeline({ videoId: 'v1', tabId: 1, key: 'k' }, deps);
+      const result = await runTranslationPipeline({ videoId: 'v1', tabId: 1, key: 'k', targetLang: 'ko' }, deps);
 
       expect(result.status).toBe('failed');
       // Prior good segments/glossary/captionHash carried through, not wiped.
@@ -896,7 +1014,7 @@ describe('runTranslationPipeline', () => {
         putTranslation,
       });
 
-      const result = await runTranslationPipeline({ videoId: 'v1', tabId: 1, key: 'k' }, deps);
+      const result = await runTranslationPipeline({ videoId: 'v1', tabId: 1, key: 'k', targetLang: 'ko' }, deps);
 
       expect(result.status).toBe('failed');
       expect(result.segments).toEqual(existingDone.segments);
@@ -914,7 +1032,7 @@ describe('runTranslationPipeline', () => {
         getTranslation: vi.fn(async () => null),
       });
 
-      const result = await runTranslationPipeline({ videoId: 'v1', tabId: 1, key: 'k' }, deps);
+      const result = await runTranslationPipeline({ videoId: 'v1', tabId: 1, key: 'k', targetLang: 'ko' }, deps);
 
       expect(result.status).toBe('failed');
       expect(result.segments).toEqual([]);
@@ -928,7 +1046,7 @@ describe('runTranslationPipeline', () => {
       const onProgress = vi.fn((p: TranslationProgress) => progress.push(p));
       const deps = makeDeps({ requestTranscript: async () => rows, onProgress });
 
-      await runTranslationPipeline({ videoId: 'v1', tabId: 1, key: 'k' }, deps);
+      await runTranslationPipeline({ videoId: 'v1', tabId: 1, key: 'k', targetLang: 'ko' }, deps);
 
       expect(progress.map((p) => p.step)).toEqual([1, 2, 3, 3, 3, 3, 3, 4]);
       expect(progress.map((p) => p.phase)).toEqual([
@@ -957,7 +1075,7 @@ describe('runTranslationPipeline', () => {
       const onProgress = vi.fn((p: TranslationProgress) => progress.push(p));
       const deps = makeDeps({ requestTranscript: async () => rows, onProgress });
 
-      await runTranslationPipeline({ videoId: 'v1', tabId: 1, key: 'k' }, deps);
+      await runTranslationPipeline({ videoId: 'v1', tabId: 1, key: 'k', targetLang: 'ko' }, deps);
 
       const chunkIndices = progress.map((p) => p.chunkIndex);
       for (let i = 1; i < chunkIndices.length; i += 1) {

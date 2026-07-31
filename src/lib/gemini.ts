@@ -323,7 +323,8 @@ export async function analyzeGlossary(
 }
 
 // ---------------------------------------------------------------------------
-// translateBatch — ONE call: translate a batch of segments to Korean.
+// translateBatch — ONE call: translate a batch of segments to the target
+// language.
 // ---------------------------------------------------------------------------
 
 // `translations` always has exactly `segs.length` entries, one per input
@@ -482,9 +483,10 @@ export async function translateBatch(
 }
 
 // ---------------------------------------------------------------------------
-// generateSummary — ONE call: whole-video Korean summary (M3 summary panel,
-// spec 2026-07-30 §4). Mirrors analyzeGlossary's skeleton; parse/validation
-// lives in src/lib/summary.ts so it is unit-testable without fetch.
+// generateSummary — ONE call: whole-video summary in the target language
+// (M3 summary panel, spec 2026-07-30 §4). Mirrors analyzeGlossary's
+// skeleton; parse/validation lives in src/lib/summary.ts so it is
+// unit-testable without fetch.
 // ---------------------------------------------------------------------------
 
 export type GenerateSummaryReason = GeminiErrorReason | 'bad_json';
@@ -518,11 +520,12 @@ const SUMMARY_SCHEMA = {
 export async function generateSummary(
   segments: readonly Pick<TranscriptSegment, 'startSec' | 'sourceText'>[],
   key: string,
+  targetLang: TargetLang,
   opts: GeminiCallOptions = {},
 ): Promise<GenerateSummaryResult> {
   const fetchImpl = opts.fetchImpl ?? fetch;
   const requestBody = {
-    contents: [{ parts: [{ text: buildSummaryPrompt(segments) }] }],
+    contents: [{ parts: [{ text: buildSummaryPrompt(segments, targetLang) }] }],
     generationConfig: {
       responseMimeType: 'application/json',
       responseSchema: SUMMARY_SCHEMA,

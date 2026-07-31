@@ -3,6 +3,8 @@
 // pipeline itself (Tasks 4-7) and the `translations` IndexedDB store
 // (Task 3) are built against these.
 
+import type { TargetLang } from '~/lib/target-lang';
+
 // PRD §10 TranscriptSegment — no isBookmarked field (bookmarks are a later
 // M4 table, tracked separately by segmentId rather than denormalized here).
 export interface TranscriptSegment {
@@ -40,6 +42,11 @@ export interface TranslationRecord {
   completedBatches: number;  // resume point
   totalBatches: number;
   error?: { step: TranslationStatus; reason: string };
+  /** Language this record's `translatedText`/glossary are IN. Optional
+   * because pre-existing records (persisted before language generalization)
+   * lack it — every reader treats `undefined` as `'ko'`, the pipeline's
+   * prior hardcoded target. */
+  targetLang?: TargetLang;
   createdAt: string;
   updatedAt: string;
 }
