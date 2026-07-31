@@ -796,13 +796,15 @@ function ReadyBody({ scrollContainerRef }: { scrollContainerRef: RefObject<HTMLD
 //   same `captionHash` -> near-instant cache-hit return, different hash ->
 //   a fresh skeleton, i.e. an actual regeneration. This is user-initiated,
 //   not automatic, so it does not reintroduce a revisit-time re-scrape.
-//   Final-review correction (spec 2026-07-31-regen-cascade, C1/I2): "no
-//   Gemini calls" on a cache-hit run is no longer accurate for a video that
-//   already has a summary — background's START_TRANSLATION cascade (§2 of
-//   that spec) unconditionally re-bills ONE summary Gemini call once the
-//   pipeline settles `done`, cache-hit or not. This button is "refresh this
-//   video's translation AND, if one already exists, its summary" now, not
-//   translation-only — see the tooltip below.
+//   Correction (spec 2026-07-31-summary-parallel-design, §3/§4 cache-hit
+//   fix): "no Gemini calls" on a cache-hit run (same captionHash, same
+//   language) is accurate ONLY when this video already has a summary — the
+//   cache-hit shortcut itself (pipeline.ts) does no translation work either
+//   way, and background's supplementary trigger only fills in a summary
+//   that does not exist yet, never re-bills one that does. Different
+//   captions (or a video with no summary at all yet) always re-bills:
+//   translation for real, and — via the `analyzing`/cache-hit triggers,
+//   whichever applies — its summary too. See the tooltip below.
 // - `failed`: re-enabled as a 다시 시도 retry affordance, with the failure
 //   reason surfaced above it — translated to Korean via
 //   `translationErrorDisplay` (Task R7, Fix 2B) rather than shown as the raw
@@ -878,7 +880,7 @@ function TranslateButton({
         variant="secondary"
         onClick={onStart}
         className="w-full"
-        title="번역과 요약을 함께 갱신합니다"
+        title="자막이 바뀌었으면 번역과 요약을 다시 만듭니다"
       >
         다시 생성
       </Button>

@@ -856,6 +856,12 @@ describe('START_TRANSLATION parallel summary trigger', () => {
     await vi.waitFor(async () => {
       expect(await getSummary(videoId)).not.toBeNull();
     });
+    // Cache-hit correction (§3/§4) — this run went through `analyzing`
+    // (`sawAnalyzingEvent` true), so the supplementary cache-hit check that
+    // also runs on `done` must skip: still exactly one call, not a second
+    // one stacked on top. `flushMicrotasks` gives that (skipped) check's own
+    // async `getSummary` read a chance to have run before asserting.
+    await flushMicrotasks();
     expect(generateSummary).toHaveBeenCalledTimes(1);
   });
 
@@ -924,6 +930,15 @@ describe('START_TRANSLATION parallel summary trigger', () => {
     expect(record?.status).toBe('done');
     expect(record?.segments[0]?.translatedText).toBe('t0');
     expect(await getSummary(videoId)).toBeNull();
+
+    // Cache-hit correction (§3/§4) — `done` arriving right after this
+    // `analyzing`-triggered summary FAILED must not be treated as "no
+    // summary cached, try the supplementary trigger": that would be a
+    // silent retry of a job that already ran and failed, quietly
+    // overriding `summaryRetryPlan`'s deliberate decision not to retry a
+    // terminal reason (lib/summary.ts). `sawAnalyzingEvent` being true for
+    // this run is what suppresses it — still exactly one call.
+    expect(generateSummary).toHaveBeenCalledTimes(1);
   });
 
   // Spec §8's named regression: removing the cascade must not leave TWO
@@ -956,6 +971,99 @@ describe('START_TRANSLATION parallel summary trigger', () => {
     });
     await flushMicrotasks();
     expect(generateSummary).toHaveBeenCalledTimes(1);
+  });
+
+  // Cache-hit correction (2026-07-31-summary-parallel-design.md §3/§4
+  // correction) — pipeline.ts:526-536's cache-hit early return (same
+  // captionHash, same language, record already `done`) emits ONLY a
+  // `status:'done'` progress event, `analyzing` never fires for it. Before
+  // this fix, that meant every video translated before this feature shipped
+  // (or re-checked via 다시 생성 with genuinely unchanged captions) could
+  // never get an automatic summary — the exact bug this describe block
+  // (and background.ts's `sawAnalyzingEvent` flag) exists to close.
+  describe('cache-hit supplementary trigger', () => {
+    // Builds a `done` TranslationRecord whose captionHash/segments genuinely
+    // match `rows` (same computation pipeline.ts itself does:
+    // dedupeRows -> reconstructSentences -> rowsToSegments -> captionHash),
+    // so seeding it and then replaying the SAME rows through
+    // START_TRANSLATION reliably reproduces the cache-hit early return
+    // rather than a fresh/resume run. `analyzeGlossary`/`translateBatch`
+    // deliberately given no resolved value in this suite's `beforeEach` — a
+    // real (non-cache-hit) run reaching either would reject with an
+    // unhandled `undefined.ok` read, so this doubles as a sanity check that
+    // the cache-hit path, not a real translate pass, is what's under test.
+    function seedCacheHitRecord(videoId: string, rows: RawTranscriptRow[]): Promise<void> {
+      const parsedSegments = rowsToSegments(reconstructSentences(dedupeRows(rows)), videoId);
+      const hash = captionHash(parsedSegments.map((s) => s.sourceText).join('\n'));
+      const translatedSegments = parsedSegments.map((s) => ({ ...s, translatedText: `t${s.index}` }));
+      return putTranslation({
+        videoId,
+        captionHash: hash,
+        sourceLang: 'en',
+        status: 'done',
+        segments: translatedSegments,
+        glossary: [],
+        completedBatches: 1,
+        totalBatches: 1,
+        targetLang: 'ko',
+        createdAt: '2026-01-01T00:00:00.000Z',
+        updatedAt: '2026-01-01T00:00:00.000Z',
+      });
+    }
+
+    it('with no cached summary, a cache-hit run generates one via the supplementary trigger, exactly once', async () => {
+      const tabId = freshTabId();
+      const videoId = 'cache-hit-no-summary-video';
+      await chrome.storage.local.set({
+        geminiApiKey: 'test-key',
+        geminiApiKeySavedAt: new Date().toISOString(),
+        translationTargetLang: 'ko',
+      });
+
+      const rows: RawTranscriptRow[] = [{ tsText: '0:00', text: 'Hello world.' }];
+      await seedCacheHitRecord(videoId, rows);
+      tabsSendMessageMock.mockResolvedValueOnce(rows);
+      vi.mocked(generateSummary).mockResolvedValueOnce({ ok: true, payload: SUMMARY_PAYLOAD });
+
+      await handle({ type: 'START_TRANSLATION', payload: { videoId, tabId } }, senderFor(undefined));
+
+      await vi.waitFor(async () => {
+        expect((await getTranslation(videoId))?.status).toBe('done');
+      });
+      await vi.waitFor(async () => {
+        expect(await getSummary(videoId)).not.toBeNull();
+      });
+      expect(generateSummary).toHaveBeenCalledTimes(1);
+      // Proof this really was the cache-hit shortcut, not a fresh/resume
+      // run that happened to also reach `done` some other way.
+      expect(analyzeGlossary).not.toHaveBeenCalled();
+      expect(translateBatch).not.toHaveBeenCalled();
+    });
+
+    it('with a summary already cached, a cache-hit run does not call generateSummary at all', async () => {
+      const tabId = freshTabId();
+      const videoId = 'cache-hit-has-summary-video';
+      await chrome.storage.local.set({
+        geminiApiKey: 'test-key',
+        geminiApiKeySavedAt: new Date().toISOString(),
+        translationTargetLang: 'ko',
+      });
+
+      const rows: RawTranscriptRow[] = [{ tsText: '0:00', text: 'Hello world.' }];
+      await seedCacheHitRecord(videoId, rows);
+      await putSummary(existingSummary(videoId));
+      tabsSendMessageMock.mockResolvedValueOnce(rows);
+
+      await handle({ type: 'START_TRANSLATION', payload: { videoId, tabId } }, senderFor(undefined));
+
+      await vi.waitFor(async () => {
+        expect((await getTranslation(videoId))?.status).toBe('done');
+      });
+      await flushMicrotasks();
+      expect(generateSummary).not.toHaveBeenCalled();
+      expect(analyzeGlossary).not.toHaveBeenCalled();
+      expect(translateBatch).not.toHaveBeenCalled();
+    });
   });
 
   // Final-review regression test (C2, spec 2026-07-31-regen-cascade),

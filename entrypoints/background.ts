@@ -454,6 +454,19 @@ export async function handle<T extends AppMessage['type']>(
         // `getTranslation` IndexedDB read) runs without it.
         acquireKeepalive();
 
+        // Cache-hit correction (2026-07-31-summary-parallel-design §3/§4
+        // correction) — a pipeline run that hits the cache-hit early return
+        // (pipeline.ts:526-536: same captionHash, same language, record
+        // already `done`) emits ONLY a `status:'done'` progress event, never
+        // `analyzing`. The `analyzing`-triggered summary above therefore
+        // never fires for it, which silently meant every video translated
+        // BEFORE this feature existed (and any 다시 생성 click on a video
+        // whose captions genuinely haven't changed) could never get an
+        // automatic summary at all. This flag, scoped to THIS run, is what
+        // lets the `onProgress` wrapper below tell "went through
+        // analyzing" apart from "cache-hit shortcut" once `done` arrives.
+        let sawAnalyzingEvent = false;
+
         // Fire-and-forget: START_TRANSLATION acks "accepted", not
         // "finished". The promise is intentionally not awaited/returned to
         // the caller; its rejection is only logged (there is no one left to
@@ -494,7 +507,36 @@ export async function handle<T extends AppMessage['type']>(
               // broadcast guarantees carried over from the cascade this
               // replaces.
               if (progress.status === 'analyzing') {
+                sawAnalyzingEvent = true;
                 triggerParallelSummary(payload.videoId);
+                return;
+              }
+              // Cache-hit supplementary trigger (spec correction, §3/§4) —
+              // fires ONLY when BOTH of these hold, and both are load-bearing:
+              // - `!sawAnalyzingEvent`: this run took the cache-hit early
+              //   return, so the `analyzing` branch above never ran and
+              //   never started a summary job for THIS run. If it HAD run,
+              //   calling `triggerParallelSummary` again here on a summary
+              //   failure would be a silent retry of that same failed job —
+              //   quietly overriding `summaryRetryPlan`'s deliberate
+              //   "don't retry a `timeout`" decision (lib/summary.ts) via a
+              //   completely different code path than the one that decision
+              //   lives in.
+              // - the summary cache is actually empty (checked below): same
+              //   captionHash + same language means the summary's only
+              //   input hasn't changed, so a video that already HAS a
+              //   summary has nothing new to regenerate — re-calling would
+              //   just re-bill a Gemini call for identical input.
+              // Together these narrow this branch to exactly the one case
+              // it exists for: a video with an existing translation but no
+              // summary yet (every video translated before this feature
+              // shipped, or a 다시 생성 click on unchanged captions).
+              if (progress.status === 'done' && !sawAnalyzingEvent) {
+                void getSummary(payload.videoId).then((cached) => {
+                  if (cached === null) {
+                    triggerParallelSummary(payload.videoId);
+                  }
+                });
               }
             },
           },
