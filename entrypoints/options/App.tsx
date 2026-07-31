@@ -354,6 +354,12 @@ function TestStateBadge({ state }: { state: ReturnType<typeof useApiKey>['testSt
           네트워크 오류: {state.message}
         </StatusBadge>
       );
+    case 'timeout':
+      return (
+        <StatusBadge tone="error" variant="chip">
+          응답 시간 초과: {state.message}
+        </StatusBadge>
+      );
     case 'unknown':
       return (
         <StatusBadge tone="error" variant="chip">

@@ -9,7 +9,10 @@ export type ApiKeyStatus =
 
 export type GeminiTestResult =
   | { ok: true; latencyMs: number; model: string }
-  | { ok: false; reason: 'unauthorized' | 'rate_limit' | 'network' | 'unknown'; message: string };
+  // `'timeout'` (2026-07-31 timeout fix) — testGeminiKey shares gemini.ts's
+  // `classifyFetchError`, so a hung test ping is now distinguished from a
+  // real network failure the same way every other Gemini call is.
+  | { ok: false; reason: 'unauthorized' | 'rate_limit' | 'network' | 'timeout' | 'unknown'; message: string };
 
 /**
  * What the content script's settle loop (Tasks 6-7) knows about the current

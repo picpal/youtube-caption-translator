@@ -1,9 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   GEMINI_FETCH_TIMEOUT_MS,
+  SUMMARY_FETCH_TIMEOUT_MS,
   analyzeGlossary,
   buildAnalyzeGlossaryPrompt,
   buildTranslateBatchPrompt,
+  classifyFetchError,
   generateSummary,
   parseRetryDelayMs,
   testGeminiKey,
@@ -27,6 +29,42 @@ describe('parseRetryDelayMs', () => {
 
   it('returns undefined when the message has no parseable delay', () => {
     expect(parseRetryDelayMs('Quota exceeded for this project.')).toBeUndefined();
+  });
+});
+
+// 2026-07-31 timeout fix — classifyFetchError used to fold every fetch
+// rejection into `reason:'network'`, including an `AbortController.abort()`
+// timeout, which is how a genuinely successful-but-slow request (measured:
+// 182,657ms/3m3s for a real summary call) got misreported as a network
+// failure. Both branches covered per the function's own doc comment: the
+// normal case (an Error-instance AbortError, e.g. the real DOMException a
+// browser `fetch` throws) and the defensive fallback (a non-Error value that
+// still carries `name: 'AbortError'`).
+describe('classifyFetchError', () => {
+  it('classifies an Error-instance AbortError (DOMException) as timeout', () => {
+    const err = new DOMException('The operation was aborted.', 'AbortError');
+    const result = classifyFetchError(err);
+    expect(result.reason).toBe('timeout');
+    expect(result.message).toContain('The operation was aborted.');
+  });
+
+  it('classifies a non-Error value with name:"AbortError" as timeout (defensive fallback)', () => {
+    const err = { name: 'AbortError' };
+    expect(classifyFetchError(err)).toEqual({
+      reason: 'timeout',
+      message: String(err),
+    });
+  });
+
+  it('classifies any other Error as network', () => {
+    expect(classifyFetchError(new TypeError('offline'))).toEqual({
+      reason: 'network',
+      message: 'offline',
+    });
+  });
+
+  it('classifies a non-Error, non-AbortError value as network', () => {
+    expect(classifyFetchError('boom')).toEqual({ reason: 'network', message: 'boom' });
   });
 });
 
@@ -536,6 +574,10 @@ describe('fetch timeout (Task R4)', () => {
     vi.useRealTimers();
   });
 
+  // 2026-07-31 timeout fix — an abort now classifies as 'timeout', not
+  // 'network' (classifyFetchError's own tests above cover the classification
+  // logic itself; these three exercise it end-to-end through each call that
+  // shares the default GEMINI_FETCH_TIMEOUT_MS cap).
   it('translateBatch: aborts a hung request at GEMINI_FETCH_TIMEOUT_MS and returns a classified error, not a throw', async () => {
     vi.useFakeTimers();
     const fetchImpl = neverResolvingAbortableFetch();
@@ -545,7 +587,7 @@ describe('fetch timeout (Task R4)', () => {
     const result = await resultPromise;
 
     expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.reason).toBe('network');
+    if (!result.ok) expect(result.reason).toBe('timeout');
   });
 
   it('analyzeGlossary: aborts a hung request at GEMINI_FETCH_TIMEOUT_MS and returns a classified error', async () => {
@@ -557,7 +599,7 @@ describe('fetch timeout (Task R4)', () => {
     const result = await resultPromise;
 
     expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.reason).toBe('network');
+    if (!result.ok) expect(result.reason).toBe('timeout');
   });
 
   it('testGeminiKey: aborts a hung request at GEMINI_FETCH_TIMEOUT_MS and returns a classified error', async () => {
@@ -569,7 +611,7 @@ describe('fetch timeout (Task R4)', () => {
     const result = await resultPromise;
 
     expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.reason).toBe('network');
+    if (!result.ok) expect(result.reason).toBe('timeout');
   });
 
   it('does not abort a request that resolves well before the timeout', async () => {
@@ -585,6 +627,10 @@ describe('fetch timeout (Task R4)', () => {
 });
 
 describe('generateSummary', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   const segs = [
     { startSec: 0, sourceText: 'intro' },
     { startSec: 620, sourceText: 'main point' },
@@ -647,5 +693,41 @@ describe('generateSummary', () => {
     const result = await generateSummary(segs, 'AIzaFAKE', 'ko', { fetchImpl });
     expect(!result.ok && result.reason).toBe('rate_limit');
     expect(!result.ok && result.retryDelayMs).toBe(55_000);
+  });
+
+  // 2026-07-31 timeout fix — the whole point of SUMMARY_FETCH_TIMEOUT_MS
+  // (300s): a real-Chrome DoD measured a whole-video summary call
+  // legitimately succeeding twice on the SAME prompt — 182,657ms (3m3s) as a
+  // raw fetch, then 225,129ms (3m45s) through the real panel flow — well
+  // past the shared GEMINI_FETCH_TIMEOUT_MS (120s) that
+  // analyzeGlossary/translateBatch still use. This proves the DIFFERENCE
+  // directly rather than each cap in isolation: the request is still in
+  // flight (not yet aborted) once
+  // GEMINI_FETCH_TIMEOUT_MS has elapsed — the exact point at which the other
+  // three calls above already returned a timeout error — and only aborts,
+  // with reason:'timeout', once SUMMARY_FETCH_TIMEOUT_MS itself elapses.
+  it('survives past GEMINI_FETCH_TIMEOUT_MS and aborts only at SUMMARY_FETCH_TIMEOUT_MS, with reason:timeout', async () => {
+    vi.useFakeTimers();
+    const fetchImpl = vi.fn((_url: string, init?: RequestInit) => {
+      return new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => {
+          reject(new DOMException('The operation was aborted.', 'AbortError'));
+        });
+      });
+    });
+
+    const resultPromise = generateSummary(segs, 'AIzaFAKE', 'ko', {
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+
+    await vi.advanceTimersByTimeAsync(GEMINI_FETCH_TIMEOUT_MS);
+    const signal = (fetchImpl.mock.calls[0][1] as RequestInit).signal;
+    expect(signal?.aborted).toBe(false); // still running past the shorter cap
+
+    await vi.advanceTimersByTimeAsync(SUMMARY_FETCH_TIMEOUT_MS - GEMINI_FETCH_TIMEOUT_MS);
+    const result = await resultPromise;
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toBe('timeout');
   });
 });

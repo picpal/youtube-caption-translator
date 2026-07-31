@@ -13,7 +13,8 @@ export type SummaryPayload = Pick<
 
 // One manual generation is at most 3 Gemini attempts: bad_json retries once
 // immediately (spec §4), rate_limit waits the server hint capped at 60s so
-// the panel's 180s safety timeout (spec §5) still bounds the whole run.
+// the panel's SUMMARY_SAFETY_TIMEOUT_MS safety timeout (spec §5, useSummary.ts)
+// still bounds the whole run.
 export const SUMMARY_MAX_ATTEMPTS = 3;
 export const SUMMARY_RATE_LIMIT_MAX_DELAY_MS = 60_000;
 export const SUMMARY_DEFAULT_RETRY_DELAY_MS = 5_000;
@@ -100,7 +101,7 @@ export function normalizeSummaryPayload(
 // Bounded retry policy for one manual generation. `attempt` is the 1-based
 // attempt that just failed.
 export function summaryRetryPlan(
-  reason: 'bad_json' | 'rate_limit' | 'unauthorized' | 'network' | 'unknown',
+  reason: 'bad_json' | 'rate_limit' | 'unauthorized' | 'network' | 'timeout' | 'unknown',
   attempt: number,
   retryDelayMs?: number,
 ): { retry: boolean; delayMs: number } {
@@ -112,5 +113,11 @@ export function summaryRetryPlan(
       delayMs: Math.min(retryDelayMs ?? SUMMARY_DEFAULT_RETRY_DELAY_MS, SUMMARY_RATE_LIMIT_MAX_DELAY_MS),
     };
   }
+  // `timeout` (2026-07-31 timeout fix) falls through to the same
+  // `{retry:false}` as `network`/`unauthorized`/`unknown` below — called out
+  // explicitly rather than left as a silent fallthrough: a request that just
+  // spent `SUMMARY_FETCH_TIMEOUT_MS` (300s) aborting has already cost the
+  // user a long wait, and a same-length retry is likely to hit the same
+  // fate. Not worth the extra wait for a request this slow.
   return { retry: false, delayMs: 0 };
 }

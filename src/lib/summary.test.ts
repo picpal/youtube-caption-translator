@@ -110,4 +110,13 @@ describe('summaryRetryPlan', () => {
     expect(summaryRetryPlan('network', 1)).toEqual({ retry: false, delayMs: 0 });
     expect(summaryRetryPlan('unknown', 1)).toEqual({ retry: false, delayMs: 0 });
   });
+
+  // 2026-07-31 timeout fix — a request that already spent
+  // SUMMARY_FETCH_TIMEOUT_MS (240s) aborting must not be retried: doing so
+  // would just double the user's wait for a request likely to hit the same
+  // fate. Same terminal `{retry:false}` as network/unauthorized/unknown
+  // above, on its very first attempt.
+  it('never retries timeout, even on the first attempt', () => {
+    expect(summaryRetryPlan('timeout', 1)).toEqual({ retry: false, delayMs: 0 });
+  });
 });

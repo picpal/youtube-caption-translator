@@ -18,10 +18,29 @@ describe('translationErrorDisplay', () => {
     ).toBe('요청이 많아요. 잠시 후 다시 시도해주세요');
   });
 
-  it('maps a network chunk-failure summary (also the fetch-timeout abort path)', () => {
+  it('maps a network chunk-failure summary', () => {
     expect(
-      translationErrorDisplay('chunk 0: network (AbortError: signal is aborted without reason)'),
+      translationErrorDisplay('chunk 0: network (Failed to fetch)'),
     ).toBe('네트워크 연결이 불안정해요. 잠시 후 다시 시도해주세요');
+  });
+
+  // 2026-07-31 timeout fix — the fetch-timeout abort path used to fall under
+  // `network` (see this file's own doc comment above); it is now its own
+  // `timeout` reason with dedicated Korean copy, checked BEFORE the
+  // `network` branch. Covers both a translation chunk timeout
+  // (pipeline.ts's `"chunk <n>: timeout (...)"` shape) and a summary timeout
+  // (background.ts's `"timeout: <message>"` shape) — the same branch serves
+  // both since it matches on the bare substring.
+  it('maps a timeout chunk-failure summary', () => {
+    expect(
+      translationErrorDisplay('chunk 0: timeout (The operation was aborted.)'),
+    ).toBe('응답이 너무 오래 걸려 중단됐어요. 긴 영상일수록 오래 걸립니다 — 다시 시도해주세요');
+  });
+
+  it('maps a summary-generation timeout reason', () => {
+    expect(translationErrorDisplay('timeout: The operation was aborted.')).toBe(
+      '응답이 너무 오래 걸려 중단됐어요. 긴 영상일수록 오래 걸립니다 — 다시 시도해주세요',
+    );
   });
 
   it('maps an unauthorized chunk-failure summary', () => {

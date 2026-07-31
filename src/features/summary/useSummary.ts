@@ -8,13 +8,24 @@ export type SummaryStatus = 'idle' | 'loading' | 'generating' | 'done' | 'failed
 // Spec §5 — panel-side safety net. If the GENERATE_SUMMARY response never
 // arrives (SW evicted / channel dropped mid-call), refetch the cache once
 // after this long and converge: cache hit -> done, still nothing -> failed.
-// Longer than bg's common path (one 120s-capped fetch + one immediate
-// bad_json retry). No double billing either way a user retries after this:
-// if bg's job is still running, the retry joins it via the single-flight
-// map; if it already finished, `generate`'s own cache pre-check below
-// (fix round, Important #4) finds the summary it left behind and never
-// calls GENERATE_SUMMARY again at all.
-export const SUMMARY_SAFETY_TIMEOUT_MS = 180_000;
+// Longer than bg's worst-case path (one `SUMMARY_FETCH_TIMEOUT_MS`-capped
+// fetch, 300s, + one immediate bad_json retry) with headroom to spare, hence
+// 360s. 2026-07-31 timeout fix, both rounds: this used to be 180s, sized
+// against the GENERIC `GEMINI_FETCH_TIMEOUT_MS` (120s) — but a real-Chrome
+// DoD measured the SAME whole-video summary call legitimately succeeding at
+// 182,657ms (3m3s) as a raw fetch, then 225,129ms (3m45s) through the full
+// real panel flow on a later run. The takeaway isn't "about 3 minutes," it's
+// that this call's latency swings by roughly a quarter on unchanged input —
+// so both this constant and `SUMMARY_FETCH_TIMEOUT_MS` are sized for the
+// WORST run observed plus real margin, not the typical one; the first-round
+// fix (240s/300s) left only 15s of headroom over the second measurement,
+// thin enough that a third, slightly slower run could plausibly trip it
+// again. No double billing either way a user retries after this: if bg's
+// job is still running, the retry joins it via the single-flight map; if it
+// already finished, `generate`'s own cache pre-check below (fix round,
+// Important #4) finds the summary it left behind and never calls
+// GENERATE_SUMMARY again at all.
+export const SUMMARY_SAFETY_TIMEOUT_MS = 360_000;
 
 // Panel-authored copy (not a bg-originated reason string), deliberately
 // Korean since translationErrorDisplay passes unrecognized strings through
@@ -165,10 +176,11 @@ export function useSummary({ videoId, enabled }: UseSummaryParams): UseSummaryRe
     );
   }, [videoId]);
 
-  // Fix round, Important #4 — a summary that lands AFTER the 180s safety
-  // timeout already marked this attempt `failed` is otherwise invisible to
-  // the panel: a plain retry click would re-bill a fresh Gemini call and
-  // overwrite the good summary that already landed. Check the cache first
+  // Fix round, Important #4 — a summary that lands AFTER the
+  // SUMMARY_SAFETY_TIMEOUT_MS safety timeout already marked this attempt
+  // `failed` is otherwise invisible to the panel: a plain retry click would
+  // re-bill a fresh Gemini call and overwrite the good summary that already
+  // landed. Check the cache first
   // (cycle-guarded like every other async callback here); only fall through
   // to an actual GENERATE_SUMMARY call when nothing is there yet. A failed
   // pre-check (rejected sendMessage) falls through the same way — the

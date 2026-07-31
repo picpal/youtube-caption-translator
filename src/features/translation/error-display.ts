@@ -14,12 +14,16 @@
 // - pipeline.ts's `summarizeFailures` embeds each hard chunk failure's own
 //   `TranslateBatchReason`/`GeminiErrorReason` LITERALLY, as
 //   `"chunk <n>: <reason> (<message>)"` (see gemini.ts's `classifyGeminiError`
-//   for `'unauthorized'`/`'rate_limit'`/`'network'`, and `translateBatch`'s
-//   own `'truncated'`/`'bad_json'`) — so a plain substring check on the bare
-//   reason token matches regardless of which/how many chunks failed or what
-//   the message text around it says. `'network'` also covers
-//   `GEMINI_FETCH_TIMEOUT_MS`'s abort path (gemini.ts): a timed-out fetch is
-//   classified `'network'` too, there is no separate timeout reason.
+//   for `'unauthorized'`/`'rate_limit'`, and `classifyFetchError` for
+//   `'network'`/`'timeout'`, and `translateBatch`'s own `'truncated'`/
+//   `'bad_json'`) — so a plain substring check on the bare reason token
+//   matches regardless of which/how many chunks failed or what the message
+//   text around it says. 2026-07-31 timeout fix: a timed-out fetch
+//   (gemini.ts's `GEMINI_FETCH_TIMEOUT_MS`/`SUMMARY_FETCH_TIMEOUT_MS` abort)
+//   is now its OWN `'timeout'` reason, separate from `'network'` — a
+//   real-Chrome DoD found a summary call that legitimately succeeded at
+//   182,657ms (3m3s) was being aborted at the old 120s cap and misreported
+//   with the network-failure message below, when it was actually just slow.
 // - background.ts's `START_TRANSLATION` handler sets the EXACT literal
 //   `'API key not set'` when there is no saved key at all (fix round 1,
 //   Important #2 — this response used to be silently discarded by the only
@@ -58,6 +62,14 @@ export function translationErrorDisplay(reason: string): string {
   }
   if (reason.includes('rate_limit')) {
     return '요청이 많아요. 잠시 후 다시 시도해주세요';
+  }
+  // Checked BEFORE `network` on purpose: a timed-out fetch used to be
+  // indistinguishable from a real connectivity failure (both `'network'`),
+  // but is now its own `'timeout'` reason (gemini.ts's `classifyFetchError`)
+  // and needs its own, non-summary-specific copy — this same branch also
+  // handles a timed-out translation chunk, not just a summary call.
+  if (reason.includes('timeout')) {
+    return '응답이 너무 오래 걸려 중단됐어요. 긴 영상일수록 오래 걸립니다 — 다시 시도해주세요';
   }
   if (reason.includes('network')) {
     return '네트워크 연결이 불안정해요. 잠시 후 다시 시도해주세요';

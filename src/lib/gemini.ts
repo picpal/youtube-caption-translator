@@ -33,7 +33,7 @@ interface GeminiErrorBody {
 // Shared status/message -> reason classification, extracted out of
 // testGeminiKey's original inline logic so analyzeGlossary and
 // translateBatch below classify errors identically instead of drifting.
-export type GeminiErrorReason = 'unauthorized' | 'rate_limit' | 'network' | 'unknown';
+export type GeminiErrorReason = 'unauthorized' | 'rate_limit' | 'network' | 'timeout' | 'unknown';
 
 export function classifyGeminiError(
   status: number,
@@ -48,8 +48,22 @@ export function classifyGeminiError(
   return { reason: 'unknown', message };
 }
 
-export function classifyFetchError(err: unknown): { reason: 'network'; message: string } {
+// 2026-07-31 timeout fix — a real-Chrome DoD reproduction of a "network
+// unstable" summary failure found the request had actually SUCCEEDED at
+// 182,657ms (3m3s), past the old undifferentiated classification below. The
+// fetch that `fetchWithTimeout` aborts via `AbortController.abort()` rejects
+// with a DOMException named `'AbortError'` — that case is now split out as
+// `'timeout'`, distinct from a genuine network failure (DNS/offline/reset),
+// so callers (and error-display.ts's Korean mapping) can tell "took too
+// long" apart from "couldn't connect" instead of both reading as the latter.
+// `(err as { name?: string })?.name` (not `err instanceof Error`) reads the
+// name defensively, in case some environment's AbortError isn't an Error
+// instance — the `name` property is what actually carries the signal.
+export function classifyFetchError(err: unknown): { reason: 'network' | 'timeout'; message: string } {
   const message = err instanceof Error ? err.message : String(err);
+  if ((err as { name?: string } | null)?.name === 'AbortError') {
+    return { reason: 'timeout', message };
+  }
   return { reason: 'network', message };
 }
 
@@ -59,18 +73,43 @@ export function classifyFetchError(err: unknown): { reason: 'network'; message: 
 // without an upper bound, a genuinely HUNG request (network black hole, a
 // server that never responds at all) would keep the service worker alive
 // forever right along with it. `AbortController.abort()` past this many ms
-// rejects the fetch, which flows through the SAME `classifyFetchError` path
-// as any other network failure — callers never see anything special, just
-// an ordinary `reason:'network'` result (non-fatal for the glossary call
-// via its retry+fallback; recorded as a non-retryable chunk failure for
-// translation, same as any other `'network'` reason — `'network'` isn't
-// `'rate_limit'`, so `callWithRateLimitRetry`, pipeline.ts, does not retry
-// it, and the chunk simply stays pending for a future resume).
+// rejects the fetch, which `classifyFetchError` now reports as its OWN
+// `reason:'timeout'` (2026-07-31 timeout fix — previously flowed through as
+// an ordinary `reason:'network'` result, indistinguishable from a real
+// connectivity failure; see `classifyFetchError`'s own doc comment). Either
+// way the RETRY POLICY is unchanged: non-fatal for the glossary call via its
+// retry+fallback; recorded as a non-retryable chunk failure for translation,
+// since `'timeout'` isn't `'rate_limit'`, so `callWithRateLimitRetry`
+// (pipeline.ts) still does not retry it, and the chunk simply stays pending
+// for a future resume.
 export const GEMINI_FETCH_TIMEOUT_MS = 120_000;
 
-async function fetchWithTimeout(fetchImpl: typeof fetch, url: string, init: RequestInit): Promise<Response> {
+// 2026-07-31 timeout fix — `generateSummary`'s OWN longer cap, real-Chrome
+// DoD measured the SAME whole-video summary call (322 segments, 84,530
+// chars / 20,496 tokens) legitimately succeeding TWICE, on two separate
+// runs: 182,657ms (3m3s) as a raw fetch from the service worker, then
+// 225,129ms (3m45s) through the full real panel flow. That is ~25%
+// variance on an identical prompt — the point isn't "this call takes about
+// 3 minutes," it's that its latency swings enough on unchanged input that a
+// cap sized for the FIRST measurement alone (240s) left only 15s of
+// headroom over the SECOND (225s), thin enough that a third, slightly
+// slower run could plausibly trip it again. Sized here for the worst
+// observed run plus real margin, not the typical one. Deliberately NOT a
+// bump to `GEMINI_FETCH_TIMEOUT_MS` itself: `translateBatch` is called
+// sequentially, once per chunk (pipeline.ts), so raising the SHARED default
+// would double every hung chunk's wait from 2min to 4min for a case real
+// measurements never showed taking anywhere near that long — only the
+// summary call has been observed legitimately running past 2 minutes.
+export const SUMMARY_FETCH_TIMEOUT_MS = 300_000;
+
+async function fetchWithTimeout(
+  fetchImpl: typeof fetch,
+  url: string,
+  init: RequestInit,
+  timeoutMs: number = GEMINI_FETCH_TIMEOUT_MS,
+): Promise<Response> {
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), GEMINI_FETCH_TIMEOUT_MS);
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
   try {
     return await fetchImpl(url, { ...init, signal: controller.signal });
   } finally {
@@ -178,15 +217,24 @@ async function callGeminiJson(
   key: string,
   requestBody: unknown,
   fetchImpl: typeof fetch,
+  // Defaults to the shared `GEMINI_FETCH_TIMEOUT_MS` — only `generateSummary`
+  // passes `SUMMARY_FETCH_TIMEOUT_MS` explicitly; `analyzeGlossary` and
+  // `translateBatch` are unaffected by this parameter's existence.
+  timeoutMs: number = GEMINI_FETCH_TIMEOUT_MS,
 ): Promise<GeminiCallResult> {
   const url = `${ENDPOINT}?key=${encodeURIComponent(key)}`;
   let response: Response;
   try {
-    response = await fetchWithTimeout(fetchImpl, url, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(requestBody),
-    });
+    response = await fetchWithTimeout(
+      fetchImpl,
+      url,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(requestBody),
+      },
+      timeoutMs,
+    );
   } catch (err) {
     return { ok: false, ...classifyFetchError(err) };
   }
@@ -534,7 +582,10 @@ export async function generateSummary(
     },
   };
 
-  const result = await callGeminiJson(key, requestBody, fetchImpl);
+  // The only caller that passes a non-default timeout — see
+  // `SUMMARY_FETCH_TIMEOUT_MS`'s own doc comment for why this call alone
+  // gets 300s instead of the shared 120s.
+  const result = await callGeminiJson(key, requestBody, fetchImpl, SUMMARY_FETCH_TIMEOUT_MS);
   if (!result.ok) return result;
 
   const maxStartSec = segments.length > 0 ? segments[segments.length - 1].startSec : 0;

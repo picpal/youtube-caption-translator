@@ -15,6 +15,7 @@ export type TestState =
   | { kind: 'unauthorized'; message: string }
   | { kind: 'rate_limit'; message: string }
   | { kind: 'network'; message: string }
+  | { kind: 'timeout'; message: string }
   | { kind: 'unknown'; message: string };
 
 export function useApiKey() {
