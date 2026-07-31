@@ -1,7 +1,7 @@
 import 'fake-indexeddb/auto';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { DB_NAME, getVideo, getTranslation, getSummary, putTranslation } from '~/lib/db';
-import { analyzeGlossary, generateSummary, MODEL_ID } from '~/lib/gemini';
+import { analyzeGlossary, generateSummary, translateBatch, MODEL_ID } from '~/lib/gemini';
 import type { GenerateSummaryResult } from '~/lib/gemini';
 import { captionHash, dedupeRows, reconstructSentences, rowsToSegments } from '~/lib/transcript-parse';
 import type { AppMessage, RawTranscriptRow } from '~/types/message';
@@ -13,16 +13,19 @@ import { handle } from '../entrypoints/background';
 // call, everything else (getTranslation/putSummary, the in-flight dedup map,
 // summaryRetryPlan) is this repo's own code and already exercised for real
 // against fake-indexeddb, same as every other describe block in this file.
-// `analyzeGlossary` (fix round 1, Important #1) is mocked for the same
+// `analyzeGlossary`/`translateBatch` (fix rounds 1-2, Important #1 + the
+// round-1 re-review's test-hygiene finding) are mocked for the same
 // reason — the START_TRANSLATION language-boundary test below needs to
-// assert on the argument it actually received, which would otherwise
-// require a real Gemini network call. Partial mock (not a full auto-mock)
-// so MODEL_ID and every OTHER gemini.ts export (notably `translateBatch`,
-// left real) stay real — nothing else in this file (or a future addition to
-// it) should silently start getting auto-mocked undefined stubs.
+// assert on the argument `analyzeGlossary` actually received, and letting
+// `translateBatch` stay real let the pipeline fire a genuine outbound fetch
+// (with a 120s abort timer) past that point and return before it settled,
+// leaking a live pipeline run into later tests. Partial mock (not a full
+// auto-mock) so MODEL_ID and every OTHER gemini.ts export stay real —
+// nothing else in this file (or a future addition to it) should silently
+// start getting auto-mocked undefined stubs.
 vi.mock('~/lib/gemini', async (importOriginal) => {
   const actual = await importOriginal<typeof import('~/lib/gemini')>();
-  return { ...actual, generateSummary: vi.fn(), analyzeGlossary: vi.fn() };
+  return { ...actual, generateSummary: vi.fn(), analyzeGlossary: vi.fn(), translateBatch: vi.fn() };
 });
 
 // Closes the M0 review's "no test for the message dispatch layer" gap: this
@@ -424,6 +427,7 @@ describe('START_TRANSLATION dedup', () => {
 describe('START_TRANSLATION language boundary', () => {
   beforeEach(() => {
     vi.mocked(analyzeGlossary).mockReset();
+    vi.mocked(translateBatch).mockReset();
   });
 
   it('forwards the resuming record\'s own stamped language to analyzeGlossary, not the current (different) setting', async () => {
@@ -460,6 +464,15 @@ describe('START_TRANSLATION language boundary', () => {
 
     tabsSendMessageMock.mockResolvedValueOnce(rows);
     vi.mocked(analyzeGlossary).mockResolvedValue({ ok: true, topic: 't', glossary: [] });
+    // Real Gemini network calls are never acceptable from this unit suite —
+    // mocked with a normal successful batch result so the pipeline can run
+    // to completion entirely in-process (round-1 re-review finding: leaving
+    // this real let the pipeline fire a genuine outbound fetch, with a 120s
+    // abort timer, past the point this test used to return at).
+    vi.mocked(translateBatch).mockResolvedValue({
+      ok: true,
+      translations: parsedSegments.map((s) => ({ index: s.index, translatedText: `t${s.index}` })),
+    });
 
     await handle({ type: 'START_TRANSLATION', payload: { videoId, tabId } }, senderFor(undefined));
 
@@ -469,6 +482,15 @@ describe('START_TRANSLATION language boundary', () => {
     // The record's own stamped 'ko' — never the 'ja' setting read from the
     // outer closure.
     expect(analyzeGlossary).toHaveBeenCalledWith(expect.any(String), 'test-key', 'ko');
+
+    // Let the pipeline actually settle before the test returns — same
+    // discipline as the START_TRANSLATION dedup suite above ("this test
+    // doesn't leak state into the next one"). Without this, the run
+    // continues past the test (translateBatch -> putTranslation ->
+    // keepalive teardown) and can race the next test's `beforeEach`.
+    await vi.waitFor(async () => {
+      expect((await getTranslation(videoId))?.status).toBe('done');
+    });
   });
 });
 
