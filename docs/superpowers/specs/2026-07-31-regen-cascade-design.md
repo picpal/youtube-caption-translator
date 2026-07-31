@@ -37,8 +37,14 @@
   변경**: "…현재 설정 {언어} — 다시 생성으로 교체할 수 있어요" →
   "…현재 설정 {언어} — 다시 생성 시 함께 갱신됩니다" (이제 버튼은 번역 쪽 하나뿐).
   번역 배너 카피는 무변경.
-- 반영 타이밍: 캐스케이드 완료 전 Summary 탭에 들어가면 구요약이 보일 수 있음 —
-  탭 재진입 시 GET_SUMMARY 재조회로 수렴(기존 마운트-시-로드 동작). 수용.
+- ~~반영 타이밍: 탭 재진입 시 GET_SUMMARY 재조회로 수렴.~~ **정정 (최종 리뷰 C1):**
+  이 전제가 틀렸다 — `useSummary`는 ReadyBody 레벨(deps `[videoId, enabled]`)이라 탭
+  재진입은 재조회를 일으키지 않고, done 상태 SummaryPanel엔 이제 갱신 수단이 없다.
+  **수정**: 캐스케이드가 요약을 성공 저장하면 background가
+  `{ type: 'SUMMARY_REFRESHED', payload: { videoId } }`를 `chrome.runtime.sendMessage`로
+  브로드캐스트하고(수신자 없으면 무시), `useSummary`가 runtime.onMessage 리스너로
+  videoId 일치 시 GET_SUMMARY를 재조회해 done으로 갱신한다. 패널이 닫혀 있으면
+  다음 마운트의 캐시 로드가 커버.
 
 ## 4. 검증
 
