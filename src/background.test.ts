@@ -492,6 +492,48 @@ describe('START_TRANSLATION language boundary', () => {
       expect((await getTranslation(videoId))?.status).toBe('done');
     });
   });
+
+  // Final-review fix, Important #1 — the complement of the test above: that
+  // one seeds a non-terminal record stamped 'ko' and asserts 'ko', so its
+  // expected value happens to coincide with what a hardcoded-'ko' regression
+  // at background.ts:366 would ALSO produce — it cannot tell "correctly
+  // resumed in the record's language" apart from "background silently
+  // hardcodes 'ko' regardless of the setting". A FRESH job (no existing
+  // record at all) has no record language to resume into, so it is the only
+  // shape that pins background.ts actually reading and forwarding the
+  // CURRENT `translationTargetLang` setting for the headline "first
+  // translation of a video" path.
+  it('uses the current target-language setting for a FRESH job with no existing record', async () => {
+    const tabId = freshTabId();
+    await chrome.storage.local.set({
+      geminiApiKey: 'test-key',
+      geminiApiKeySavedAt: new Date().toISOString(),
+      translationTargetLang: 'ja',
+    });
+
+    const videoId = 'fresh-lang-video';
+    const rows: RawTranscriptRow[] = [{ tsText: '0:00', text: 'Hello world.' }];
+
+    tabsSendMessageMock.mockResolvedValueOnce(rows);
+    vi.mocked(analyzeGlossary).mockResolvedValue({ ok: true, topic: 't', glossary: [] });
+    vi.mocked(translateBatch).mockResolvedValue({
+      ok: true,
+      translations: [{ index: 0, translatedText: 't0' }],
+    });
+
+    await handle({ type: 'START_TRANSLATION', payload: { videoId, tabId } }, senderFor(undefined));
+
+    await vi.waitFor(() => {
+      expect(analyzeGlossary).toHaveBeenCalled();
+    });
+    // The current setting — nothing exists yet to resume into, so this is
+    // the only source the language could have come from.
+    expect(analyzeGlossary).toHaveBeenCalledWith(expect.any(String), 'test-key', 'ja');
+
+    await vi.waitFor(async () => {
+      expect((await getTranslation(videoId))?.status).toBe('done');
+    });
+  });
 });
 
 // Fix round, Important #3 — drives the real `handle()` for GENERATE_SUMMARY,
