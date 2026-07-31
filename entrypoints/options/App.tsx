@@ -3,6 +3,15 @@ import { Button } from '~/components/Button';
 import { Input } from '~/components/Input';
 import { StatusBadge } from '~/components/StatusBadge';
 import { useApiKey } from '~/features/api-key/useApiKey';
+import {
+  DEFAULT_TARGET_LANG,
+  getTargetLang,
+  saveTargetLang,
+  TARGET_LANG_LABELS,
+  TARGET_LANG_STORAGE_KEY,
+  TARGET_LANGS,
+  type TargetLang,
+} from '~/lib/target-lang';
 
 // Ported from docs/design/api-key-settings.dc.html
 // Section "3A — API 키 관리 — Options 페이지 · Side Panel"
@@ -15,6 +24,24 @@ import { useApiKey } from '~/features/api-key/useApiKey';
 export function App() {
   const { status, saveState, testState, save, remove, test } = useApiKey();
   const [draft, setDraft] = useState('');
+  const [targetLang, setTargetLangState] = useState<TargetLang | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void getTargetLang().then((lang) => {
+      if (!cancelled) setTargetLangState(lang);
+    }).catch(() => {});
+    const onChanged = (changes: Record<string, chrome.storage.StorageChange>, area: string) => {
+      if (area !== 'local' || !(TARGET_LANG_STORAGE_KEY in changes)) return;
+      const next = changes[TARGET_LANG_STORAGE_KEY].newValue;
+      if (TARGET_LANGS.includes(next as TargetLang)) setTargetLangState(next as TargetLang);
+    };
+    chrome.storage.onChanged.addListener(onChanged);
+    return () => {
+      cancelled = true;
+      chrome.storage.onChanged.removeListener(onChanged);
+    };
+  }, []);
 
   const isPresent = status?.present === true;
 
@@ -131,6 +158,35 @@ export function App() {
                 </Button>
               </div>
             )}
+          </section>
+
+          <section className="flex flex-col gap-3.5 border-t border-[#eeeeef] pt-6 dark:border-[#262626]">
+            <div className="flex flex-col gap-1.5">
+              <h2 className="text-sm font-semibold tracking-tight text-[#17181a] dark:text-[#ededed]">
+                번역 설정
+              </h2>
+              <p className="text-[12.5px] leading-relaxed text-[#6c6f74] dark:text-[#9a9a9a]">
+                새 번역·요약이 이 언어로 생성됩니다. 사이드패널에서도 바꿀 수 있어요.
+              </p>
+            </div>
+            <label className="flex items-center gap-3 text-[12.5px] text-[#3d4045] dark:text-[#c9c9c9]">
+              기본 번역 언어
+              <select
+                value={targetLang ?? DEFAULT_TARGET_LANG}
+                onChange={(e) => {
+                  const lang = e.target.value as TargetLang;
+                  setTargetLangState(lang);
+                  void saveTargetLang(lang).catch(() => {});
+                }}
+                className="rounded-[7px] border border-[#e4e4e6] bg-white px-2.5 py-1.5 text-[12.5px] text-[#17181a] dark:border-[#292929] dark:bg-[#1e1e1e] dark:text-[#ededed]"
+              >
+                {TARGET_LANGS.map((lang) => (
+                  <option key={lang} value={lang}>
+                    {TARGET_LANG_LABELS[lang]}
+                  </option>
+                ))}
+              </select>
+            </label>
           </section>
 
           <div className="my-1.5 h-px bg-[#eeeeef] dark:bg-[#262626]" />
