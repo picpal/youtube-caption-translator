@@ -593,7 +593,7 @@ function ReadyBody({ scrollContainerRef }: { scrollContainerRef: RefObject<HTMLD
     <>
       <VideoCard video={video} loading={loading} />
 
-      <div className="flex gap-3 px-4">
+      <div className="mt-2.5 flex gap-3 px-4">
         <div className="flex min-w-0 flex-1 flex-col">
           <span className="text-[10.5px] font-semibold tracking-wide text-neutral-400 dark:text-neutral-500">
             자막 표시
