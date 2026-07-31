@@ -65,30 +65,55 @@ function broadcastProgress(progress: TranslationProgress): void {
 // exists; see the `START_TRANSLATION` handler below for the add/delete.
 const inFlightTranslations = new Set<string>();
 
-// Summary spec §3 — GENERATE_SUMMARY dedup: concurrent requests for the same
-// video share one in-flight Promise instead of firing a second Gemini call
-// (the panel's retry-after-timeout path joins the running job for free).
-// The entry is removed when the promise settles, so a retry after a real
-// failure starts a fresh run.
+// Summary spec (2026-07-31-summary-parallel-design.md) §3 — GENERATE_SUMMARY
+// dedup: concurrent requests for the same video share one in-flight Promise
+// instead of firing a second Gemini call (the panel's retry-after-timeout
+// path joins the running job for free; so does the parallel trigger below
+// racing a panel-initiated GENERATE_SUMMARY for the same video). The entry
+// is removed when the promise settles, so a retry after a real failure
+// starts a fresh run.
 const inFlightSummaries = new Map<string, Promise<AppResponseMap['GENERATE_SUMMARY']>>();
 
-async function runSummaryGeneration(videoId: string): Promise<AppResponseMap['GENERATE_SUMMARY']> {
+async function runSummaryGeneration(
+  videoId: string,
+  opts: { followRecordLang?: boolean } = {},
+): Promise<AppResponseMap['GENERATE_SUMMARY']> {
   const key = await getApiKey();
   if (key === null) return { ok: false, error: 'API key not set' };
 
   const record = await getTranslation(videoId);
-  if (!record || record.status !== 'done' || record.segments.length === 0) {
-    // Defense-in-depth: the panel now gates the Summary tab on a done record
-    // (fix round, Important #1 — `showSummaryTab` in App.tsx), so reaching
-    // this branch means a caller bug or a race with cache clearing, not a
-    // normal panel flow. Fail explicitly either way.
+  // Parallel-summary spec §5 — gate relaxed from "record is `done`" to "the
+  // ORIGINAL segments exist at all": `buildSummaryPrompt` (lib/summary.ts)
+  // only ever reads `sourceText`, never `translatedText`, so a summary never
+  // actually needed the translation to have finished. A `failed` record's
+  // segments are just as usable — extraction/glossary/translate can fail
+  // AFTER the segments are already persisted (pipeline.ts's `analyzing`
+  // status write happens before any of that), so there is no reason to
+  // block a summary on a translation outcome that has nothing to do with
+  // whether a summary CAN be built.
+  if (!record || record.segments.length === 0) {
     return { ok: false, error: 'No completed translation for this video' };
   }
 
-  // Read once, outside the retry loop — the setting cannot change mid-run,
-  // and every retry attempt (and the persisted summary itself) must agree
-  // on the same target language.
-  const targetLang = await getTargetLang();
+  // Parallel-summary spec §5 — two different sources for the language,
+  // deliberately NOT unified into one:
+  // - `followRecordLang: true` (the pipeline's own trigger, below) MUST use
+  //   `record.targetLang`, the language the pipeline actually stamped —
+  //   which, for a resumed run, is the record's OWN language per the
+  //   pipeline's resume rule (pipeline.ts's `effectiveTargetLang`), not
+  //   necessarily whatever `getTargetLang()` reads right now. Falls back to
+  //   `getTargetLang()` only for a pre-existing record from before this
+  //   field existed (`record.targetLang` optional in the type).
+  // - the panel's own `GENERATE_SUMMARY` call (opts default, followRecordLang
+  //   falsy) keeps reading `getTargetLang()` exactly as before — this is the
+  //   "change the setting, then regenerate just the summary" flow, and the
+  //   `summaryLangMismatch` banner's whole premise depends on this path
+  //   reflecting the CURRENT setting, not whatever the translation happens
+  //   to be stamped with.
+  const targetLang =
+    opts.followRecordLang === true && record.targetLang !== undefined
+      ? record.targetLang
+      : await getTargetLang();
 
   // Same keepalive discipline as the translation pipeline (Task R4): hold
   // the SW open for the duration of the (possibly retried) Gemini call.
@@ -126,20 +151,80 @@ async function runSummaryGeneration(videoId: string): Promise<AppResponseMap['GE
   }
 }
 
-// Shared by the GENERATE_SUMMARY handler and the 다시 생성 cascade (spec
-// 2026-07-31-regen-cascade §2) below — both need "join the in-flight job for
+// Shared by the GENERATE_SUMMARY handler and `triggerParallelSummary` (the
+// pipeline's own trigger, below) — both need "join the in-flight job for
 // this videoId if one exists, else start one", and must share the SAME
-// `inFlightSummaries` entry so a cascade racing a panel-initiated
-// GENERATE_SUMMARY (or vice versa) still only bills one Gemini call.
-function startSummaryJob(videoId: string): Promise<AppResponseMap['GENERATE_SUMMARY']> {
+// `inFlightSummaries` entry so the two racing for the same video still only
+// bill one Gemini call. `opts` only matters for the call that actually
+// STARTS the job — a caller that joins an already-running job gets whatever
+// language the FIRST caller decided, same as any other single-flight join.
+function startSummaryJob(
+  videoId: string,
+  opts: { followRecordLang?: boolean } = {},
+): Promise<AppResponseMap['GENERATE_SUMMARY']> {
   let job = inFlightSummaries.get(videoId);
   if (!job) {
-    job = runSummaryGeneration(videoId).finally(() => {
+    job = runSummaryGeneration(videoId, opts).finally(() => {
       inFlightSummaries.delete(videoId);
     });
     inFlightSummaries.set(videoId, job);
   }
   return job;
+}
+
+// Parallel-summary spec (2026-07-31-summary-parallel-design.md) §3-4 — the
+// translation pipeline's own trigger for a summary job, replacing the old
+// "다시 생성 캐스케이드" that used to run this only AFTER the pipeline settled
+// `done` AND only when a summary already existed (removed together with this
+// comment's predecessor — see the `onProgress` wrapper in the
+// START_TRANSLATION handler below for the call site). Called the moment a
+// `status: 'analyzing'` progress event arrives: that event fires immediately
+// after `putTranslation` persists the full segment set (pipeline.ts, right
+// before the step-2 progress call), which is everything `buildSummaryPrompt`
+// needs (`summary.ts` never reads `translatedText`) — the earliest point at
+// which starting a summary job is safe, for both a fresh run and a resume
+// (whose segments already exist from an earlier run). An extraction failure
+// never emits `analyzing` at all, so no separate guard is needed here to
+// skip a video with no transcript.
+//
+// Concurrency notes that used to live on the removed cascade block, restated
+// against this new call site because they are still true:
+// - Single-flight: `startSummaryJob`'s `inFlightSummaries` map is what makes
+//   this safe to call once per pipeline run without double-billing — a
+//   `GENERATE_SUMMARY` the panel fires while this is still running (or a
+//   second pipeline run for the same video racing this one) joins the SAME
+//   in-flight promise instead of starting a second Gemini call.
+// - Keepalive: `runSummaryGeneration`'s own acquire/releaseKeepalive calls
+//   add to the SAME `RefCount` the pipeline itself is holding (see
+//   `pipelineKeepalive` below), so the service worker stays alive for
+//   whichever of the two — translation or summary — finishes last, with no
+//   extra bookkeeping needed here.
+// - `SUMMARY_REFRESHED` is still the ONLY way an already-open panel learns a
+//   summary was (re)generated after its initial `GET_SUMMARY` read —
+//   `useSummary.ts`'s `chrome.runtime.onMessage` listener is the sole
+//   consumer. No receiver (panel closed, or open on a different video) is
+//   the common case, not an error — same fire-and-forget discipline as the
+//   `CURRENT_VIDEO_UPDATED` broadcast above.
+//
+// Failure isolation: a summary failure must leave zero trace on the
+// translation record or on the pipeline's own success/failure — swallowed
+// here with a `console.warn`, entirely independent of whatever
+// `runTranslationPipeline`'s own promise chain does with its result.
+function triggerParallelSummary(videoId: string): void {
+  void startSummaryJob(videoId, { followRecordLang: true })
+    .then((result) => {
+      if (result.ok) {
+        void sendMessage({
+          type: 'SUMMARY_REFRESHED',
+          payload: { videoId },
+        }).catch(() => {});
+      } else {
+        console.warn('[bg] parallel summary generation failed:', result.error);
+      }
+    })
+    .catch((err) => {
+      console.warn('[bg] parallel summary generation error:', err);
+    });
 }
 
 // Task R4 — MV3 service-worker keepalive spanning a translation pipeline's
@@ -401,57 +486,39 @@ export async function handle<T extends AppMessage['type']>(
             putTranslation,
             upsertBatch,
             sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
-            onProgress: broadcastProgress,
+            onProgress: (progress) => {
+              broadcastProgress(progress);
+              // Parallel-summary spec §3 — the trigger point. See
+              // `triggerParallelSummary`'s own doc comment above for why
+              // `analyzing` specifically, and for the concurrency/keepalive/
+              // broadcast guarantees carried over from the cascade this
+              // replaces.
+              if (progress.status === 'analyzing') {
+                triggerParallelSummary(payload.videoId);
+              }
+            },
           },
         )
           .catch((err) => {
             console.error('translation pipeline failed', err);
           })
           .finally(() => {
-            // Final-review fix (C2): freed as soon as the PIPELINE itself
-            // settles, NOT after the cascade below — the cascade's own
-            // summary regeneration can run for the better part of a minute
-            // (full-transcript Gemini call, retries), and a `다시 생성`
-            // click during that window must start a REAL second pipeline,
-            // not be silently deduped against a job that, from the
-            // pipeline's own perspective, already finished. See
+            // Freed as soon as the PIPELINE itself settles, independent of
+            // whatever the parallel summary job (triggered above, possibly
+            // still running for another minute or more) is doing — a
+            // `다시 생성` click for the same video must start a REAL second
+            // pipeline, not be silently deduped against a job that, from the
+            // pipeline's own perspective, already finished. This is the same
+            // ordering guarantee the removed cascade's final-review fix
+            // (C2) protected, restated against the new trigger: see
             // `src/background.test.ts`'s "does not dedup a second
-            // START_TRANSLATION while the cascade is still running" test.
+            // START_TRANSLATION while the summary job is still running"
+            // test. The summary job's OWN keepalive (inside
+            // `runSummaryGeneration`) holds `pipelineKeepalive` open on its
+            // own account, so releasing the pipeline's share of it here
+            // does not risk evicting the service worker out from under a
+            // still-running summary.
             inFlightTranslations.delete(payload.videoId);
-          })
-          .then(async () => {
-            // 다시 생성 캐스케이드 (spec 2026-07-31-regen-cascade §2): a
-            // re-translation that ends `done` refreshes this video's summary
-            // too — but only if one already exists (summaries stay opt-in,
-            // and a `failed` run must not burn a summary call on top). Runs
-            // AFTER the `.catch` above, so it is never skipped by a pipeline
-            // failure — `rec?.status !== 'done'` is what actually gates it.
-            const [rec, cached] = await Promise.all([getTranslation(payload.videoId), getSummary(payload.videoId)]);
-            if (rec?.status !== 'done' || !cached) return;
-            const result = await startSummaryJob(payload.videoId);
-            if (result.ok) {
-              // Final-review fix (C1): the ONLY way an already-open Summary
-              // tab learns the cascade just replaced its summary — see
-              // `useSummary.ts`'s `chrome.runtime.onMessage` listener. No
-              // receiver (panel closed, or open on a different video) is
-              // the common case, not an error — same fire-and-forget
-              // discipline as the `CURRENT_VIDEO_UPDATED` broadcast above.
-              void sendMessage({
-                type: 'SUMMARY_REFRESHED',
-                payload: { videoId: payload.videoId },
-              }).catch(() => {});
-            } else {
-              console.warn('[bg] summary cascade failed:', result.error);
-            }
-          })
-          .catch((err) => {
-            // The cascade `.then` above has no `.catch` upstream of it (that
-            // belongs to the pipeline, not this step) — without this, a
-            // throw here would surface as an unhandled rejection instead of
-            // reaching `.finally` below cleanly.
-            console.warn('[bg] summary cascade error:', err);
-          })
-          .finally(() => {
             releaseKeepalive();
           });
       }
@@ -475,9 +542,9 @@ export async function handle<T extends AppMessage['type']>(
       return (await startSummaryJob(payload.videoId)) as AppResponseMap[T];
     }
     case 'SUMMARY_REFRESHED':
-      // Only ever produced by this file's own broadcast in the START_TRANSLATION
-      // cascade below. Handled here solely so the switch — and
-      // `errorResponseFor`'s below — stay exhaustive if this is ever
+      // Only ever produced by this file's own broadcast in
+      // `triggerParallelSummary` above. Handled here solely so the switch —
+      // and `errorResponseFor`'s below — stay exhaustive if this is ever
       // redelivered to the sender; there is no state to update on receipt.
       return { ok: true } as AppResponseMap[T];
   }

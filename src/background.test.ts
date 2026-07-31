@@ -58,19 +58,18 @@ function senderFor(tabId: number | undefined): chrome.runtime.MessageSender {
   return tabId === undefined ? {} : { tab: { id: tabId } as chrome.tabs.Tab };
 }
 
-// Final-review fix (I1, spec 2026-07-31-regen-cascade) — the cascade "skip"
-// tests below observe a TERMINAL translation status via `vi.waitFor`, but
-// the cascade's own decision (`Promise.all([getTranslation, getSummary])`
-// then an `if` check, all inside the `.then` background.ts schedules once
-// the pipeline settles) is a SEPARATE, independently-timed async chain:
-// observing `done`/`failed` proves the PIPELINE finished, not that the
-// cascade has already decided. Without this, a test asserting
-// `generateSummary` was never called could pass "green" even if the
-// cascade's `!cached`/`rec?.status !== 'done'` guard were deleted, purely
-// because the observation raced ahead of the cascade's own reads — exactly
-// the final review's finding. Yielding several real event-loop turns gives
-// those pending fake-indexeddb reads (and the `.then` continuation reading
-// them) a chance to actually run first.
+// Final-review fix (I1, spec 2026-07-31-regen-cascade; carried forward by
+// 2026-07-31-summary-parallel-design) — a test asserting `generateSummary`
+// was never called must not just observe a TERMINAL translation status via
+// `vi.waitFor` and stop there: whatever decides NOT to start a summary job
+// (now: no `analyzing` progress event ever fired, e.g. an extraction
+// failure) is a SEPARATE, independently-timed async chain from the
+// pipeline's own status write. Observing `done`/`failed` proves the
+// PIPELINE finished, not that every fire-and-forget continuation hanging
+// off it has already run — a test could pass "green" even if a guard were
+// deleted, purely because the observation raced ahead of that continuation's
+// own reads. Yielding several real event-loop turns gives any such pending
+// async work a chance to actually run first.
 async function flushMicrotasks(rounds = 5): Promise<void> {
   for (let i = 0; i < rounds; i++) {
     await new Promise((resolve) => setTimeout(resolve, 0));
@@ -142,8 +141,12 @@ const SETTLED_META = {
 };
 
 // Fix round, Important #3 — GENERATE_SUMMARY fixtures. A minimal but valid
-// `done` TranslationRecord: the one shape `runSummaryGeneration`'s guard
-// requires before it calls `generateSummary` at all.
+// TranslationRecord with segments — the one thing `runSummaryGeneration`'s
+// guard actually requires before it calls `generateSummary` at all (spec
+// 2026-07-31-summary-parallel-design §5 relaxed the guard from "status is
+// `done`" to "segments exist"; `status: 'done'` here is just the common-case
+// default, not something the guard itself checks anymore — see the
+// GENERATE_SUMMARY suite's `failed`-record test below).
 function doneTranslationRecord(videoId: string, overrides: Partial<TranslationRecord> = {}): TranslationRecord {
   const now = new Date().toISOString();
   return {
@@ -448,6 +451,15 @@ describe('START_TRANSLATION language boundary', () => {
   beforeEach(() => {
     vi.mocked(analyzeGlossary).mockReset();
     vi.mocked(translateBatch).mockReset();
+    // Both tests below drive the pipeline all the way to `done`, which now
+    // also fires the parallel summary trigger at the `analyzing` event
+    // (spec 2026-07-31-summary-parallel-design §3) — an unmocked
+    // `generateSummary` resolves `undefined` by default and throws inside
+    // `runSummaryGeneration`. Harmless either way (failure isolation means
+    // it can never affect these tests' own assertions), but a benign
+    // resolved value keeps the test output free of the swallowed-error log.
+    vi.mocked(generateSummary).mockReset();
+    vi.mocked(generateSummary).mockResolvedValue({ ok: true, payload: SUMMARY_PAYLOAD });
   });
 
   it('forwards the resuming record\'s own stamped language to analyzeGlossary, not the current (different) setting', async () => {
@@ -577,11 +589,31 @@ describe('GENERATE_SUMMARY', () => {
     expect(generateSummary).not.toHaveBeenCalled();
   });
 
-  it('rejects with the guard error and calls gemini zero times when the record is not done', async () => {
+  // Parallel-summary spec §5 — the guard only cares whether the ORIGINAL
+  // segments exist, not whether the translation itself finished: a `failed`
+  // record's segments are just as usable for a summary since
+  // `buildSummaryPrompt` never reads `translatedText`. This replaces the old
+  // "rejects when not done" test, whose premise (a non-`done` record must be
+  // rejected) this spec deliberately reverses.
+  it('generates a summary for a non-done (failed) record as long as it has segments', async () => {
     await withApiKey();
     await putTranslation(doneTranslationRecord('failed-video', { status: 'failed' }));
+    vi.mocked(generateSummary).mockResolvedValueOnce({ ok: true, payload: SUMMARY_PAYLOAD });
 
     const res = await handle({ type: 'GENERATE_SUMMARY', payload: { videoId: 'failed-video' } }, senderFor(undefined));
+
+    expect(generateSummary).toHaveBeenCalledTimes(1);
+    expect(res.ok).toBe(true);
+  });
+
+  it('rejects with the guard error and calls gemini zero times when the record has no segments at all', async () => {
+    await withApiKey();
+    await putTranslation(doneTranslationRecord('empty-segments-video', { segments: [] }));
+
+    const res = await handle(
+      { type: 'GENERATE_SUMMARY', payload: { videoId: 'empty-segments-video' } },
+      senderFor(undefined),
+    );
 
     expect(res).toEqual({ ok: false, error: 'No completed translation for this video' });
     expect(generateSummary).not.toHaveBeenCalled();
@@ -697,16 +729,18 @@ describe('GENERATE_SUMMARY', () => {
   });
 });
 
-// 다시 생성 캐스케이드 (spec 2026-07-31-regen-cascade §2) — the transcript-side
-// 다시 생성 button (a normal START_TRANSLATION call) now refreshes this
-// video's summary too, but ONLY when the run settles `done` AND a summary
-// already existed. Driven from inside START_TRANSLATION's own promise
-// chain (background.ts, the `.then` inserted before the final
-// `.finally(release keepalive)`) — there is no separate message type for
-// this, so these tests drive the real pipeline to `done`/`failed` the same
+// Parallel-summary trigger (spec 2026-07-31-summary-parallel-design.md,
+// §3-4) — the transcript-side 다시 생성 button (a normal START_TRANSLATION
+// call) is a normal `runTranslationPipeline` invocation like any other; a
+// summary job now starts the moment the pipeline's `onProgress` callback
+// reports a `status: 'analyzing'` event (background.ts's `onProgress`
+// wrapper in the START_TRANSLATION handler), NOT after the whole pipeline
+// settles `done` as the removed "다시 생성 캐스케이드" (spec
+// 2026-07-31-regen-cascade §2) used to do it. There is still no separate
+// message type for this, so these tests drive the real pipeline the same
 // way the language-boundary suite above does (mocked `analyzeGlossary` /
-// `translateBatch`, real fake-indexeddb) rather than mocking the cascade
-// itself away.
+// `translateBatch`, real fake-indexeddb) rather than mocking the trigger
+// away.
 function existingSummary(videoId: string, overrides: Partial<VideoSummary> = {}): VideoSummary {
   return {
     videoId,
@@ -718,25 +752,92 @@ function existingSummary(videoId: string, overrides: Partial<VideoSummary> = {})
   };
 }
 
-describe('START_TRANSLATION summary cascade', () => {
+describe('START_TRANSLATION parallel summary trigger', () => {
   beforeEach(() => {
     vi.mocked(generateSummary).mockReset();
     vi.mocked(analyzeGlossary).mockReset();
     vi.mocked(translateBatch).mockReset();
   });
 
-  it('refreshes an existing summary once a re-translation settles done, using the current target-lang setting', async () => {
+  // Spec §8: "파이프라인 경로는 record.targetLang으로... 돈다" — a resumed,
+  // non-terminal record (same shape as the language-boundary suite above)
+  // must feed its OWN stamped language to the parallel summary trigger, not
+  // whatever `translationTargetLang` currently reads. Also doubles as the
+  // "analyzing fires the summary job exactly once" + "SUMMARY_REFRESHED
+  // still broadcasts" coverage.
+  it('feeds the resuming record\'s own stamped language to the parallel summary trigger, not the current (different) setting', async () => {
     const tabId = freshTabId();
-    const videoId = 'cascade-video';
     await chrome.storage.local.set({
       geminiApiKey: 'test-key',
       geminiApiKeySavedAt: new Date().toISOString(),
-      // Deliberately different from the seeded summary's 'ko' below — the
-      // cascade's `runSummaryGeneration` reads the CURRENT setting fresh,
-      // not whatever language the prior summary happened to be in.
+      // Current setting is 'ja' — must NOT reach generateSummary below; the
+      // resumed record is stamped 'ko' and the resume rule says record state
+      // decides (same rule the language-boundary suite pins for
+      // analyzeGlossary; this test pins the SAME rule for the parallel
+      // summary trigger's `followRecordLang`).
       translationTargetLang: 'ja',
     });
-    await putSummary(existingSummary(videoId));
+
+    const videoId = 'summary-lang-boundary-video';
+    const rows: RawTranscriptRow[] = [{ tsText: '0:00', text: 'Hello world.' }];
+    const parsedSegments = rowsToSegments(reconstructSentences(dedupeRows(rows)), videoId);
+    const hash = captionHash(parsedSegments.map((s) => s.sourceText).join('\n'));
+
+    await putTranslation({
+      videoId,
+      captionHash: hash,
+      sourceLang: 'en',
+      status: 'analyzing',
+      segments: parsedSegments,
+      glossary: [],
+      completedBatches: 0,
+      totalBatches: 1,
+      targetLang: 'ko',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    });
+
+    tabsSendMessageMock.mockResolvedValueOnce(rows);
+    vi.mocked(analyzeGlossary).mockResolvedValue({ ok: true, topic: 't', glossary: [] });
+    vi.mocked(translateBatch).mockResolvedValue({
+      ok: true,
+      translations: parsedSegments.map((s) => ({ index: s.index, translatedText: `t${s.index}` })),
+    });
+    vi.mocked(generateSummary).mockResolvedValueOnce({ ok: true, payload: SUMMARY_PAYLOAD });
+
+    await handle({ type: 'START_TRANSLATION', payload: { videoId, tabId } }, senderFor(undefined));
+
+    await vi.waitFor(() => {
+      expect(generateSummary).toHaveBeenCalledTimes(1);
+    });
+    expect(generateSummary).toHaveBeenCalledWith(expect.any(Array), 'test-key', 'ko');
+
+    const persisted = await getSummary(videoId);
+    expect(persisted?.targetLang).toBe('ko');
+
+    // SUMMARY_REFRESHED is still the only way an already-open panel learns
+    // the parallel job just filled the summary in — carried over unchanged
+    // from the removed cascade (final-review fix C1 there).
+    await vi.waitFor(() => {
+      expect(sendMessageMock).toHaveBeenCalledWith({
+        type: 'SUMMARY_REFRESHED',
+        payload: { videoId },
+      });
+    });
+
+    await vi.waitFor(async () => {
+      expect((await getTranslation(videoId))?.status).toBe('done');
+    });
+  });
+
+  // Spec §4 table's headline behavior change: a video's FIRST translation
+  // (no prior summary at all) now auto-generates one, where the removed
+  // cascade deliberately skipped this case ("summaries stay opt-in"). This
+  // is the intentional reversal, not a regression.
+  it('generates a summary automatically on a video\'s first translation, even with no prior summary', async () => {
+    const tabId = freshTabId();
+    const videoId = 'auto-summary-video';
+    await chrome.storage.local.set({ geminiApiKey: 'test-key', geminiApiKeySavedAt: new Date().toISOString() });
 
     const rows: RawTranscriptRow[] = [{ tsText: '0:00', text: 'Hello world.' }];
     tabsSendMessageMock.mockResolvedValueOnce(rows);
@@ -749,57 +850,30 @@ describe('START_TRANSLATION summary cascade', () => {
 
     await handle({ type: 'START_TRANSLATION', payload: { videoId, tabId } }, senderFor(undefined));
 
-    await vi.waitFor(() => {
-      expect(generateSummary).toHaveBeenCalledTimes(1);
-    });
-
-    const refreshed = await getSummary(videoId);
-    expect(refreshed?.targetLang).toBe('ja');
-    expect(refreshed?.createdAt).not.toBe('2020-01-01T00:00:00.000Z');
-
-    // Final-review fix (C1) — background must broadcast so an already-open
-    // Summary tab's `useSummary` listener can converge on the new summary;
-    // without this the panel had no way to ever see the cascade's result.
-    await vi.waitFor(() => {
-      expect(sendMessageMock).toHaveBeenCalledWith({
-        type: 'SUMMARY_REFRESHED',
-        payload: { videoId },
-      });
-    });
-  });
-
-  it('does not call generateSummary when the video has no prior summary', async () => {
-    const tabId = freshTabId();
-    const videoId = 'cascade-no-summary-video';
-    await chrome.storage.local.set({ geminiApiKey: 'test-key', geminiApiKeySavedAt: new Date().toISOString() });
-
-    const rows: RawTranscriptRow[] = [{ tsText: '0:00', text: 'Hello world.' }];
-    tabsSendMessageMock.mockResolvedValueOnce(rows);
-    vi.mocked(analyzeGlossary).mockResolvedValue({ ok: true, topic: 't', glossary: [] });
-    vi.mocked(translateBatch).mockResolvedValue({
-      ok: true,
-      translations: [{ index: 0, translatedText: 't0' }],
-    });
-
-    await handle({ type: 'START_TRANSLATION', payload: { videoId, tabId } }, senderFor(undefined));
-
     await vi.waitFor(async () => {
       expect((await getTranslation(videoId))?.status).toBe('done');
     });
-    await flushMicrotasks();
-    expect(generateSummary).not.toHaveBeenCalled();
-    expect(await getSummary(videoId)).toBeNull();
+    await vi.waitFor(async () => {
+      expect(await getSummary(videoId)).not.toBeNull();
+    });
+    expect(generateSummary).toHaveBeenCalledTimes(1);
   });
 
-  it('does not call generateSummary and leaves an existing summary untouched when the pipeline ends failed', async () => {
+  // Spec §3: "추출이 실패하면 analyzing 이벤트 자체가 오지 않으므로 요약도
+  // 시작되지 않는다" — an extraction failure fails the pipeline BEFORE the
+  // `analyzing` progress event is ever emitted, so there is nothing here to
+  // start a summary job in the first place (no separate guard needed).
+  it('does not start a summary job when extraction fails, since no `analyzing` event is ever emitted', async () => {
     const tabId = freshTabId();
-    const videoId = 'cascade-failed-video';
+    const videoId = 'no-analyzing-event-video';
     await chrome.storage.local.set({ geminiApiKey: 'test-key', geminiApiKeySavedAt: new Date().toISOString() });
     const seeded = existingSummary(videoId);
     await putSummary(seeded);
 
     // No transcript panel available — same failure fixture as the
-    // START_TRANSLATION dedup suite above.
+    // START_TRANSLATION dedup suite above. This fails at step 1
+    // ("extracting"), before pipeline.ts ever reaches its `analyzing`
+    // progress call.
     tabsSendMessageMock.mockResolvedValueOnce({ unavailable: true });
 
     await handle({ type: 'START_TRANSLATION', payload: { videoId, tabId } }, senderFor(undefined));
@@ -812,21 +886,93 @@ describe('START_TRANSLATION summary cascade', () => {
     expect(await getSummary(videoId)).toEqual(seeded);
   });
 
-  // Final-review regression test (C2) — before this fix, `inFlightTranslations
-  // .delete(payload.videoId)` was deferred into the FINAL `.finally`, i.e.
-  // AFTER the cascade's own (possibly long-running) summary regeneration.
-  // That meant a `다시 생성` click while a cascade was still in flight for the
-  // same videoId got silently deduped against a pipeline that, from the
-  // pipeline's own perspective, had already finished — no error, no second
-  // pipeline, just a swallowed click. Proves the fix: while the cascade's
-  // `generateSummary` call is deliberately held open (not yet resolved), a
-  // second START_TRANSLATION for the SAME videoId still reaches
-  // `requestTranscript` a second time — i.e. is NOT deduped.
-  it('does not dedup a second START_TRANSLATION while the first run\'s cascade is still generating a summary', async () => {
+  // Spec §5: "요약 실패는 번역 레코드에 어떤 흔적도 남기지 않는다" — a
+  // terminal summary failure must not affect the translation record's own
+  // status or segments, and the pipeline's own success is not conditioned on
+  // the summary succeeding (they are two independent Gemini calls now).
+  it('does not let a summary failure affect the translation record\'s status or segments', async () => {
     const tabId = freshTabId();
-    const videoId = 'cascade-inflight-video';
+    const videoId = 'summary-failure-isolation-video';
     await chrome.storage.local.set({ geminiApiKey: 'test-key', geminiApiKeySavedAt: new Date().toISOString() });
+
+    const rows: RawTranscriptRow[] = [{ tsText: '0:00', text: 'Hello world.' }];
+    tabsSendMessageMock.mockResolvedValueOnce(rows);
+    vi.mocked(analyzeGlossary).mockResolvedValue({ ok: true, topic: 't', glossary: [] });
+    vi.mocked(translateBatch).mockResolvedValue({
+      ok: true,
+      translations: [{ index: 0, translatedText: 't0' }],
+    });
+    // Terminal (non-retried) summary failure — same reason the GENERATE_SUMMARY
+    // suite already exercises for `unauthorized`.
+    vi.mocked(generateSummary).mockResolvedValueOnce({
+      ok: false,
+      reason: 'unauthorized',
+      message: 'API key not valid',
+    });
+
+    await handle({ type: 'START_TRANSLATION', payload: { videoId, tabId } }, senderFor(undefined));
+
+    await vi.waitFor(async () => {
+      expect((await getTranslation(videoId))?.status).toBe('done');
+    });
+    await vi.waitFor(() => {
+      expect(generateSummary).toHaveBeenCalledTimes(1);
+    });
+    await flushMicrotasks();
+
+    const record = await getTranslation(videoId);
+    expect(record?.status).toBe('done');
+    expect(record?.segments[0]?.translatedText).toBe('t0');
+    expect(await getSummary(videoId)).toBeNull();
+  });
+
+  // Spec §8's named regression: removing the cascade must not leave TWO
+  // summary triggers active for one START_TRANSLATION call. Seeds a stale
+  // `done` record (captionHash 'hash', guaranteed to differ from any real
+  // computed hash) plus an existing summary — the closest analogue of a
+  // real 다시 생성 click — and re-translates with genuinely different
+  // captions, forcing a full fresh run (not the pipeline's done-record
+  // cache-hit shortcut) so the `analyzing` event fires normally.
+  it('calls generateSummary exactly once for a single START_TRANSLATION that regenerates a changed video (cascade-removal regression)', async () => {
+    const tabId = freshTabId();
+    const videoId = 'regen-once-video';
+    await chrome.storage.local.set({ geminiApiKey: 'test-key', geminiApiKeySavedAt: new Date().toISOString() });
+    await putTranslation(doneTranslationRecord(videoId));
     await putSummary(existingSummary(videoId));
+
+    const rows: RawTranscriptRow[] = [{ tsText: '0:00', text: 'Hello world, updated captions.' }];
+    tabsSendMessageMock.mockResolvedValueOnce(rows);
+    vi.mocked(analyzeGlossary).mockResolvedValue({ ok: true, topic: 't', glossary: [] });
+    vi.mocked(translateBatch).mockResolvedValue({
+      ok: true,
+      translations: [{ index: 0, translatedText: 't0' }],
+    });
+    vi.mocked(generateSummary).mockResolvedValueOnce({ ok: true, payload: SUMMARY_PAYLOAD });
+
+    await handle({ type: 'START_TRANSLATION', payload: { videoId, tabId } }, senderFor(undefined));
+
+    await vi.waitFor(async () => {
+      expect((await getTranslation(videoId))?.status).toBe('done');
+    });
+    await flushMicrotasks();
+    expect(generateSummary).toHaveBeenCalledTimes(1);
+  });
+
+  // Final-review regression test (C2, spec 2026-07-31-regen-cascade),
+  // restated against the new trigger: `inFlightTranslations.delete` must
+  // free the PIPELINE's slot as soon as the pipeline itself settles, not
+  // wait on whatever else is still running for that videoId. Under the new
+  // design the summary job starts much EARLIER (right at `analyzing`, not
+  // after `done`), so it can easily still be in flight once the — much
+  // shorter, in this test — pipeline itself has already finished. Proves
+  // the same property the old cascade test did: while the summary's
+  // `generateSummary` call is deliberately held open, a second
+  // START_TRANSLATION for the SAME videoId still reaches `requestTranscript`
+  // a second time — i.e. is NOT deduped.
+  it('does not dedup a second START_TRANSLATION while the summary job triggered by `analyzing` is still running', async () => {
+    const tabId = freshTabId();
+    const videoId = 'summary-inflight-video';
+    await chrome.storage.local.set({ geminiApiKey: 'test-key', geminiApiKeySavedAt: new Date().toISOString() });
 
     const rows: RawTranscriptRow[] = [{ tsText: '0:00', text: 'Hello world.' }];
     tabsSendMessageMock.mockResolvedValueOnce(rows);
@@ -836,9 +982,11 @@ describe('START_TRANSLATION summary cascade', () => {
       translations: [{ index: 0, translatedText: 't0' }],
     });
 
-    // Held open deliberately — this is the cascade's "still generating"
-    // window the regression is about. Resolved at the end so the job
-    // settles cleanly and doesn't leak into the next test.
+    // Held open deliberately — the pipeline itself finishes translating well
+    // before this resolves, since the summary job starts at the very
+    // BEGINNING of the run now (the `analyzing` event), not after the
+    // pipeline settles. Resolved at the end so the job settles cleanly and
+    // doesn't leak into the next test.
     let resolveGemini!: (value: GenerateSummaryResult) => void;
     const stuck = new Promise<GenerateSummaryResult>((resolve) => {
       resolveGemini = resolve;
@@ -850,8 +998,9 @@ describe('START_TRANSLATION summary cascade', () => {
     await vi.waitFor(async () => {
       expect((await getTranslation(videoId))?.status).toBe('done');
     });
-    // The cascade has reached (and is now blocked inside) generateSummary —
-    // i.e. it is provably still "in progress" at this instant.
+    // The summary job has reached (and is now blocked inside)
+    // generateSummary — i.e. it is provably still "in progress" at this
+    // instant, even though the pipeline itself already finished.
     await vi.waitFor(() => {
       expect(generateSummary).toHaveBeenCalledTimes(1);
     });
@@ -865,14 +1014,13 @@ describe('START_TRANSLATION summary cascade', () => {
       expect(tabsSendMessageMock).toHaveBeenCalledTimes(2);
     });
 
-    // Let both runs settle (the second pipeline's own cascade joins the
-    // still-in-flight `inFlightSummaries` job for this videoId via
-    // single-flight, so this does NOT bill a second Gemini call) so nothing
-    // leaks into the next test.
+    // Let both runs settle (the second pipeline's own `analyzing`-triggered
+    // summary joins the still-in-flight `inFlightSummaries` job for this
+    // videoId via single-flight, so this does NOT bill a second Gemini
+    // call) so nothing leaks into the next test.
     resolveGemini({ ok: true, payload: SUMMARY_PAYLOAD });
     await vi.waitFor(async () => {
-      const refreshed = await getSummary(videoId);
-      expect(refreshed?.createdAt).not.toBe('2020-01-01T00:00:00.000Z');
+      expect(await getSummary(videoId)).not.toBeNull();
     });
     expect(generateSummary).toHaveBeenCalledTimes(1);
   });
