@@ -14,6 +14,22 @@ export function DownloadMenu() {
   const data = useExportData(open);
   const rootRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
+  // 열렸었는지 추적 — 마운트 시(open이 처음부터 false)는 트리거로 포커스를
+  // 되돌리지 않기 위해서다.
+  const wasOpenRef = useRef(false);
+
+  // 포커스 관리(spec §4): 열릴 때 첫 항목으로, 닫힐 때(항목 선택·바깥 클릭·
+  // Escape 무관) 트리거로 되돌린다. 항목 선택은 그 버튼 자체를 언마운트하므로
+  // 여기서 한 곳에 모아 처리한다.
+  useEffect(() => {
+    if (open) {
+      wasOpenRef.current = true;
+      rootRef.current?.querySelector<HTMLButtonElement>('[role="menuitem"]')?.focus();
+    } else if (wasOpenRef.current) {
+      wasOpenRef.current = false;
+      triggerRef.current?.focus();
+    }
+  }, [open]);
 
   // 바깥 클릭 / Escape로 닫기. 열려 있을 때만 문서 리스너를 붙인다.
   useEffect(() => {
@@ -22,10 +38,7 @@ export function DownloadMenu() {
       if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
     };
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        setOpen(false);
-        triggerRef.current?.focus();
-      }
+      if (event.key === 'Escape') setOpen(false);
     };
     document.addEventListener('pointerdown', onPointerDown);
     document.addEventListener('keydown', onKeyDown);
@@ -39,24 +52,30 @@ export function DownloadMenu() {
 
   const downloadMarkdown = async () => {
     if (data.status !== 'ready') return;
-    const { displayMode } = await loadPanelPrefs();
-    const model = buildExportModel({
-      video: data.video,
-      record: data.record,
-      summary: data.summary,
-      displayMode,
-      exportedAt: new Date(),
-    });
-    const blob = new Blob([renderMarkdown(model)], { type: 'text/markdown;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement('a');
-    anchor.href = url;
-    anchor.download = `${model.fileBaseName}.md`;
-    document.body.appendChild(anchor);
-    anchor.click();
-    anchor.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 0);
-    setOpen(false);
+    try {
+      const { displayMode } = await loadPanelPrefs();
+      const model = buildExportModel({
+        video: data.video,
+        record: data.record,
+        summary: data.summary,
+        displayMode,
+        exportedAt: new Date(),
+      });
+      const blob = new Blob([renderMarkdown(model)], { type: 'text/markdown;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = `${model.fileBaseName}.md`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 0);
+    } catch {
+      // loadPanelPrefs가 컨텍스트 무효화 등으로 거부되면 메뉴만 닫는다 — 클릭이
+      // 조용히 아무 일도 하지 않는 것보다는 낫다.
+    } finally {
+      setOpen(false);
+    }
   };
 
   const openPrintPage = () => {

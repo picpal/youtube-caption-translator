@@ -56,10 +56,32 @@ describe('fetchExportData', () => {
   });
 
   it('sends the three reads concurrently, not one after another', async () => {
-    routeResponses();
-    await fetchExportData(VIDEO_ID);
+    // 세 호출을 직접 통제되는 프라미스로 되돌려, 아무것도 resolve하기 전에 세
+    // 호출 모두가 이미 나갔는지를 확인한다. Promise.all([a(), b(), c()])는 배열을
+    // 만드는 시점에 a/b/c를 동기적으로 전부 호출한 뒤에야 await로 넘어가므로, 첫
+    // await가 걸리기 전에 이미 3건이 기록돼 있어야 한다. 순차 await 체인으로
+    // 바뀌면 이 시점에 1건만 기록된다 — 정렬된 타입 배열 비교만으로는 이 차이를
+    // 잡지 못했다(무엇이든 결국 세 건이 쌓이므로).
+    const resolvers: Record<string, (value: unknown) => void> = {};
+    sendMessage.mockImplementation(
+      (msg: { type: string }) =>
+        new Promise((resolve) => {
+          resolvers[msg.type] = resolve;
+        }),
+    );
+
+    const resultPromise = fetchExportData(VIDEO_ID);
+
+    expect(sendMessage).toHaveBeenCalledTimes(3);
     const types = sendMessage.mock.calls.map(([msg]) => msg.type).sort();
     expect(types).toEqual(['GET_SUMMARY', 'GET_TRANSLATION', 'GET_VIDEO_META']);
+
+    resolvers.GET_VIDEO_META(VIDEO);
+    resolvers.GET_TRANSLATION(DONE);
+    resolvers.GET_SUMMARY(null);
+
+    const state = await resultPromise;
+    expect(state.status).toBe('ready');
   });
 
   it('reports no-video when a read rejects', async () => {

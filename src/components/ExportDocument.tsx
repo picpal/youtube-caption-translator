@@ -1,4 +1,5 @@
 import type { ExportModel } from '~/lib/export-doc';
+import { formatTimestamp } from '~/lib/transcript-parse';
 
 /**
  * 화면과 인쇄에 같은 마크업을 쓴다. 인쇄 규칙은 이 파일 안의 <style>로만 둔다 —
@@ -10,7 +11,7 @@ export function ExportDocument({ model }: { model: ExportModel }) {
   );
 
   return (
-    <article className="mx-auto max-w-[760px] px-6 py-8 text-[13px] leading-relaxed text-neutral-900">
+    <article className="mx-auto max-w-[760px] bg-white px-6 py-8 text-[13px] leading-relaxed text-neutral-900">
       <style>{PRINT_CSS}</style>
 
       <h1 className="text-[20px] font-bold leading-snug">{model.title}</h1>
@@ -48,7 +49,12 @@ export function ExportDocument({ model }: { model: ExportModel }) {
               <ul className="mt-1 list-disc pl-5">
                 {model.summary.sections.map((section, i) => (
                   <li key={i}>
-                    <a href={`${model.videoUrl}?t=${Math.floor(section.startSec)}`}>{section.title}</a>
+                    {/* 인쇄물에서 링크는 죽은 텍스트다 — 타임스탬프를 텍스트 안에
+                        노출해야 종이에서도 읽을 수 있다(최종 리뷰 I2). Markdown과
+                        같은 formatTimestamp 표기를 쓴다. */}
+                    <a href={`${model.videoUrl}?t=${Math.floor(section.startSec)}`}>
+                      [{formatTimestamp(section.startSec)}] {section.title}
+                    </a>
                   </li>
                 ))}
               </ul>
@@ -73,7 +79,7 @@ export function ExportDocument({ model }: { model: ExportModel }) {
         <h2 className="text-[16px] font-bold">스크립트</h2>
         <div className="mt-3">
           {model.segments.map((segment) => (
-            <div key={segment.startSec} className="seg mb-3">
+            <div key={segment.segmentId} className="seg mb-3">
               <a href={segment.url} className="mr-2 font-mono text-[11.5px] text-neutral-500">
                 [{segment.timestamp}]
               </a>
@@ -89,6 +95,10 @@ export function ExportDocument({ model }: { model: ExportModel }) {
 }
 
 const PRINT_CSS = `
+  /* 라이트 표면 강제 (최종 리뷰 C1): globals.css가 OS 다크 모드에서 html/body를
+     어둡게 칠해도 이 인쇄 문서만은 항상 흰 배경 + 짙은 글자를 쓴다. @media print
+     밖에 둬서 화면에서도 적용된다 — 패널·Options의 다크 처리는 건드리지 않는다. */
+  html, body { background: #fff; color: #171717; }
   @page { margin: 14mm; }
   a { color: inherit; text-decoration: none; }
   @media print {

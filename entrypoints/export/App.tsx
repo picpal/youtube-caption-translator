@@ -20,33 +20,41 @@ export function App() {
     let cancelled = false;
 
     void (async () => {
-      const videoId = new URLSearchParams(location.search).get('videoId');
-      if (!videoId) {
-        setState({ status: 'error', message: '내보낼 영상을 찾지 못했어요.' });
-        return;
-      }
-      const [data, prefs] = await Promise.all([fetchExportData(videoId), loadPanelPrefs()]);
-      if (cancelled) return;
-      if (data.status !== 'ready') {
+      try {
+        const videoId = new URLSearchParams(location.search).get('videoId');
+        if (!videoId) {
+          setState({ status: 'error', message: '내보낼 영상을 찾지 못했어요.' });
+          return;
+        }
+        const [data, prefs] = await Promise.all([fetchExportData(videoId), loadPanelPrefs()]);
+        if (cancelled) return;
+        if (data.status !== 'ready') {
+          setState({
+            status: 'error',
+            message:
+              data.status === 'unavailable' && data.reason === 'not-done'
+                ? '번역이 완료된 뒤에 내보낼 수 있어요.'
+                : '내보낼 데이터를 찾지 못했어요.',
+          });
+          return;
+        }
         setState({
-          status: 'error',
-          message:
-            data.status === 'unavailable' && data.reason === 'not-done'
-              ? '번역이 완료된 뒤에 내보낼 수 있어요.'
-              : '내보낼 데이터를 찾지 못했어요.',
+          status: 'ready',
+          model: buildExportModel({
+            video: data.video,
+            record: data.record,
+            summary: data.summary,
+            displayMode: prefs.displayMode,
+            exportedAt: new Date(),
+          }),
         });
-        return;
+      } catch {
+        // loadPanelPrefs 등이 컨텍스트 무효화로 거부될 수 있다 — fetchExportData는
+        // 자체적으로 실패를 접지만 Promise.all 전체는 여전히 reject될 수 있어
+        // 여기서도 감싼다. 기존 오류 상태로 착지시켜 "불러오는 중…"에 영원히
+        // 머무르지 않게 한다.
+        if (!cancelled) setState({ status: 'error', message: '내보낼 데이터를 찾지 못했어요.' });
       }
-      setState({
-        status: 'ready',
-        model: buildExportModel({
-          video: data.video,
-          record: data.record,
-          summary: data.summary,
-          displayMode: prefs.displayMode,
-          exportedAt: new Date(),
-        }),
-      });
     })();
 
     return () => {

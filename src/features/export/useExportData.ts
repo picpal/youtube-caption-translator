@@ -58,15 +58,23 @@ export function useExportData(enabled: boolean): ExportDataState {
     setState({ status: 'loading' });
 
     void (async () => {
-      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-      const videoId = parseVideoId(tab?.url);
-      if (cancelled) return;
-      if (!videoId) {
-        setState({ status: 'unavailable', reason: 'no-video' });
-        return;
+      try {
+        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+        const videoId = parseVideoId(tab?.url);
+        if (cancelled) return;
+        if (!videoId) {
+          setState({ status: 'unavailable', reason: 'no-video' });
+          return;
+        }
+        const next = await fetchExportData(videoId);
+        if (!cancelled) setState(next);
+      } catch {
+        // 확장 리로드/업데이트 중 chrome.tabs.query가 "Extension context
+        // invalidated"로 거부될 수 있다 — fetchExportData 내부의 try/catch로는
+        // 잡히지 않는 실패라 여기서도 감싼다. 다른 실패와 동일하게 no-video로
+        // 접어 메뉴가 "확인 중…"에 영원히 머물지 않게 한다.
+        if (!cancelled) setState({ status: 'unavailable', reason: 'no-video' });
       }
-      const next = await fetchExportData(videoId);
-      if (!cancelled) setState(next);
     })();
 
     return () => {

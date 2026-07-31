@@ -6,7 +6,9 @@ import type { VideoSummary } from '~/types/summary';
 import type { VideoMeta } from '~/types/video';
 
 const VIDEO_ID = 'zjkBMFhNj_g';
-const EXPORTED_AT = new Date('2026-07-31T19:20:00+09:00');
+// 로컬 시간 컴포넌트로 만든다(월은 0-based) — UTC 문자열을 쓰면 실행 타임존에 따라
+// exportedAtText 검증이 흔들린다.
+const EXPORTED_AT = new Date(2026, 6, 31, 19, 20);
 
 const VIDEO: VideoMeta = {
   videoId: VIDEO_ID,
@@ -101,19 +103,38 @@ describe('buildExportModel', () => {
 
   it('builds a per-segment seek url and a matching timestamp label', () => {
     const model = buildExportModel(input());
+    expect(model.segments[0].segmentId).toBe(`${VIDEO_ID}:0`);
     expect(model.segments[0].url).toBe(`https://youtu.be/${VIDEO_ID}?t=12`);
     expect(model.segments[0].timestamp).toBe('0:12');
     expect(model.segments[1].timestamp).toBe('1:01:11');
   });
 
-  it("keeps an untranslated segment in 'both' mode but omits it entirely in 'ko' mode", () => {
+  it("keeps an untranslated segment's sourceText in 'both' mode; fills it from source in 'ko' mode (I4)", () => {
     const partial = { ...RECORD, segments: [seg(0, 12, 'Only source.', null)] };
-    expect(buildExportModel(input({ record: partial })).segments).toHaveLength(1);
-    expect(buildExportModel(input({ record: partial, displayMode: 'ko' })).segments).toHaveLength(0);
+
+    const both = buildExportModel(input({ record: partial })).segments;
+    expect(both).toHaveLength(1);
+    expect(both[0].sourceText).toBe('Only source.');
+    expect(both[0].translatedText).toBeNull();
+
+    // 'ko' 모드도 세그먼트를 생략하지 않는다 — 패널의 "빈 행 금지" 규칙과 동일하게
+    // 번역이 없으면 원문을 그 자리에 채운다. sourceText는 여전히 null(ko 모드
+    // 규칙)이고, translatedText 쪽에 원문이 들어간다.
+    const ko = buildExportModel(input({ record: partial, displayMode: 'ko' })).segments;
+    expect(ko).toHaveLength(1);
+    expect(ko[0].sourceText).toBeNull();
+    expect(ko[0].translatedText).toBe('Only source.');
   });
 
   it('formats exportedAt from the injected date, not the clock', () => {
-    expect(buildExportModel(input()).exportedAtText).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/);
+    expect(buildExportModel(input()).exportedAtText).toBe('2026-07-31 19:20');
+  });
+
+  it('formats a second, different injected date to a different exact output', () => {
+    // 위 테스트와 나란히 둬서, 구현이 내부에서 new Date()를 호출해 exportedAt
+    // 파라미터를 무시해도 두 값을 동시에 만족시킬 수 없게 한다.
+    const other = new Date(2027, 0, 5, 8, 3);
+    expect(buildExportModel(input({ exportedAt: other })).exportedAtText).toBe('2027-01-05 08:03');
   });
 
   it("labels a legacy record with no targetLang as 한국어", () => {
@@ -175,6 +196,13 @@ describe('renderMarkdown', () => {
   it("writes no trailing hard break when only the translation is present ('ko' mode)", () => {
     const md = renderMarkdown(buildExportModel(input({ displayMode: 'ko' })));
     expect(md).toContain(`**[0:12](https://youtu.be/${VIDEO_ID}?t=12)** 벡터 검색에 대해 이야기해 봅시다.`);
+    expect(md).not.toContain('  \n');
+  });
+
+  it("renders an untranslated segment's source-text fallback as a single line in 'ko' mode (I4)", () => {
+    const partial = { ...RECORD, segments: [seg(0, 12, 'Only source.', null)] };
+    const md = renderMarkdown(buildExportModel(input({ record: partial, displayMode: 'ko' })));
+    expect(md).toContain(`**[0:12](https://youtu.be/${VIDEO_ID}?t=12)** Only source.`);
     expect(md).not.toContain('  \n');
   });
 });

@@ -20,6 +20,7 @@ export interface ExportInput {
 }
 
 export interface ExportSegmentLine {
+  segmentId: string;
   startSec: number;
   timestamp: string;
   url: string;
@@ -74,14 +75,17 @@ export function buildExportModel({
   const segments: ExportSegmentLine[] = [];
   for (const segment of record.segments) {
     const sourceText = showSource ? segment.sourceText : null;
-    // 'ko' 모드에서 아직 번역되지 않은 세그먼트는 타임스탬프만 남으므로 통째로 뺀다.
-    if (sourceText === null && segment.translatedText === null) continue;
+    // 정정 (최종 리뷰 I4): 'ko' 모드에서 아직 번역되지 않은 세그먼트는 원문을 그
+    // 자리에 채운다 — TranscriptList.visibleTexts와 같은 "빈 행 금지" 규칙. 어떤
+    // 모드에서도 세그먼트를 건너뛰지 않는다.
+    const translatedText = showSource ? segment.translatedText : (segment.translatedText ?? segment.sourceText);
     segments.push({
+      segmentId: segment.segmentId,
       startSec: segment.startSec,
       timestamp: formatTimestamp(segment.startSec),
       url: `${videoUrl}?t=${Math.floor(segment.startSec)}`,
       sourceText,
-      translatedText: segment.translatedText,
+      translatedText,
     });
   }
 
@@ -145,7 +149,11 @@ export function renderMarkdown(model: ExportModel): string {
       // 한 문단으로 이어 붙여 한 줄로 보인다.
       lines.push(`${head} ${segment.sourceText}  `, segment.translatedText, '');
     } else {
-      lines.push(`${head} ${segment.sourceText ?? segment.translatedText ?? ''}`, '');
+      // I4 수정 이후 이 분기에 도달하면 둘 중 정확히 하나만 값을 갖는다 —
+      // 'both' 모드는 sourceText가(translatedText가 null), 'ko' 모드는
+      // translatedText가(원문 폴백으로 null일 수 없다) 항상 채워진다. 두 값이
+      // 동시에 null인 조합은 나오지 않으므로 `?? ''` 최종 폴백은 불필요하다.
+      lines.push(`${head} ${segment.sourceText ?? segment.translatedText}`, '');
     }
   }
 
