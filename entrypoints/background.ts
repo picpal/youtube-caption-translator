@@ -126,6 +126,22 @@ async function runSummaryGeneration(videoId: string): Promise<AppResponseMap['GE
   }
 }
 
+// Shared by the GENERATE_SUMMARY handler and the 다시 생성 cascade (spec
+// 2026-07-31-regen-cascade §2) below — both need "join the in-flight job for
+// this videoId if one exists, else start one", and must share the SAME
+// `inFlightSummaries` entry so a cascade racing a panel-initiated
+// GENERATE_SUMMARY (or vice versa) still only bills one Gemini call.
+function startSummaryJob(videoId: string): Promise<AppResponseMap['GENERATE_SUMMARY']> {
+  let job = inFlightSummaries.get(videoId);
+  if (!job) {
+    job = runSummaryGeneration(videoId).finally(() => {
+      inFlightSummaries.delete(videoId);
+    });
+    inFlightSummaries.set(videoId, job);
+  }
+  return job;
+}
+
 // Task R4 — MV3 service-worker keepalive spanning a translation pipeline's
 // ENTIRE run. Root cause (real-Chrome DoD): Chrome's ~30s SW idle-eviction
 // timer is reset by chrome.* API activity and messaging, but NOT by an
@@ -391,6 +407,25 @@ export async function handle<T extends AppMessage['type']>(
           .catch((err) => {
             console.error('translation pipeline failed', err);
           })
+          .then(async () => {
+            // 다시 생성 캐스케이드 (spec 2026-07-31-regen-cascade §2): a
+            // re-translation that ends `done` refreshes this video's summary
+            // too — but only if one already exists (summaries stay opt-in,
+            // and a `failed` run must not burn a summary call on top). Runs
+            // AFTER the `.catch` above, so it is never skipped by a pipeline
+            // failure — `rec?.status !== 'done'` is what actually gates it.
+            const [rec, cached] = await Promise.all([getTranslation(payload.videoId), getSummary(payload.videoId)]);
+            if (rec?.status !== 'done' || !cached) return;
+            const result = await startSummaryJob(payload.videoId);
+            if (!result.ok) console.warn('[bg] summary cascade failed:', result.error);
+          })
+          .catch((err) => {
+            // The cascade `.then` above has no `.catch` upstream of it (that
+            // belongs to the pipeline, not this step) — without this, a
+            // throw here would surface as an unhandled rejection instead of
+            // reaching `.finally` below cleanly.
+            console.warn('[bg] summary cascade error:', err);
+          })
           .finally(() => {
             inFlightTranslations.delete(payload.videoId);
             releaseKeepalive();
@@ -409,14 +444,7 @@ export async function handle<T extends AppMessage['type']>(
     }
     case 'GENERATE_SUMMARY': {
       const { payload } = msg as Extract<AppMessage, { type: 'GENERATE_SUMMARY' }>;
-      let job = inFlightSummaries.get(payload.videoId);
-      if (!job) {
-        job = runSummaryGeneration(payload.videoId).finally(() => {
-          inFlightSummaries.delete(payload.videoId);
-        });
-        inFlightSummaries.set(payload.videoId, job);
-      }
-      return (await job) as AppResponseMap[T];
+      return (await startSummaryJob(payload.videoId)) as AppResponseMap[T];
     }
   }
   throw new Error(`Unhandled message type: ${(msg as AppMessage).type}`);

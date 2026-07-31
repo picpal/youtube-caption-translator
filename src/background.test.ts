@@ -1,11 +1,12 @@
 import 'fake-indexeddb/auto';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { DB_NAME, getVideo, getTranslation, getSummary, putTranslation } from '~/lib/db';
+import { DB_NAME, getVideo, getTranslation, getSummary, putTranslation, putSummary } from '~/lib/db';
 import { analyzeGlossary, generateSummary, translateBatch, MODEL_ID } from '~/lib/gemini';
 import type { GenerateSummaryResult } from '~/lib/gemini';
 import { captionHash, dedupeRows, reconstructSentences, rowsToSegments } from '~/lib/transcript-parse';
 import type { AppMessage, RawTranscriptRow } from '~/types/message';
 import type { TranslationRecord } from '~/types/transcript';
+import type { VideoSummary } from '~/types/summary';
 import { handle } from '../entrypoints/background';
 
 // GENERATE_SUMMARY suite (fix round, Important #3) — `generateSummary` is
@@ -674,5 +675,109 @@ describe('GENERATE_SUMMARY', () => {
 
     expect(res).toEqual({ ok: false, error: 'API key not set' });
     expect(generateSummary).not.toHaveBeenCalled();
+  });
+});
+
+// 다시 생성 캐스케이드 (spec 2026-07-31-regen-cascade §2) — the transcript-side
+// 다시 생성 button (a normal START_TRANSLATION call) now refreshes this
+// video's summary too, but ONLY when the run settles `done` AND a summary
+// already existed. Driven from inside START_TRANSLATION's own promise
+// chain (background.ts, the `.then` inserted before the final
+// `.finally(release keepalive)`) — there is no separate message type for
+// this, so these tests drive the real pipeline to `done`/`failed` the same
+// way the language-boundary suite above does (mocked `analyzeGlossary` /
+// `translateBatch`, real fake-indexeddb) rather than mocking the cascade
+// itself away.
+function existingSummary(videoId: string, overrides: Partial<VideoSummary> = {}): VideoSummary {
+  return {
+    videoId,
+    ...SUMMARY_PAYLOAD,
+    model: MODEL_ID,
+    targetLang: 'ko',
+    createdAt: '2020-01-01T00:00:00.000Z',
+    ...overrides,
+  };
+}
+
+describe('START_TRANSLATION summary cascade', () => {
+  beforeEach(() => {
+    vi.mocked(generateSummary).mockReset();
+    vi.mocked(analyzeGlossary).mockReset();
+    vi.mocked(translateBatch).mockReset();
+  });
+
+  it('refreshes an existing summary once a re-translation settles done, using the current target-lang setting', async () => {
+    const tabId = freshTabId();
+    const videoId = 'cascade-video';
+    await chrome.storage.local.set({
+      geminiApiKey: 'test-key',
+      geminiApiKeySavedAt: new Date().toISOString(),
+      // Deliberately different from the seeded summary's 'ko' below — the
+      // cascade's `runSummaryGeneration` reads the CURRENT setting fresh,
+      // not whatever language the prior summary happened to be in.
+      translationTargetLang: 'ja',
+    });
+    await putSummary(existingSummary(videoId));
+
+    const rows: RawTranscriptRow[] = [{ tsText: '0:00', text: 'Hello world.' }];
+    tabsSendMessageMock.mockResolvedValueOnce(rows);
+    vi.mocked(analyzeGlossary).mockResolvedValue({ ok: true, topic: 't', glossary: [] });
+    vi.mocked(translateBatch).mockResolvedValue({
+      ok: true,
+      translations: [{ index: 0, translatedText: 't0' }],
+    });
+    vi.mocked(generateSummary).mockResolvedValueOnce({ ok: true, payload: SUMMARY_PAYLOAD });
+
+    await handle({ type: 'START_TRANSLATION', payload: { videoId, tabId } }, senderFor(undefined));
+
+    await vi.waitFor(() => {
+      expect(generateSummary).toHaveBeenCalledTimes(1);
+    });
+
+    const refreshed = await getSummary(videoId);
+    expect(refreshed?.targetLang).toBe('ja');
+    expect(refreshed?.createdAt).not.toBe('2020-01-01T00:00:00.000Z');
+  });
+
+  it('does not call generateSummary when the video has no prior summary', async () => {
+    const tabId = freshTabId();
+    const videoId = 'cascade-no-summary-video';
+    await chrome.storage.local.set({ geminiApiKey: 'test-key', geminiApiKeySavedAt: new Date().toISOString() });
+
+    const rows: RawTranscriptRow[] = [{ tsText: '0:00', text: 'Hello world.' }];
+    tabsSendMessageMock.mockResolvedValueOnce(rows);
+    vi.mocked(analyzeGlossary).mockResolvedValue({ ok: true, topic: 't', glossary: [] });
+    vi.mocked(translateBatch).mockResolvedValue({
+      ok: true,
+      translations: [{ index: 0, translatedText: 't0' }],
+    });
+
+    await handle({ type: 'START_TRANSLATION', payload: { videoId, tabId } }, senderFor(undefined));
+
+    await vi.waitFor(async () => {
+      expect((await getTranslation(videoId))?.status).toBe('done');
+    });
+    expect(generateSummary).not.toHaveBeenCalled();
+    expect(await getSummary(videoId)).toBeNull();
+  });
+
+  it('does not call generateSummary and leaves an existing summary untouched when the pipeline ends failed', async () => {
+    const tabId = freshTabId();
+    const videoId = 'cascade-failed-video';
+    await chrome.storage.local.set({ geminiApiKey: 'test-key', geminiApiKeySavedAt: new Date().toISOString() });
+    const seeded = existingSummary(videoId);
+    await putSummary(seeded);
+
+    // No transcript panel available — same failure fixture as the
+    // START_TRANSLATION dedup suite above.
+    tabsSendMessageMock.mockResolvedValueOnce({ unavailable: true });
+
+    await handle({ type: 'START_TRANSLATION', payload: { videoId, tabId } }, senderFor(undefined));
+
+    await vi.waitFor(async () => {
+      expect((await getTranslation(videoId))?.status).toBe('failed');
+    });
+    expect(generateSummary).not.toHaveBeenCalled();
+    expect(await getSummary(videoId)).toEqual(seeded);
   });
 });

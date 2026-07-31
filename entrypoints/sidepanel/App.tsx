@@ -480,7 +480,7 @@ function ReadyBody({ scrollContainerRef }: { scrollContainerRef: RefObject<HTMLD
     summaryState.summary !== null && (summaryState.summary.targetLang ?? 'ko') !== targetLang;
   const summaryLangMismatchBanner = summaryLangMismatch && (
     <p className="mx-4 mt-3 rounded-[7px] bg-amber-50 px-3 py-2 text-[11.5px] leading-relaxed text-amber-800 dark:bg-amber-950/40 dark:text-amber-300">
-      이 요약은 {TARGET_LANG_LABELS[summaryState.summary?.targetLang ?? 'ko']}본입니다 · 현재 설정 {TARGET_LANG_LABELS[targetLang]} — 다시 생성으로 교체할 수 있어요
+      이 요약은 {TARGET_LANG_LABELS[summaryState.summary?.targetLang ?? 'ko']}본입니다 · 현재 설정 {TARGET_LANG_LABELS[targetLang]} — 다시 생성 시 함께 갱신됩니다
     </p>
   );
 
@@ -716,7 +716,6 @@ function ReadyBody({ scrollContainerRef }: { scrollContainerRef: RefObject<HTMLD
                     error={summaryState.error}
                     elapsedSeconds={summaryElapsedSeconds}
                     onGenerate={summaryState.generate}
-                    onRegenerate={summaryState.regenerate}
                     onSeekSection={(startSec) => playback.seek(startSec)}
                   />
                 </>

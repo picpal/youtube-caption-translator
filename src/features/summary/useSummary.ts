@@ -31,11 +31,11 @@ export interface UseSummaryResult {
   error: string | null;
   // Cache-aware (fix round, Important #4): checks GET_SUMMARY first and only
   // calls GENERATE_SUMMARY if nothing is cached yet. Used by the 빈 상태
-  // "요약 생성" button and the failed-state "다시 시도" button.
+  // "요약 생성" button and the failed-state "다시 시도" button. A done summary
+  // no longer has its own regenerate affordance — it refreshes via the
+  // transcript-side 다시 생성 cascade instead (spec 2026-07-31-regen-cascade
+  // §2, background.ts's START_TRANSLATION handler).
   generate: () => void;
-  // Always calls GENERATE_SUMMARY, overwriting any cached summary — the
-  // SummaryPanel's explicit "다시 생성" affordance, an intentional overwrite.
-  regenerate: () => void;
 }
 
 export function useSummary({ videoId, enabled }: UseSummaryParams): UseSummaryResult {
@@ -80,9 +80,10 @@ export function useSummary({ videoId, enabled }: UseSummaryParams): UseSummaryRe
     return clearTimer;
   }, [videoId, enabled]);
 
-  // The actual billed call + safety timeout, unconditional overwrite —
-  // `regenerate`'s whole body, and also `generate`'s fallback once its own
-  // cache pre-check below comes back empty.
+  // The actual billed call + safety timeout — `generate`'s fallback once its
+  // own cache pre-check below comes back empty. (Previously also
+  // `regenerate`'s whole body; that unconditional-overwrite path no longer
+  // exists on the panel side — see the module doc comment above.)
   const startGenerate = useCallback(() => {
     if (videoId === null) return;
     const cycle = cycleRef.current;
@@ -127,10 +128,6 @@ export function useSummary({ videoId, enabled }: UseSummaryParams): UseSummaryRe
     );
   }, [videoId]);
 
-  const regenerate = useCallback(() => {
-    startGenerate();
-  }, [startGenerate]);
-
   // Fix round, Important #4 — a summary that lands AFTER the 180s safety
   // timeout already marked this attempt `failed` is otherwise invisible to
   // the panel: a plain retry click would re-bill a fresh Gemini call and
@@ -162,5 +159,5 @@ export function useSummary({ videoId, enabled }: UseSummaryParams): UseSummaryRe
     );
   }, [videoId, startGenerate]);
 
-  return { summary, status, error, generate, regenerate };
+  return { summary, status, error, generate };
 }
