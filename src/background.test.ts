@@ -58,6 +58,25 @@ function senderFor(tabId: number | undefined): chrome.runtime.MessageSender {
   return tabId === undefined ? {} : { tab: { id: tabId } as chrome.tabs.Tab };
 }
 
+// Final-review fix (I1, spec 2026-07-31-regen-cascade) — the cascade "skip"
+// tests below observe a TERMINAL translation status via `vi.waitFor`, but
+// the cascade's own decision (`Promise.all([getTranslation, getSummary])`
+// then an `if` check, all inside the `.then` background.ts schedules once
+// the pipeline settles) is a SEPARATE, independently-timed async chain:
+// observing `done`/`failed` proves the PIPELINE finished, not that the
+// cascade has already decided. Without this, a test asserting
+// `generateSummary` was never called could pass "green" even if the
+// cascade's `!cached`/`rec?.status !== 'done'` guard were deleted, purely
+// because the observation raced ahead of the cascade's own reads — exactly
+// the final review's finding. Yielding several real event-loop turns gives
+// those pending fake-indexeddb reads (and the `.then` continuation reading
+// them) a chance to actually run first.
+async function flushMicrotasks(rounds = 5): Promise<void> {
+  for (let i = 0; i < rounds; i++) {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+}
+
 function deleteDb(): Promise<void> {
   return new Promise((resolve, reject) => {
     const request = indexedDB.deleteDatabase(DB_NAME);
@@ -737,6 +756,16 @@ describe('START_TRANSLATION summary cascade', () => {
     const refreshed = await getSummary(videoId);
     expect(refreshed?.targetLang).toBe('ja');
     expect(refreshed?.createdAt).not.toBe('2020-01-01T00:00:00.000Z');
+
+    // Final-review fix (C1) — background must broadcast so an already-open
+    // Summary tab's `useSummary` listener can converge on the new summary;
+    // without this the panel had no way to ever see the cascade's result.
+    await vi.waitFor(() => {
+      expect(sendMessageMock).toHaveBeenCalledWith({
+        type: 'SUMMARY_REFRESHED',
+        payload: { videoId },
+      });
+    });
   });
 
   it('does not call generateSummary when the video has no prior summary', async () => {
@@ -757,6 +786,7 @@ describe('START_TRANSLATION summary cascade', () => {
     await vi.waitFor(async () => {
       expect((await getTranslation(videoId))?.status).toBe('done');
     });
+    await flushMicrotasks();
     expect(generateSummary).not.toHaveBeenCalled();
     expect(await getSummary(videoId)).toBeNull();
   });
@@ -777,7 +807,73 @@ describe('START_TRANSLATION summary cascade', () => {
     await vi.waitFor(async () => {
       expect((await getTranslation(videoId))?.status).toBe('failed');
     });
+    await flushMicrotasks();
     expect(generateSummary).not.toHaveBeenCalled();
     expect(await getSummary(videoId)).toEqual(seeded);
+  });
+
+  // Final-review regression test (C2) — before this fix, `inFlightTranslations
+  // .delete(payload.videoId)` was deferred into the FINAL `.finally`, i.e.
+  // AFTER the cascade's own (possibly long-running) summary regeneration.
+  // That meant a `다시 생성` click while a cascade was still in flight for the
+  // same videoId got silently deduped against a pipeline that, from the
+  // pipeline's own perspective, had already finished — no error, no second
+  // pipeline, just a swallowed click. Proves the fix: while the cascade's
+  // `generateSummary` call is deliberately held open (not yet resolved), a
+  // second START_TRANSLATION for the SAME videoId still reaches
+  // `requestTranscript` a second time — i.e. is NOT deduped.
+  it('does not dedup a second START_TRANSLATION while the first run\'s cascade is still generating a summary', async () => {
+    const tabId = freshTabId();
+    const videoId = 'cascade-inflight-video';
+    await chrome.storage.local.set({ geminiApiKey: 'test-key', geminiApiKeySavedAt: new Date().toISOString() });
+    await putSummary(existingSummary(videoId));
+
+    const rows: RawTranscriptRow[] = [{ tsText: '0:00', text: 'Hello world.' }];
+    tabsSendMessageMock.mockResolvedValueOnce(rows);
+    vi.mocked(analyzeGlossary).mockResolvedValue({ ok: true, topic: 't', glossary: [] });
+    vi.mocked(translateBatch).mockResolvedValue({
+      ok: true,
+      translations: [{ index: 0, translatedText: 't0' }],
+    });
+
+    // Held open deliberately — this is the cascade's "still generating"
+    // window the regression is about. Resolved at the end so the job
+    // settles cleanly and doesn't leak into the next test.
+    let resolveGemini!: (value: GenerateSummaryResult) => void;
+    const stuck = new Promise<GenerateSummaryResult>((resolve) => {
+      resolveGemini = resolve;
+    });
+    vi.mocked(generateSummary).mockReturnValueOnce(stuck);
+
+    await handle({ type: 'START_TRANSLATION', payload: { videoId, tabId } }, senderFor(undefined));
+
+    await vi.waitFor(async () => {
+      expect((await getTranslation(videoId))?.status).toBe('done');
+    });
+    // The cascade has reached (and is now blocked inside) generateSummary —
+    // i.e. it is provably still "in progress" at this instant.
+    await vi.waitFor(() => {
+      expect(generateSummary).toHaveBeenCalledTimes(1);
+    });
+    expect(tabsSendMessageMock).toHaveBeenCalledTimes(1);
+
+    // Same videoId, second click, while the above is still unresolved.
+    tabsSendMessageMock.mockResolvedValueOnce(rows);
+    await handle({ type: 'START_TRANSLATION', payload: { videoId, tabId } }, senderFor(undefined));
+
+    await vi.waitFor(() => {
+      expect(tabsSendMessageMock).toHaveBeenCalledTimes(2);
+    });
+
+    // Let both runs settle (the second pipeline's own cascade joins the
+    // still-in-flight `inFlightSummaries` job for this videoId via
+    // single-flight, so this does NOT bill a second Gemini call) so nothing
+    // leaks into the next test.
+    resolveGemini({ ok: true, payload: SUMMARY_PAYLOAD });
+    await vi.waitFor(async () => {
+      const refreshed = await getSummary(videoId);
+      expect(refreshed?.createdAt).not.toBe('2020-01-01T00:00:00.000Z');
+    });
+    expect(generateSummary).toHaveBeenCalledTimes(1);
   });
 });

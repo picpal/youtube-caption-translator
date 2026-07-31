@@ -75,7 +75,22 @@ export type AppMessage =
   // Korean summary for an already-`done` translation. Resolves once the
   // summary is persisted or generation failed; a lost response (SW evicted)
   // is covered by the panel's safety-timeout GET_SUMMARY refetch (spec §5).
-  | { type: 'GENERATE_SUMMARY'; payload: { videoId: string } };
+  | { type: 'GENERATE_SUMMARY'; payload: { videoId: string } }
+  // background -> panel, broadcast once the 다시 생성 cascade (spec
+  // 2026-07-31-regen-cascade §2/§3) finishes REPLACING an already-existing
+  // summary for `videoId`. Included in this union (rather than sent
+  // out-of-band) for the same reason `CURRENT_VIDEO_UPDATED` is: background's
+  // own `handle()` switch sees every `chrome.runtime.onMessage` delivery,
+  // including this broadcast if it is ever redelivered to the sender, and
+  // must stay exhaustive rather than throw on an unrecognised type.
+  // `useSummary` is the one listener — an already-open Summary tab has no
+  // other way to learn the cascade replaced its summary (the original
+  // design's "tab re-entry re-fetches" premise didn't hold, since
+  // `useSummary` loads once per `[videoId, enabled]`, not per tab switch;
+  // see the design doc's final-review correction), so it refetches
+  // `GET_SUMMARY` on receipt for a matching videoId. No listener (panel
+  // closed, or open on a different video) is the common case, not an error.
+  | { type: 'SUMMARY_REFRESHED'; payload: { videoId: string } };
 
 export type AppResponseMap = {
   SAVE_API_KEY: { ok: true; status: ApiKeyStatus } | { ok: false; error: string };
@@ -109,6 +124,7 @@ export type AppResponseMap = {
   // `error` is the raw English reason message; the panel maps it to Korean
   // via translationErrorDisplay. A missing key is exactly 'API key not set'.
   GENERATE_SUMMARY: { ok: true; summary: VideoSummary } | { ok: false; error: string };
+  SUMMARY_REFRESHED: { ok: true };
 };
 
 export type AppResponse<T extends AppMessage['type']> = AppResponseMap[T];

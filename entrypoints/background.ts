@@ -407,6 +407,18 @@ export async function handle<T extends AppMessage['type']>(
           .catch((err) => {
             console.error('translation pipeline failed', err);
           })
+          .finally(() => {
+            // Final-review fix (C2): freed as soon as the PIPELINE itself
+            // settles, NOT after the cascade below — the cascade's own
+            // summary regeneration can run for the better part of a minute
+            // (full-transcript Gemini call, retries), and a `다시 생성`
+            // click during that window must start a REAL second pipeline,
+            // not be silently deduped against a job that, from the
+            // pipeline's own perspective, already finished. See
+            // `src/background.test.ts`'s "does not dedup a second
+            // START_TRANSLATION while the cascade is still running" test.
+            inFlightTranslations.delete(payload.videoId);
+          })
           .then(async () => {
             // 다시 생성 캐스케이드 (spec 2026-07-31-regen-cascade §2): a
             // re-translation that ends `done` refreshes this video's summary
@@ -417,7 +429,20 @@ export async function handle<T extends AppMessage['type']>(
             const [rec, cached] = await Promise.all([getTranslation(payload.videoId), getSummary(payload.videoId)]);
             if (rec?.status !== 'done' || !cached) return;
             const result = await startSummaryJob(payload.videoId);
-            if (!result.ok) console.warn('[bg] summary cascade failed:', result.error);
+            if (result.ok) {
+              // Final-review fix (C1): the ONLY way an already-open Summary
+              // tab learns the cascade just replaced its summary — see
+              // `useSummary.ts`'s `chrome.runtime.onMessage` listener. No
+              // receiver (panel closed, or open on a different video) is
+              // the common case, not an error — same fire-and-forget
+              // discipline as the `CURRENT_VIDEO_UPDATED` broadcast above.
+              void sendMessage({
+                type: 'SUMMARY_REFRESHED',
+                payload: { videoId: payload.videoId },
+              }).catch(() => {});
+            } else {
+              console.warn('[bg] summary cascade failed:', result.error);
+            }
           })
           .catch((err) => {
             // The cascade `.then` above has no `.catch` upstream of it (that
@@ -427,7 +452,6 @@ export async function handle<T extends AppMessage['type']>(
             console.warn('[bg] summary cascade error:', err);
           })
           .finally(() => {
-            inFlightTranslations.delete(payload.videoId);
             releaseKeepalive();
           });
       }
@@ -446,6 +470,12 @@ export async function handle<T extends AppMessage['type']>(
       const { payload } = msg as Extract<AppMessage, { type: 'GENERATE_SUMMARY' }>;
       return (await startSummaryJob(payload.videoId)) as AppResponseMap[T];
     }
+    case 'SUMMARY_REFRESHED':
+      // Only ever produced by this file's own broadcast in the START_TRANSLATION
+      // cascade below. Handled here solely so the switch — and
+      // `errorResponseFor`'s below — stay exhaustive if this is ever
+      // redelivered to the sender; there is no state to update on receipt.
+      return { ok: true } as AppResponseMap[T];
   }
   throw new Error(`Unhandled message type: ${(msg as AppMessage).type}`);
 }
@@ -477,5 +507,7 @@ function errorResponseFor(msg: AppMessage, err: unknown): AppResponseMap[AppMess
       return null;
     case 'GENERATE_SUMMARY':
       return { ok: false, error: message };
+    case 'SUMMARY_REFRESHED':
+      return { ok: true };
   }
 }

@@ -780,11 +780,16 @@ function ReadyBody({ scrollContainerRef }: { scrollContainerRef: RefObject<HTMLD
 //   `done` video could never be re-checked against YouTube's current
 //   captions. `start()` re-runs `START_TRANSLATION`, and the pipeline's own
 //   cache decision (pipeline.ts, untouched by Task 10) takes it from there:
-//   same `captionHash` -> near-instant cache-hit return (see pipeline.ts's
-//   "returns the existing record as-is with no Gemini calls" cache-hit
-//   test), different hash -> a fresh skeleton, i.e. an actual regeneration.
-//   This is user-initiated, not automatic, so it does not reintroduce a
-//   revisit-time re-scrape.
+//   same `captionHash` -> near-instant cache-hit return, different hash ->
+//   a fresh skeleton, i.e. an actual regeneration. This is user-initiated,
+//   not automatic, so it does not reintroduce a revisit-time re-scrape.
+//   Final-review correction (spec 2026-07-31-regen-cascade, C1/I2): "no
+//   Gemini calls" on a cache-hit run is no longer accurate for a video that
+//   already has a summary — background's START_TRANSLATION cascade (§2 of
+//   that spec) unconditionally re-bills ONE summary Gemini call once the
+//   pipeline settles `done`, cache-hit or not. This button is "refresh this
+//   video's translation AND, if one already exists, its summary" now, not
+//   translation-only — see the tooltip below.
 // - `failed`: re-enabled as a 다시 시도 retry affordance, with the failure
 //   reason surfaced above it — translated to Korean via
 //   `translationErrorDisplay` (Task R7, Fix 2B) rather than shown as the raw
@@ -864,7 +869,7 @@ function TranslateButton({
           variant="secondary"
           onClick={onStart}
           className="shrink-0"
-          title="자막이 바뀌었다면 새로 생성합니다"
+          title="번역과 요약을 함께 갱신합니다"
         >
           다시 생성
         </Button>

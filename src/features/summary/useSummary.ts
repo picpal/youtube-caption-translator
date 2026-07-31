@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { sendMessage } from '~/lib/messaging';
+import type { AppMessage } from '~/types/message';
 import type { VideoSummary } from '~/types/summary';
 
 export type SummaryStatus = 'idle' | 'loading' | 'generating' | 'done' | 'failed';
@@ -77,7 +78,43 @@ export function useSummary({ videoId, enabled }: UseSummaryParams): UseSummaryRe
         setStatus('idle');
       },
     );
-    return clearTimer;
+
+    // Final-review fix (C1) — the 다시 생성 cascade's convergence signal.
+    // Without this, an already-open Summary tab has no way to learn its
+    // `videoId`'s summary was just replaced: this hook only loads
+    // GET_SUMMARY once per `[videoId, enabled]` above, tab switches don't
+    // change either dependency, and the done-state panel no longer has its
+    // own regenerate button to force a reload. Registered alongside that
+    // cache-load (same cycle guard, same videoId closure), torn down on
+    // cleanup — same pattern as `useCurrentVideo.ts`'s `CURRENT_VIDEO_UPDATED`
+    // listener.
+    const handleSummaryRefreshed = (msg: AppMessage) => {
+      if (msg.type !== 'SUMMARY_REFRESHED') return;
+      if (msg.payload.videoId !== videoId) return;
+      if (cycleRef.current !== cycle) return;
+      void sendMessage({ type: 'GET_SUMMARY', payload: { videoId } }).then(
+        (refreshed) => {
+          if (cycleRef.current !== cycle) return;
+          // Background only broadcasts this AFTER `putSummary` persisted the
+          // new summary, so a `null` refetch here would mean the cache was
+          // cleared out from under us mid-flight — leave state as-is rather
+          // than regress a shown summary back to empty.
+          if (refreshed) {
+            setSummary(refreshed);
+            setStatus('done');
+          }
+        },
+        () => {
+          // Background unreachable — nothing to converge on; leave state as-is.
+        },
+      );
+    };
+    chrome.runtime.onMessage.addListener(handleSummaryRefreshed);
+
+    return () => {
+      clearTimer();
+      chrome.runtime.onMessage.removeListener(handleSummaryRefreshed);
+    };
   }, [videoId, enabled]);
 
   // The actual billed call + safety timeout — `generate`'s fallback once its
