@@ -125,7 +125,7 @@ function makeRecord(overrides: Partial<TranslationRecord> = {}): TranslationReco
     sourceLang: 'en',
     status: 'translating',
     segments: [makeSegment({ index: 0 }), makeSegment({ index: 1 }), makeSegment({ index: 2 })],
-    glossary: [{ term: 'LLM', translation: 'LLM', keepEnglish: true }],
+    glossary: [{ term: 'LLM', translation: 'LLM', keepOriginal: true }],
     completedBatches: 0,
     totalBatches: 2,
     createdAt: '2026-07-27T00:00:00.000Z',

@@ -324,12 +324,12 @@ function escapeRegExp(term: string): string {
 /**
  * Step 4 ("일관성", plan §4) — a PURE post-process, no extra Gemini call.
  * `translateBatch`'s prompt already tells the model to reuse each glossary
- * term's translation (src/lib/gemini.ts's `TRANSLATION_RULES`), but that is
- * only a prompt-level convention: nothing stops the model from leaving a
+ * term's translation (src/lib/gemini.ts's `translationRulesFor`), but that
+ * is only a prompt-level convention: nothing stops the model from leaving a
  * term untranslated in one batch while translating it correctly in
  * another, since every batch is an independent call. This pass corrects
  * exactly that leftover-English case deterministically: for every
- * `keepEnglish:false` glossary entry whose term appears in a segment's
+ * `keepOriginal:false` glossary entry whose term appears in a segment's
  * `sourceText`, if that segment's `translatedText` contains the literal
  * English term as a standalone token AND does NOT already contain the
  * glossary's canonical Korean translation anywhere, every such occurrence of
@@ -353,15 +353,15 @@ function escapeRegExp(term: string): string {
  *   a best-effort safety net.
  *
  * Segments where the model already used the Korean translation (with or
- * without a parenthetical English echo) are untouched. `keepEnglish:true`
+ * without a parenthetical English echo) are untouched. `keepOriginal:true`
  * entries are intentionally left alone — the term is SUPPOSED to stay in
- * English, so there is nothing to unify.
+ * the original language, so there is nothing to unify.
  */
 export function applyGlossaryConsistency(
   segments: TranscriptSegment[],
   glossary: GlossaryEntry[],
 ): TranscriptSegment[] {
-  const rewritable = glossary.filter((entry) => !entry.keepEnglish && entry.term.trim().length > 0);
+  const rewritable = glossary.filter((entry) => !entry.keepOriginal && entry.term.trim().length > 0);
   if (rewritable.length === 0) return segments;
 
   return segments.map((seg) => {

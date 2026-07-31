@@ -1,5 +1,15 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { GEMINI_FETCH_TIMEOUT_MS, analyzeGlossary, generateSummary, parseRetryDelayMs, testGeminiKey, translateBatch, MODEL_ID } from './gemini';
+import {
+  GEMINI_FETCH_TIMEOUT_MS,
+  analyzeGlossary,
+  buildAnalyzeGlossaryPrompt,
+  buildTranslateBatchPrompt,
+  generateSummary,
+  parseRetryDelayMs,
+  testGeminiKey,
+  translateBatch,
+  MODEL_ID,
+} from './gemini';
 import type { GlossaryEntry, TranscriptSegment } from '~/types/transcript';
 
 describe('parseRetryDelayMs', () => {
@@ -109,7 +119,7 @@ describe('analyzeGlossary', () => {
         candidates: [{ content: { parts: [{ text: JSON.stringify({ topic: 't', glossary: [] }) }] } }],
       }),
     );
-    await analyzeGlossary('This video is about React hooks.', 'AIzaFAKE', { fetchImpl });
+    await analyzeGlossary('This video is about React hooks.', 'AIzaFAKE', 'ko', { fetchImpl });
 
     expect(fetchImpl).toHaveBeenCalledOnce();
     const url = fetchImpl.mock.calls[0][0] as string;
@@ -131,18 +141,18 @@ describe('analyzeGlossary', () => {
             parts: [{
               text: JSON.stringify({
                 topic: 'React hooks explained',
-                glossary: [{ term: 'closure', translation: '클로저', keepEnglish: false }],
+                glossary: [{ term: 'closure', translation: '클로저', keepOriginal: false }],
               }),
             }],
           },
         }],
       }),
     );
-    const result = await analyzeGlossary('...', 'AIzaFAKE', { fetchImpl });
+    const result = await analyzeGlossary('...', 'AIzaFAKE', 'ko', { fetchImpl });
     expect(result).toEqual({
       ok: true,
       topic: 'React hooks explained',
-      glossary: [{ term: 'closure', translation: '클로저', keepEnglish: false }],
+      glossary: [{ term: 'closure', translation: '클로저', keepOriginal: false }],
     });
   });
 
@@ -153,7 +163,7 @@ describe('analyzeGlossary', () => {
         candidates: [{ content: { parts: [{ text: '```json\n' + payload + '\n```' }] } }],
       }),
     );
-    const result = await analyzeGlossary('...', 'AIzaFAKE', { fetchImpl });
+    const result = await analyzeGlossary('...', 'AIzaFAKE', 'ko', { fetchImpl });
     expect(result).toEqual({ ok: true, topic: 'x', glossary: [] });
   });
 
@@ -161,14 +171,14 @@ describe('analyzeGlossary', () => {
     const fetchImpl = vi.fn().mockResolvedValue(
       jsonResponse({ candidates: [{ content: { parts: [{ text: 'not json{{{' }] } }] }),
     );
-    const result = await analyzeGlossary('...', 'AIzaFAKE', { fetchImpl });
+    const result = await analyzeGlossary('...', 'AIzaFAKE', 'ko', { fetchImpl });
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.reason).toBe('unknown');
   });
 
   it('returns ok:false reason:unknown when there are no candidates', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(jsonResponse({ candidates: [] }));
-    const result = await analyzeGlossary('...', 'AIzaFAKE', { fetchImpl });
+    const result = await analyzeGlossary('...', 'AIzaFAKE', 'ko', { fetchImpl });
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.reason).toBe('unknown');
   });
@@ -177,7 +187,7 @@ describe('analyzeGlossary', () => {
     const fetchImpl = vi.fn().mockResolvedValue(
       jsonResponse({ error: { message: 'bad key' } }, { status: 401 }),
     );
-    const result = await analyzeGlossary('...', 'AIzaFAKE', { fetchImpl });
+    const result = await analyzeGlossary('...', 'AIzaFAKE', 'ko', { fetchImpl });
     expect(result).toEqual({ ok: false, reason: 'unauthorized', message: 'bad key' });
   });
 
@@ -185,13 +195,13 @@ describe('analyzeGlossary', () => {
     const fetchImpl = vi.fn().mockResolvedValue(
       jsonResponse({ error: { message: 'quota' } }, { status: 429 }),
     );
-    const result = await analyzeGlossary('...', 'AIzaFAKE', { fetchImpl });
+    const result = await analyzeGlossary('...', 'AIzaFAKE', 'ko', { fetchImpl });
     expect(result).toEqual({ ok: false, reason: 'rate_limit', message: 'quota' });
   });
 
   it('maps a fetch throw to network', async () => {
     const fetchImpl = vi.fn().mockRejectedValue(new TypeError('offline'));
-    const result = await analyzeGlossary('...', 'AIzaFAKE', { fetchImpl });
+    const result = await analyzeGlossary('...', 'AIzaFAKE', 'ko', { fetchImpl });
     expect(result).toEqual({ ok: false, reason: 'network', message: 'offline' });
   });
 
@@ -199,9 +209,18 @@ describe('analyzeGlossary', () => {
     const fetchImpl = vi.fn().mockResolvedValue(
       jsonResponse({ error: { message: 'boom' } }, { status: 500 }),
     );
-    const result = await analyzeGlossary('...', 'AIzaFAKE', { fetchImpl });
+    const result = await analyzeGlossary('...', 'AIzaFAKE', 'ko', { fetchImpl });
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.reason).toBe('unknown');
+  });
+});
+
+describe('prompt builders (target-language generalization)', () => {
+  it('embeds the target language in the glossary prompt and keepOriginal in its schema shape', () => {
+    const p = buildAnalyzeGlossaryPrompt('hello world', 'zh');
+    expect(p).toContain('Chinese (Simplified)');
+    expect(p).toContain('keepOriginal');
+    expect(p).not.toContain('keepEnglish');
   });
 });
 
@@ -224,16 +243,25 @@ const SEGS: TranscriptSegment[] = [
 ];
 
 const GLOSSARY: GlossaryEntry[] = [
-  { term: 'React', translation: 'React', keepEnglish: true },
-  { term: 'closure', translation: '클로저', keepEnglish: false },
+  { term: 'React', translation: 'React', keepOriginal: true },
+  { term: 'closure', translation: '클로저', keepOriginal: false },
 ];
+
+describe('buildTranslateBatchPrompt (target-language generalization)', () => {
+  it('embeds the target language name in the translate prompt', () => {
+    const p = buildTranslateBatchPrompt(SEGS, [], 'ja');
+    expect(p).toContain('into Japanese');
+    expect(p).not.toMatch(/\bKorean convention\b/);
+    expect(p).toContain('Japanese convention');
+  });
+});
 
 describe('translateBatch', () => {
   it('sends §7.3 rules, the glossary, and numbered segments; requests JSON output', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(
       jsonResponse({ candidates: [{ content: { parts: [{ text: '[]' }] } }] }),
     );
-    await translateBatch(SEGS, GLOSSARY, 'AIzaFAKE', { fetchImpl });
+    await translateBatch(SEGS, GLOSSARY, 'AIzaFAKE', 'ko', { fetchImpl });
 
     const body = requestBody(fetchImpl);
     const prompt = body.contents[0].parts[0].text;
@@ -275,7 +303,7 @@ describe('translateBatch', () => {
         }],
       }),
     );
-    const result = await translateBatch(SEGS, GLOSSARY, 'AIzaFAKE', { fetchImpl });
+    const result = await translateBatch(SEGS, GLOSSARY, 'AIzaFAKE', 'ko', { fetchImpl });
     expect(result).toEqual({
       ok: true,
       translations: [
@@ -293,7 +321,7 @@ describe('translateBatch', () => {
         candidates: [{ content: { parts: [{ text: '```json\n' + payload + '\n```' }] } }],
       }),
     );
-    const result = await translateBatch([SEGS[0]], [], 'AIzaFAKE', { fetchImpl });
+    const result = await translateBatch([SEGS[0]], [], 'AIzaFAKE', 'ko', { fetchImpl });
     expect(result).toEqual({ ok: true, translations: [{ index: 0, translatedText: '번역됨' }] });
   });
 
@@ -307,7 +335,7 @@ describe('translateBatch', () => {
         }],
       }),
     );
-    const result = await translateBatch(SEGS, GLOSSARY, 'AIzaFAKE', { fetchImpl });
+    const result = await translateBatch(SEGS, GLOSSARY, 'AIzaFAKE', 'ko', { fetchImpl });
     expect(result).toEqual({
       ok: true,
       translations: [
@@ -334,7 +362,7 @@ describe('translateBatch', () => {
         }],
       }),
     );
-    const result = await translateBatch(SEGS, GLOSSARY, 'AIzaFAKE', { fetchImpl });
+    const result = await translateBatch(SEGS, GLOSSARY, 'AIzaFAKE', 'ko', { fetchImpl });
     expect(result).toEqual({
       ok: true,
       translations: [
@@ -349,7 +377,7 @@ describe('translateBatch', () => {
     const fetchImpl = vi.fn().mockResolvedValue(
       jsonResponse({ candidates: [{ content: { parts: [{ text: 'not json[[[' }] } }] }),
     );
-    const result = await translateBatch(SEGS, GLOSSARY, 'AIzaFAKE', { fetchImpl });
+    const result = await translateBatch(SEGS, GLOSSARY, 'AIzaFAKE', 'ko', { fetchImpl });
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.reason).toBe('bad_json');
   });
@@ -367,7 +395,7 @@ describe('translateBatch', () => {
         }],
       }),
     );
-    const result = await translateBatch(SEGS, GLOSSARY, 'AIzaFAKE', { fetchImpl });
+    const result = await translateBatch(SEGS, GLOSSARY, 'AIzaFAKE', 'ko', { fetchImpl });
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.reason).toBe('truncated');
@@ -384,13 +412,13 @@ describe('translateBatch', () => {
         }],
       }),
     );
-    const result = await translateBatch([SEGS[0]], GLOSSARY, 'AIzaFAKE', { fetchImpl });
+    const result = await translateBatch([SEGS[0]], GLOSSARY, 'AIzaFAKE', 'ko', { fetchImpl });
     expect(result).toEqual({ ok: true, translations: [{ index: 0, translatedText: '번역됨' }] });
   });
 
   it('returns ok:false reason:unknown when there are no candidates', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(jsonResponse({ candidates: [] }));
-    const result = await translateBatch(SEGS, GLOSSARY, 'AIzaFAKE', { fetchImpl });
+    const result = await translateBatch(SEGS, GLOSSARY, 'AIzaFAKE', 'ko', { fetchImpl });
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.reason).toBe('unknown');
   });
@@ -399,7 +427,7 @@ describe('translateBatch', () => {
     const fetchImpl = vi.fn().mockResolvedValue(
       jsonResponse({ error: { message: 'bad key' } }, { status: 401 }),
     );
-    const result = await translateBatch(SEGS, GLOSSARY, 'AIzaFAKE', { fetchImpl });
+    const result = await translateBatch(SEGS, GLOSSARY, 'AIzaFAKE', 'ko', { fetchImpl });
     expect(result).toEqual({ ok: false, reason: 'unauthorized', message: 'bad key' });
   });
 
@@ -407,7 +435,7 @@ describe('translateBatch', () => {
     const fetchImpl = vi.fn().mockResolvedValue(
       jsonResponse({ error: { message: 'quota' } }, { status: 429 }),
     );
-    const result = await translateBatch(SEGS, GLOSSARY, 'AIzaFAKE', { fetchImpl });
+    const result = await translateBatch(SEGS, GLOSSARY, 'AIzaFAKE', 'ko', { fetchImpl });
     expect(result).toEqual({ ok: false, reason: 'rate_limit', message: 'quota' });
   });
 
@@ -428,7 +456,7 @@ describe('translateBatch', () => {
         { status: 429 },
       ),
     );
-    const result = await translateBatch(SEGS, GLOSSARY, 'AIzaFAKE', { fetchImpl });
+    const result = await translateBatch(SEGS, GLOSSARY, 'AIzaFAKE', 'ko', { fetchImpl });
     expect(result).toEqual({
       ok: false,
       reason: 'rate_limit',
@@ -449,7 +477,7 @@ describe('translateBatch', () => {
         { status: 429 },
       ),
     );
-    const result = await translateBatch(SEGS, GLOSSARY, 'AIzaFAKE', { fetchImpl });
+    const result = await translateBatch(SEGS, GLOSSARY, 'AIzaFAKE', 'ko', { fetchImpl });
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.retryDelayMs).toBe(56_500);
   });
@@ -466,14 +494,14 @@ describe('translateBatch', () => {
         { status: 429 },
       ),
     );
-    const result = await translateBatch(SEGS, GLOSSARY, 'AIzaFAKE', { fetchImpl });
+    const result = await translateBatch(SEGS, GLOSSARY, 'AIzaFAKE', 'ko', { fetchImpl });
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.retryDelayMs).toBeUndefined();
   });
 
   it('maps a fetch throw to network', async () => {
     const fetchImpl = vi.fn().mockRejectedValue(new TypeError('offline'));
-    const result = await translateBatch(SEGS, GLOSSARY, 'AIzaFAKE', { fetchImpl });
+    const result = await translateBatch(SEGS, GLOSSARY, 'AIzaFAKE', 'ko', { fetchImpl });
     expect(result).toEqual({ ok: false, reason: 'network', message: 'offline' });
   });
 
@@ -481,7 +509,7 @@ describe('translateBatch', () => {
     const fetchImpl = vi.fn().mockResolvedValue(
       jsonResponse({ error: { message: 'boom' } }, { status: 500 }),
     );
-    const result = await translateBatch(SEGS, GLOSSARY, 'AIzaFAKE', { fetchImpl });
+    const result = await translateBatch(SEGS, GLOSSARY, 'AIzaFAKE', 'ko', { fetchImpl });
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.reason).toBe('unknown');
   });
@@ -512,7 +540,7 @@ describe('fetch timeout (Task R4)', () => {
     vi.useFakeTimers();
     const fetchImpl = neverResolvingAbortableFetch();
 
-    const resultPromise = translateBatch(SEGS, GLOSSARY, 'AIzaFAKE', { fetchImpl: fetchImpl as unknown as typeof fetch });
+    const resultPromise = translateBatch(SEGS, GLOSSARY, 'AIzaFAKE', 'ko', { fetchImpl: fetchImpl as unknown as typeof fetch });
     await vi.advanceTimersByTimeAsync(GEMINI_FETCH_TIMEOUT_MS);
     const result = await resultPromise;
 
@@ -524,7 +552,7 @@ describe('fetch timeout (Task R4)', () => {
     vi.useFakeTimers();
     const fetchImpl = neverResolvingAbortableFetch();
 
-    const resultPromise = analyzeGlossary('...', 'AIzaFAKE', { fetchImpl: fetchImpl as unknown as typeof fetch });
+    const resultPromise = analyzeGlossary('...', 'AIzaFAKE', 'ko', { fetchImpl: fetchImpl as unknown as typeof fetch });
     await vi.advanceTimersByTimeAsync(GEMINI_FETCH_TIMEOUT_MS);
     const result = await resultPromise;
 
@@ -550,7 +578,7 @@ describe('fetch timeout (Task R4)', () => {
       jsonResponse({ candidates: [{ content: { parts: [{ text: '[]' }] } }] }),
     );
 
-    const result = await translateBatch(SEGS, GLOSSARY, 'AIzaFAKE', { fetchImpl });
+    const result = await translateBatch(SEGS, GLOSSARY, 'AIzaFAKE', 'ko', { fetchImpl });
 
     expect(result.ok).toBe(true);
   });

@@ -2,6 +2,8 @@ import type { GeminiTestResult } from '~/types/message';
 import type { GlossaryEntry, TranscriptSegment } from '~/types/transcript';
 import { buildSummaryPrompt, normalizeSummaryPayload } from './summary';
 import type { SummaryPayload } from './summary';
+import { TARGET_LANG_NAMES } from './target-lang';
+import type { TargetLang } from './target-lang';
 
 // Task R5 — switched from `gemini-3.6-flash`: real-Chrome DoD found
 // mandatory thinking on that model explodes on the rules-heavy translation
@@ -244,24 +246,25 @@ const ANALYZE_GLOSSARY_SCHEMA = {
         properties: {
           term: { type: 'STRING' },
           translation: { type: 'STRING' },
-          keepEnglish: { type: 'BOOLEAN' },
+          keepOriginal: { type: 'BOOLEAN' },
         },
-        required: ['term', 'translation', 'keepEnglish'],
+        required: ['term', 'translation', 'keepOriginal'],
       },
     },
   },
   required: ['topic', 'glossary'],
 };
 
-function buildAnalyzeGlossaryPrompt(fullText: string): string {
-  return `You are analyzing the English transcript of a technical YouTube video to prepare a Korean-translation glossary.
+export function buildAnalyzeGlossaryPrompt(fullText: string, targetLang: TargetLang): string {
+  const name = TARGET_LANG_NAMES[targetLang];
+  return `You are analyzing the transcript of a technical YouTube video (it may be in any language) to prepare a ${name}-translation glossary.
 
 Identify:
 1. The video's topic, as one concise sentence.
-2. Key technical terms (library/product names, jargon, recurring concepts) that should be translated consistently, with the recommended Korean handling for each: the Korean translation to use, and whether the English term should be kept as-is (keepEnglish: true) instead of translated.
+2. Key technical terms (library/product names, jargon, recurring concepts) that should be translated consistently, with the recommended ${name} handling for each: the ${name} translation to use, and whether the original term should be kept as-is (keepOriginal: true) instead of translated.
 
 Respond with JSON only, matching this shape:
-{"topic": string, "glossary": [{"term": string, "translation": string, "keepEnglish": boolean}]}
+{"topic": string, "glossary": [{"term": string, "translation": string, "keepOriginal": boolean}]}
 
 Transcript:
 """
@@ -275,7 +278,7 @@ function isGlossaryEntry(value: unknown): value is GlossaryEntry {
     value !== null &&
     typeof (value as Record<string, unknown>).term === 'string' &&
     typeof (value as Record<string, unknown>).translation === 'string' &&
-    typeof (value as Record<string, unknown>).keepEnglish === 'boolean'
+    typeof (value as Record<string, unknown>).keepOriginal === 'boolean'
   );
 }
 
@@ -292,11 +295,12 @@ function parseAnalyzeGlossaryPayload(
 export async function analyzeGlossary(
   fullText: string,
   key: string,
+  targetLang: TargetLang,
   opts: GeminiCallOptions = {},
 ): Promise<AnalyzeGlossaryResult> {
   const fetchImpl = opts.fetchImpl ?? fetch;
   const requestBody = {
-    contents: [{ parts: [{ text: buildAnalyzeGlossaryPrompt(fullText) }] }],
+    contents: [{ parts: [{ text: buildAnalyzeGlossaryPrompt(fullText, targetLang) }] }],
     generationConfig: {
       responseMimeType: 'application/json',
       responseSchema: ANALYZE_GLOSSARY_SCHEMA,
@@ -361,34 +365,41 @@ const TRANSLATE_BATCH_SCHEMA = {
 };
 
 // PRD §7.3 rules, restated for the model.
-const TRANSLATION_RULES = `Translation rules:
+function translationRulesFor(name: string): string {
+  return `Translation rules:
 - Do not translate code, commands, URLs, or library/product names.
-- For technical terms, prefer the established Korean convention; add the English term in parentheses when it helps clarity.
+- For technical terms, prefer the established ${name} convention; add the original term in parentheses when it helps clarity.
 - Keep terminology consistent with the glossary below — reuse its translations exactly wherever a listed term appears.
 - Do not add any AI commentary, opinions, or explanations. Translate only.
 - Translate each segment's text independently; do not merge, split, or reorder segments.`;
+}
 
 function buildGlossaryBlock(glossary: GlossaryEntry[]): string {
   if (glossary.length === 0) return '(none)';
   return glossary
     .map((entry) =>
-      entry.keepEnglish
-        ? `- ${entry.term} -> keep in English`
+      entry.keepOriginal
+        ? `- ${entry.term} -> keep in original language`
         : `- ${entry.term} -> ${entry.translation}`,
     )
     .join('\n');
 }
 
-function buildTranslateBatchPrompt(segs: TranscriptSegment[], glossary: GlossaryEntry[]): string {
+export function buildTranslateBatchPrompt(
+  segs: TranscriptSegment[],
+  glossary: GlossaryEntry[],
+  targetLang: TargetLang,
+): string {
+  const name = TARGET_LANG_NAMES[targetLang];
   const segmentsText = segs.map((seg) => `[${seg.index}] ${seg.sourceText}`).join('\n');
-  return `You are translating English YouTube transcript segments to Korean.
+  return `You are translating YouTube transcript segments into ${name}. The source may be in any language.
 
-${TRANSLATION_RULES}
+${translationRulesFor(name)}
 
 Glossary:
 ${buildGlossaryBlock(glossary)}
 
-Translate each numbered segment below to Korean. Respond with JSON only: an array of {"index": number, "translatedText": string}, one entry per segment below, using the exact same index numbers.
+Translate each numbered segment below into ${name}. Respond with JSON only: an array of {"index": number, "translatedText": string}, one entry per segment below, using the exact same index numbers.
 
 Segments:
 ${segmentsText}`;
@@ -417,11 +428,12 @@ export async function translateBatch(
   segs: TranscriptSegment[],
   glossary: GlossaryEntry[],
   key: string,
+  targetLang: TargetLang,
   opts: GeminiCallOptions = {},
 ): Promise<TranslateBatchResult> {
   const fetchImpl = opts.fetchImpl ?? fetch;
   const requestBody = {
-    contents: [{ parts: [{ text: buildTranslateBatchPrompt(segs, glossary) }] }],
+    contents: [{ parts: [{ text: buildTranslateBatchPrompt(segs, glossary, targetLang) }] }],
     generationConfig: {
       responseMimeType: 'application/json',
       responseSchema: TRANSLATE_BATCH_SCHEMA,

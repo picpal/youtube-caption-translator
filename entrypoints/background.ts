@@ -362,8 +362,10 @@ export async function handle<T extends AppMessage['type']>(
                 type: 'REQUEST_TRANSCRIPT',
                 videoId,
               } satisfies RequestTranscriptMessage)) as RequestTranscriptResponse,
-            analyzeGlossary,
-            translateBatch,
+            // Task 3 threads the real setting: 'ko' is a placeholder until
+            // background.ts reads the actual target-lang setting.
+            analyzeGlossary: (fullText, key) => analyzeGlossary(fullText, key, 'ko'),
+            translateBatch: (segs, glossary, key) => translateBatch(segs, glossary, key, 'ko'),
             getTranslation,
             putTranslation,
             upsertBatch,

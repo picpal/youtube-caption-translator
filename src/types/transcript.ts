@@ -18,7 +18,8 @@ export interface TranscriptSegment {
 export interface GlossaryEntry {
   term: string;
   translation: string;
-  keepEnglish: boolean;
+  /** Keep the original-language term as-is instead of translating it. */
+  keepOriginal: boolean;
 }
 
 export type TranslationStatus =

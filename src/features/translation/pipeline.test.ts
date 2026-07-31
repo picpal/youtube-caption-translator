@@ -361,7 +361,7 @@ describe('runTranslationPipeline', () => {
         return {
           ok: true as const,
           topic: 't',
-          glossary: [{ term: 'React', translation: '리액트', keepEnglish: false }],
+          glossary: [{ term: 'React', translation: '리액트', keepOriginal: false }],
         };
       });
       const sleepCalls: number[] = [];
@@ -379,7 +379,7 @@ describe('runTranslationPipeline', () => {
       expect(analyzeGlossary).toHaveBeenCalledTimes(2);
       expect(sleepCalls).toEqual([53_200]);
       expect(result.status).toBe('done');
-      expect(result.glossary).toEqual([{ term: 'React', translation: '리액트', keepEnglish: false }]);
+      expect(result.glossary).toEqual([{ term: 'React', translation: '리액트', keepOriginal: false }]);
       // translateBatch received the resolved (non-empty) glossary.
       expect(translateBatch).toHaveBeenCalledWith(expect.any(Array), result.glossary, 'k');
     });
@@ -855,7 +855,7 @@ describe('runTranslationPipeline', () => {
         sourceLang: 'en',
         status: 'done',
         segments: [seg(0, 'Hello world.', '안녕하세요.'), seg(1, 'Second line.', '두 번째 줄.')],
-        glossary: [{ term: 'World', translation: '세계', keepEnglish: false }],
+        glossary: [{ term: 'World', translation: '세계', keepOriginal: false }],
         completedBatches: 1,
         totalBatches: 1,
         createdAt: '2026-01-01T00:00:00.000Z',
@@ -971,7 +971,7 @@ describe('runTranslationPipeline', () => {
 
 describe('applyGlossaryConsistency', () => {
   it('replaces a leftover untranslated English term with the glossary translation', () => {
-    const glossary: GlossaryEntry[] = [{ term: 'React', translation: '리액트', keepEnglish: false }];
+    const glossary: GlossaryEntry[] = [{ term: 'React', translation: '리액트', keepOriginal: false }];
     const segments: TranscriptSegment[] = [
       seg(0, 'I love React hooks.', '저는 React 훅을 좋아합니다'),
       seg(1, 'React hooks are great.', '리액트 훅은 훌륭합니다'),
@@ -991,7 +991,7 @@ describe('applyGlossaryConsistency', () => {
   // the segment is ALREADY correctly translated — corrupting
   // "리액트(React)를 사용합니다" into "리액트(리액트)를 사용합니다".
   it('does not corrupt an already-correct translation that echoes the English term in parentheses', () => {
-    const glossary: GlossaryEntry[] = [{ term: 'React', translation: '리액트', keepEnglish: false }];
+    const glossary: GlossaryEntry[] = [{ term: 'React', translation: '리액트', keepOriginal: false }];
     const segments: TranscriptSegment[] = [
       seg(0, 'We use React for the frontend.', '프론트엔드에는 리액트(React)를 사용합니다'),
     ];
@@ -1006,7 +1006,7 @@ describe('applyGlossaryConsistency', () => {
   // like "Go" matched as a bare substring inside "Google". A standalone
   // occurrence of the actual term must still be fixed normally.
   it('does not corrupt a short term matching inside a longer word, but still fixes a standalone occurrence', () => {
-    const glossary: GlossaryEntry[] = [{ term: 'Go', translation: '고랭', keepEnglish: false }];
+    const glossary: GlossaryEntry[] = [{ term: 'Go', translation: '고랭', keepOriginal: false }];
 
     const untouched = applyGlossaryConsistency(
       [seg(0, 'Search on Google now.', '지금 Google에서 검색하세요.')],
@@ -1021,8 +1021,8 @@ describe('applyGlossaryConsistency', () => {
     expect(fixed[0].translatedText).toBe('저는 고랭 언어를 좋아합니다.');
   });
 
-  it('leaves keepEnglish:true terms alone', () => {
-    const glossary: GlossaryEntry[] = [{ term: 'Docker', translation: '도커', keepEnglish: true }];
+  it('leaves keepOriginal:true terms alone', () => {
+    const glossary: GlossaryEntry[] = [{ term: 'Docker', translation: '도커', keepOriginal: true }];
     const segments: TranscriptSegment[] = [seg(0, 'Use Docker here.', 'Docker를 여기서 사용하세요')];
 
     const result = applyGlossaryConsistency(segments, glossary);
@@ -1031,7 +1031,7 @@ describe('applyGlossaryConsistency', () => {
   });
 
   it('leaves untranslated (null) segments untouched', () => {
-    const glossary: GlossaryEntry[] = [{ term: 'React', translation: '리액트', keepEnglish: false }];
+    const glossary: GlossaryEntry[] = [{ term: 'React', translation: '리액트', keepOriginal: false }];
     const segments: TranscriptSegment[] = [seg(0, 'React is nice.', null)];
 
     const result = applyGlossaryConsistency(segments, glossary);
