@@ -1,6 +1,7 @@
 import 'fake-indexeddb/auto';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { DB_NAME, getVideo, getTranslation, getSummary, putTranslation, putSummary } from '~/lib/db';
+import { DB_NAME, getVideo, getTranslation, getSummary, putTranslation, putSummary, putVideo } from '~/lib/db';
+import type { VideoMeta } from '~/types/video';
 import { analyzeGlossary, generateSummary, translateBatch, MODEL_ID } from '~/lib/gemini';
 import type { GenerateSummaryResult } from '~/lib/gemini';
 import { captionHash, dedupeRows, reconstructSentences, rowsToSegments } from '~/lib/transcript-parse';
@@ -1235,5 +1236,153 @@ describe('GET_VIDEO_META', () => {
     );
 
     expect(res).toBeNull();
+  });
+});
+
+function libraryMeta(videoId: string, overrides: Partial<VideoMeta> = {}): VideoMeta {
+  return {
+    videoId,
+    url: `https://www.youtube.com/watch?v=${videoId}`,
+    title: `${videoId} 제목`,
+    channelName: '어떤채널',
+    thumbnailUrl: `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
+    durationSeconds: 1334,
+    captionAvailability: 'auto-only',
+    fetchedAt: '2026-07-27T00:00:00.000Z',
+    ...overrides,
+  };
+}
+
+function librarySummary(videoId: string, keywords: string[]): VideoSummary {
+  return {
+    videoId,
+    purpose: 'p',
+    mainArguments: ['a'],
+    sections: [{ startSec: 0, title: '도입' }],
+    keywords,
+    conclusion: 'c',
+    model: 'test-model',
+    createdAt: '2026-07-27T00:00:00.000Z',
+  };
+}
+
+// 요약 잡을 in-flight로 고정한다. GENERATE_SUMMARY는 API 키와 segments가 있는
+// 레코드가 둘 다 있어야 실제로 잡을 띄우므로(없으면 즉시 실패하고 맵에서
+// 빠진다), 그 둘을 갖춘 뒤 해소되지 않는 목을 물린다. 이 파일의 기존 dedup
+// 테스트가 쓰는 것과 같은 수법이다.
+async function pinSummaryJob(videoId: string): Promise<void> {
+  await chrome.storage.local.set({
+    geminiApiKey: 'test-key',
+    geminiApiKeySavedAt: '2026-01-01T00:00:00.000Z',
+  });
+  vi.mocked(generateSummary).mockReturnValue(new Promise(() => {}));
+  void handle({ type: 'GENERATE_SUMMARY', payload: { videoId } }, senderFor(undefined));
+  // 핸들러가 inFlightSummaries에 등록할 틈을 준다.
+  await new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+describe('GET_LIBRARY', () => {
+  it('lists only videos that have a translation record', async () => {
+    // 방문만 해도 videos에 쌓인다 — 그것만으로는 목록에 들어오면 안 된다.
+    await putVideo(libraryMeta('visited-only'));
+    await putVideo(libraryMeta('translated', { title: '번역한 영상' }));
+    await putTranslation(doneTranslationRecord('translated'));
+
+    const entries = await handle({ type: 'GET_LIBRARY' });
+
+    expect(entries.map((e) => e.videoId)).toEqual(['translated']);
+    expect(entries[0].title).toBe('번역한 영상');
+  });
+
+  it('falls back to the videoId and a derived thumbnail when no meta is stored', async () => {
+    await putTranslation(doneTranslationRecord('orphan'));
+
+    const [entry] = await handle({ type: 'GET_LIBRARY' });
+
+    expect(entry.title).toBe('orphan');
+    expect(entry.thumbnailUrl).toBe('https://i.ytimg.com/vi/orphan/hqdefault.jpg');
+    expect(entry.channelName).toBeNull();
+    expect(entry.durationSeconds).toBeNull();
+  });
+
+  it('carries the summary keywords and hasSummary', async () => {
+    await putTranslation(doneTranslationRecord('withsum'));
+    await putSummary(librarySummary('withsum', ['tokio', 'executor']));
+    await putTranslation(doneTranslationRecord('nosum'));
+
+    const entries = await handle({ type: 'GET_LIBRARY' });
+    const withSum = entries.find((e) => e.videoId === 'withsum');
+    const noSum = entries.find((e) => e.videoId === 'nosum');
+
+    expect(withSum?.keywords).toEqual(['tokio', 'executor']);
+    expect(withSum?.hasSummary).toBe(true);
+    expect(noSum?.keywords).toEqual([]);
+    expect(noSum?.hasSummary).toBe(false);
+  });
+
+  it('sorts by updatedAt descending, breaking ties by videoId', async () => {
+    await putTranslation(doneTranslationRecord('old', { updatedAt: '2026-07-01T00:00:00.000Z' }));
+    await putTranslation(doneTranslationRecord('zzz', { updatedAt: '2026-07-31T00:00:00.000Z' }));
+    await putTranslation(doneTranslationRecord('aaa', { updatedAt: '2026-07-31T00:00:00.000Z' }));
+
+    const entries = await handle({ type: 'GET_LIBRARY' });
+
+    expect(entries.map((e) => e.videoId)).toEqual(['aaa', 'zzz', 'old']);
+  });
+
+  it('carries the record status so the row can badge it', async () => {
+    await putTranslation(doneTranslationRecord('broke', { status: 'failed' }));
+
+    const [entry] = await handle({ type: 'GET_LIBRARY' });
+
+    expect(entry.status).toBe('failed');
+  });
+
+  it('returns an empty array when nothing has been translated', async () => {
+    expect(await handle({ type: 'GET_LIBRARY' })).toEqual([]);
+  });
+
+  it('reports the in-flight job on the entry it belongs to', async () => {
+    await putTranslation(doneTranslationRecord('busy'));
+    await putTranslation(doneTranslationRecord('idle'));
+    await pinSummaryJob('busy');
+
+    const entries = await handle({ type: 'GET_LIBRARY' });
+
+    expect(entries.find((e) => e.videoId === 'busy')?.inFlight).toBe(true);
+    expect(entries.find((e) => e.videoId === 'idle')?.inFlight).toBe(false);
+  });
+});
+
+describe('DELETE_LIBRARY_ENTRY', () => {
+  it('deletes the translation and summary and keeps the video meta', async () => {
+    await putVideo(libraryMeta('gone'));
+    await putTranslation(doneTranslationRecord('gone'));
+    await putSummary(librarySummary('gone', ['k']));
+
+    const res = await handle({ type: 'DELETE_LIBRARY_ENTRY', payload: { videoId: 'gone' } });
+
+    expect(res).toEqual({ ok: true });
+    expect(await getTranslation('gone')).toBeNull();
+    expect(await getSummary('gone')).toBeNull();
+    expect(await getVideo('gone')).not.toBeNull();
+    expect(await handle({ type: 'GET_LIBRARY' })).toEqual([]);
+  });
+
+  it('refuses while a job is in flight and deletes nothing', async () => {
+    await putTranslation(doneTranslationRecord('busy'));
+    await pinSummaryJob('busy');
+
+    const res = await handle({ type: 'DELETE_LIBRARY_ENTRY', payload: { videoId: 'busy' } });
+
+    expect(res).toEqual({ ok: false, error: 'job in flight' });
+    // 이게 이 테스트의 핵심이다: 거부했으면 아무것도 지우지 않았어야 한다.
+    expect(await getTranslation('busy')).not.toBeNull();
+  });
+
+  it('resolves ok for a videoId that has nothing stored', async () => {
+    expect(await handle({ type: 'DELETE_LIBRARY_ENTRY', payload: { videoId: 'nothing' } })).toEqual({
+      ok: true,
+    });
   });
 });

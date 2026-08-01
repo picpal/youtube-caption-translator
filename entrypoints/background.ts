@@ -1,7 +1,12 @@
 import { defineBackground } from 'wxt/sandbox';
 import { saveApiKey, getApiKey, getApiKeyStatus, deleteApiKey } from '~/lib/storage';
 import { testGeminiKey, analyzeGlossary, translateBatch, generateSummary, MODEL_ID } from '~/lib/gemini';
-import { putVideo, getVideo, getTranslation, putTranslation, upsertBatch, getSummary, putSummary } from '~/lib/db';
+import {
+  putVideo, getVideo, getTranslation, putTranslation, upsertBatch, getSummary, putSummary,
+  listTranslationDigests, getAllVideos, getAllSummaries, deleteVideoData,
+} from '~/lib/db';
+import { thumbnailUrlFor } from '~/lib/youtube';
+import type { LibraryEntry } from '~/types/library';
 import { sendMessage } from '~/lib/messaging';
 import { getTargetLang } from '~/lib/target-lang';
 import { runTranslationPipeline } from '~/features/translation/pipeline';
@@ -597,6 +602,59 @@ export async function handle<T extends AppMessage['type']>(
       // and `errorResponseFor`'s below — stay exhaustive if this is ever
       // redelivered to the sender; there is no state to update on receipt.
       return { ok: true } as AppResponseMap[T];
+    case 'GET_LIBRARY': {
+      // 목록의 기준 스토어는 `translations`다. `videos`를 기준으로 삼으면 안 된다 —
+      // 그 스토어는 watch 페이지를 방문하기만 해도 VIDEO_DETECTED 핸들러가
+      // 채우므로, 번역한 적 없는 영상이 목록에 섞인다. `videos`는 제목·썸네일을
+      // 붙이기 위해 조인만 한다.
+      const [digests, videos, summaries] = await Promise.all([
+        listTranslationDigests(),
+        getAllVideos(),
+        getAllSummaries(),
+      ]);
+      const metaById = new Map(videos.map((meta) => [meta.videoId, meta]));
+      const summaryById = new Map(summaries.map((summary) => [summary.videoId, summary]));
+
+      const entries: LibraryEntry[] = digests.map((digest) => {
+        const meta = metaById.get(digest.videoId);
+        const summary = summaryById.get(digest.videoId);
+        return {
+          videoId: digest.videoId,
+          // 메타가 없어도 행을 빠뜨리지 않는다 — videoId가 제목 자리를 대신한다.
+          title: meta?.title ?? digest.videoId,
+          channelName: meta?.channelName ?? null,
+          thumbnailUrl: meta?.thumbnailUrl ?? thumbnailUrlFor(digest.videoId),
+          durationSeconds: meta?.durationSeconds ?? null,
+          status: digest.status,
+          targetLang: digest.targetLang,
+          segmentCount: digest.segmentCount,
+          keywords: summary?.keywords ?? [],
+          hasSummary: summary !== undefined,
+          updatedAt: digest.updatedAt,
+          // 두 맵 모두 이미 이 파일의 단일 진실이다 — 새 상태를 만들지 않는다.
+          inFlight:
+            inFlightTranslations.has(digest.videoId) || inFlightSummaries.has(digest.videoId),
+        };
+      });
+
+      entries.sort(
+        (a, b) => b.updatedAt.localeCompare(a.updatedAt) || a.videoId.localeCompare(b.videoId),
+      );
+      return entries as AppResponseMap[T];
+    }
+    case 'DELETE_LIBRARY_ENTRY': {
+      const { payload } = msg as Extract<AppMessage, { type: 'DELETE_LIBRARY_ENTRY' }>;
+      // 패널도 `inFlight`로 trash를 비활성화하지만, 그 값은 목록을 읽은 시점의
+      // 스냅샷이라 낡을 수 있다. 진짜 방어선은 여기다.
+      if (
+        inFlightTranslations.has(payload.videoId) ||
+        inFlightSummaries.has(payload.videoId)
+      ) {
+        return { ok: false, error: 'job in flight' } as AppResponseMap[T];
+      }
+      await deleteVideoData(payload.videoId);
+      return { ok: true } as AppResponseMap[T];
+    }
   }
   throw new Error(`Unhandled message type: ${(msg as AppMessage).type}`);
 }
@@ -632,5 +690,9 @@ function errorResponseFor(msg: AppMessage, err: unknown): AppResponseMap[AppMess
       return { ok: false, error: message };
     case 'SUMMARY_REFRESHED':
       return { ok: true };
+    case 'GET_LIBRARY':
+      return [];
+    case 'DELETE_LIBRARY_ENTRY':
+      return { ok: false, error: message };
   }
 }
