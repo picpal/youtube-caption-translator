@@ -29,7 +29,7 @@ import {
   TARGET_LANGS,
   type TargetLang,
 } from '~/lib/target-lang';
-import { classifyYoutubeUrl, type YoutubePageKind } from '~/lib/youtube';
+import { classifyYoutubeUrl, isYoutubeUrl, type YoutubePageKind } from '~/lib/youtube';
 import type { TranslationRecord, TranslationStatus } from '~/types/transcript';
 import type { CaptionAvailability } from '~/types/video';
 
@@ -93,7 +93,7 @@ export function App() {
   const openVideo = (videoId: string) => {
     const url = `https://www.youtube.com/watch?v=${videoId}`;
     void chrome.tabs.query({ active: true, currentWindow: true }).then(([tab]) => {
-      if (tab?.id !== undefined && classifyYoutubeUrl(tab.url) !== 'other') {
+      if (tab?.id !== undefined && isYoutubeUrl(tab.url)) {
         void chrome.tabs.update(tab.id, { url });
       } else {
         void chrome.tabs.create({ url });

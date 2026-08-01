@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { classifyYoutubeUrl, isYoutubeWatchUrl, parseVideoId, thumbnailUrlFor } from './youtube';
+import { classifyYoutubeUrl, isYoutubeUrl, isYoutubeWatchUrl, parseVideoId, thumbnailUrlFor } from './youtube';
 
 describe('isYoutubeWatchUrl', () => {
   it('returns false for undefined (unreadable url, e.g. no host permission)', () => {
@@ -38,6 +38,32 @@ describe('isYoutubeWatchUrl', () => {
 
   it('returns false for a malformed url instead of throwing', () => {
     expect(isYoutubeWatchUrl('not a url')).toBe(false);
+  });
+});
+
+describe('isYoutubeUrl', () => {
+  it('returns true for a watch url', () => {
+    expect(isYoutubeUrl('https://www.youtube.com/watch?v=zjkBMFhNj_g')).toBe(true);
+  });
+
+  it('returns true for the bare youtube.com homepage, unlike isYoutubeWatchUrl', () => {
+    expect(isYoutubeUrl('https://www.youtube.com/')).toBe(true);
+  });
+
+  it('returns true for /feed/subscriptions, unlike isYoutubeWatchUrl', () => {
+    expect(isYoutubeUrl('https://www.youtube.com/feed/subscriptions')).toBe(true);
+  });
+
+  it('returns true for other youtube.com subdomains (e.g. m.youtube.com)', () => {
+    expect(isYoutubeUrl('https://m.youtube.com/watch?v=x')).toBe(true);
+  });
+
+  it('returns false for a non-YouTube url', () => {
+    expect(isYoutubeUrl('https://example.com/watch')).toBe(false);
+  });
+
+  it('returns false for undefined (unreadable url, e.g. no host permission)', () => {
+    expect(isYoutubeUrl(undefined)).toBe(false);
   });
 });
 
