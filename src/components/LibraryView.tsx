@@ -81,6 +81,12 @@ export function LibraryView({ onOpenVideo }: { onOpenVideo: (videoId: string) =>
     if (res.ok) {
       // 낙관적 제거가 아니라 응답 이후 제거다 — 전체 재조회는 필요 없다.
       setEntries((prev) => (prev === null ? prev : prev.filter((e) => e.videoId !== videoId)));
+      // 삭제 전 바이트 수는 곧바로 갱신되는 영상 편수와 어긋난다 — 마운트 시
+      // effect와 같은 관용(거부되면 편수만 보여준다)으로 다시 잰다.
+      void navigator.storage
+        ?.estimate()
+        .then((estimate) => setStorage(estimate))
+        .catch(() => {});
       return;
     }
     // 가장 흔한 실패는 진행 중 거부다(background가 `job in flight`로 답한다).
