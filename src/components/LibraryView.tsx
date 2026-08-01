@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Button } from '~/components/Button';
 import { StatusBadge } from '~/components/StatusBadge';
 import {
+  deleteErrorMessage,
   entryBadge,
   filterLibrary,
   formatCountLabel,
@@ -35,6 +36,9 @@ export function LibraryView({ onOpenVideo }: { onOpenVideo: (videoId: string) =>
   // 재시도 버튼이 아래 effect를 다시 돌리게 하는 가장 단순한 방법 — 값 자체는
   // 쓰지 않고 의존성 배열만 바꾼다.
   const [reloadToken, setReloadToken] = useState(0);
+  // 한 번에 한 행만 확인 상태다 — 다른 행의 휴지통을 누르면 이전 확인은 닫힌다.
+  const [confirmingId, setConfirmingId] = useState<string | null>(null);
+  const [failure, setFailure] = useState<{ videoId: string; message: string } | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -62,6 +66,19 @@ export function LibraryView({ onOpenVideo }: { onOpenVideo: (videoId: string) =>
   // 날짜 표기가 "올해면 연도 생략"이라 기준 시각이 필요하다. 마운트 시점에 한 번
   // 고정한다 — 렌더마다 new Date()를 만들면 useMemo가 매번 무효화된다.
   const now = useMemo(() => new Date(), []);
+  const remove = async (videoId: string) => {
+    setFailure(null);
+    const res = await sendMessage({ type: 'DELETE_LIBRARY_ENTRY', payload: { videoId } });
+    setConfirmingId(null);
+    if (res.ok) {
+      // 낙관적 제거가 아니라 응답 이후 제거다 — 전체 재조회는 필요 없다.
+      setEntries((prev) => (prev === null ? prev : prev.filter((e) => e.videoId !== videoId)));
+      return;
+    }
+    // 가장 흔한 실패는 진행 중 거부다(background가 `job in flight`로 답한다).
+    // 목록은 그대로 두고 그 행에만 사유를 띄운다.
+    setFailure({ videoId, message: deleteErrorMessage(res.error) });
+  };
   const shown = useMemo(() => (entries === null ? [] : filterLibrary(entries, query)), [entries, query]);
 
   if (loadFailed) {
@@ -130,7 +147,12 @@ export function LibraryView({ onOpenVideo }: { onOpenVideo: (videoId: string) =>
               entry={entry}
               query={query}
               now={now}
+              confirming={confirmingId === entry.videoId}
+              failedMessage={failure?.videoId === entry.videoId ? failure.message : null}
               onOpen={() => onOpenVideo(entry.videoId)}
+              onAskDelete={() => setConfirmingId(entry.videoId)}
+              onCancelDelete={() => setConfirmingId(null)}
+              onConfirmDelete={() => void remove(entry.videoId)}
             />
           ))}
         </ul>
@@ -147,47 +169,139 @@ function LibraryRow({
   entry,
   query,
   now,
+  confirming,
+  failedMessage,
   onOpen,
+  onAskDelete,
+  onCancelDelete,
+  onConfirmDelete,
 }: {
   entry: LibraryEntry;
   query: string;
   now: Date;
+  confirming: boolean;
+  failedMessage: string | null;
   onOpen: () => void;
+  onAskDelete: () => void;
+  onCancelDelete: () => void;
+  onConfirmDelete: () => void;
 }) {
   const badge = entryBadge(entry.status);
   const keywords = matchedKeywords(entry, query);
+  const cancelRef = useRef<HTMLButtonElement>(null);
+
+  // 확인 단계에 들어가면 포커스를 [취소]로 보낸다. [삭제]에 두면 엔터를 한 번 더
+  // 누르는 것만으로 지워지는데, 이 삭제는 되돌릴 수 없고 재생성에 5~8분과 Gemini
+  // 호출이 다시 든다.
+  useEffect(() => {
+    if (confirming) cancelRef.current?.focus();
+  }, [confirming]);
 
   return (
-    <li className="flex items-start gap-3 px-4 py-3">
-      <button type="button" onClick={onOpen} className="flex min-w-0 flex-1 items-start gap-3 text-left">
-        <img
-          src={entry.thumbnailUrl}
-          alt=""
-          width={64}
-          height={36}
-          className="mt-0.5 h-9 w-16 shrink-0 rounded object-cover"
-        />
-        <span className="min-w-0 flex-1">
-          <span className="flex items-start gap-2">
-            <span className="line-clamp-2 text-[12.5px] font-medium leading-snug text-neutral-900 dark:text-neutral-100">
-              {entry.title}
+    <li className="px-4 py-3">
+      <div className="flex items-start gap-3">
+        <button type="button" onClick={onOpen} className="flex min-w-0 flex-1 items-start gap-3 text-left">
+          <img
+            src={entry.thumbnailUrl}
+            alt=""
+            width={64}
+            height={36}
+            className="mt-0.5 h-9 w-16 shrink-0 rounded object-cover"
+          />
+          <span className="min-w-0 flex-1">
+            <span className="flex items-start gap-2">
+              <span className="line-clamp-2 text-[12.5px] font-medium leading-snug text-neutral-900 dark:text-neutral-100">
+                {entry.title}
+              </span>
+              {badge !== null && (
+                <span className="shrink-0">
+                  <StatusBadge tone={badge.tone}>{badge.label}</StatusBadge>
+                </span>
+              )}
             </span>
-            {badge !== null && (
-              <span className="shrink-0">
-                <StatusBadge tone={badge.tone}>{badge.label}</StatusBadge>
+            <span className="mt-1 block truncate text-[11px] text-neutral-500 dark:text-neutral-400">
+              {formatEntryMeta(entry, now)}
+            </span>
+            {keywords.length > 0 && (
+              <span className="mt-1 block truncate text-[11px] text-neutral-600 dark:text-neutral-300">
+                {keywords.join(' · ')}
               </span>
             )}
           </span>
-          <span className="mt-1 block truncate text-[11px] text-neutral-500 dark:text-neutral-400">
-            {formatEntryMeta(entry, now)}
+        </button>
+
+        {entry.inFlight ? (
+          // 진행 중에는 지울 수 없다 — 번역 도중 레코드가 사라지면 다음
+          // upsertBatch가 트랜잭션을 abort시켜 파이프라인이 이유 없이 죽는다.
+          // background도 같은 검사를 독립적으로 한다(이 값은 목록을 읽은 시점의
+          // 스냅샷이라 낡을 수 있다).
+          <span
+            className="shrink-0 p-1 text-neutral-300 dark:text-neutral-700"
+            title="진행 중에는 지울 수 없어요"
+            aria-label="진행 중에는 지울 수 없어요"
+          >
+            <TrashIcon />
           </span>
-          {keywords.length > 0 && (
-            <span className="mt-1 block truncate text-[11px] text-neutral-600 dark:text-neutral-300">
-              {keywords.join(' · ')}
-            </span>
-          )}
-        </span>
-      </button>
+        ) : (
+          <button
+            type="button"
+            onClick={onAskDelete}
+            aria-label="자막 삭제"
+            className="shrink-0 rounded p-1 text-neutral-500 hover:bg-neutral-100 hover:text-neutral-800 dark:text-neutral-500 dark:hover:bg-neutral-800 dark:hover:text-neutral-200"
+          >
+            <TrashIcon />
+          </button>
+        )}
+      </div>
+
+      {confirming && (
+        // Escape를 이 컨테이너에서 받는다 — 키 이벤트가 버블링되므로 [삭제]에
+        // 포커스가 가 있어도 동작한다.
+        <div
+          onKeyDown={(event) => {
+            if (event.key === 'Escape') onCancelDelete();
+          }}
+          className="mt-2 flex items-center justify-between gap-2 rounded-[7px] bg-neutral-50 px-3 py-2 dark:bg-neutral-900"
+        >
+          <span className="text-[11px] text-neutral-700 dark:text-neutral-300">
+            이 영상의 자막을 지울까요?
+          </span>
+          <span className="flex shrink-0 gap-1">
+            <button
+              type="button"
+              onClick={onConfirmDelete}
+              className="rounded px-2 py-1 text-[11px] text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-950"
+            >
+              삭제
+            </button>
+            <button
+              type="button"
+              ref={cancelRef}
+              onClick={onCancelDelete}
+              className="rounded px-2 py-1 text-[11px] text-neutral-600 hover:bg-neutral-100 dark:text-neutral-400 dark:hover:bg-neutral-800"
+            >
+              취소
+            </button>
+          </span>
+        </div>
+      )}
+
+      {failedMessage !== null && (
+        <p className="mt-2 text-[11px] text-red-600 dark:text-red-400">{failedMessage}</p>
+      )}
     </li>
+  );
+}
+
+/** 헤더 아이콘들과 같은 방식의 인라인 SVG. */
+function TrashIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M4 7h16" />
+      <path d="M10 11v6" />
+      <path d="M14 11v6" />
+      <path d="M6 7l1 13h10l1-13" />
+      <path d="M9 7V4h6v3" />
+    </svg>
   );
 }
