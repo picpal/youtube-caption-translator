@@ -1270,15 +1270,31 @@ function librarySummary(videoId: string, keywords: string[]): VideoSummary {
 // 레코드가 둘 다 있어야 실제로 잡을 띄우므로(없으면 즉시 실패하고 맵에서
 // 빠진다), 그 둘을 갖춘 뒤 해소되지 않는 목을 물린다. 이 파일의 기존 dedup
 // 테스트가 쓰는 것과 같은 수법이다.
-async function pinSummaryJob(videoId: string): Promise<void> {
+//
+// (fix round 1) 리졸버를 캡처해 돌려준다 — `inFlightSummaries`는 리셋 훅이
+// 없는 모듈 전역 상태라, 이 파일의 다른 stuck-promise 테스트들(예:
+// single-flight 테스트, :667-671)과 같은 규율로 호출자가 테스트가 끝나기
+// 전에 반드시 잡을 해소해야 한다. 해소만으로는 부족한 이유: `startSummaryJob`의
+// `.finally`가 맵에서 지우는 시점은 이 함수가 되돌려주는 promise가 아니라
+// GENERATE_SUMMARY 핸들러 자신의 promise가 정착하는 시점이므로, 그 promise도
+// 같이 캡처해 반환된 release 함수가 그것까지 기다린다.
+async function pinSummaryJob(videoId: string): Promise<() => Promise<void>> {
   await chrome.storage.local.set({
     geminiApiKey: 'test-key',
     geminiApiKeySavedAt: '2026-01-01T00:00:00.000Z',
   });
-  vi.mocked(generateSummary).mockReturnValue(new Promise(() => {}));
-  void handle({ type: 'GENERATE_SUMMARY', payload: { videoId } }, senderFor(undefined));
+  let resolveGemini!: (value: GenerateSummaryResult) => void;
+  const stuck = new Promise<GenerateSummaryResult>((resolve) => {
+    resolveGemini = resolve;
+  });
+  vi.mocked(generateSummary).mockReturnValueOnce(stuck);
+  const job = handle({ type: 'GENERATE_SUMMARY', payload: { videoId } }, senderFor(undefined));
   // 핸들러가 inFlightSummaries에 등록할 틈을 준다.
   await new Promise((resolve) => setTimeout(resolve, 0));
+  return async () => {
+    resolveGemini({ ok: true, payload: SUMMARY_PAYLOAD });
+    await job;
+  };
 }
 
 describe('GET_LIBRARY', () => {
@@ -1343,14 +1359,17 @@ describe('GET_LIBRARY', () => {
   });
 
   it('reports the in-flight job on the entry it belongs to', async () => {
-    await putTranslation(doneTranslationRecord('busy'));
+    await putTranslation(doneTranslationRecord('busy-library'));
     await putTranslation(doneTranslationRecord('idle'));
-    await pinSummaryJob('busy');
+    const releaseSummaryJob = await pinSummaryJob('busy-library');
 
     const entries = await handle({ type: 'GET_LIBRARY' });
 
-    expect(entries.find((e) => e.videoId === 'busy')?.inFlight).toBe(true);
+    expect(entries.find((e) => e.videoId === 'busy-library')?.inFlight).toBe(true);
     expect(entries.find((e) => e.videoId === 'idle')?.inFlight).toBe(false);
+
+    // 다음 테스트로 새지 않도록 여기서 정착시킨다 (pinSummaryJob의 위 주석 참고).
+    await releaseSummaryJob();
   });
 });
 
@@ -1370,14 +1389,17 @@ describe('DELETE_LIBRARY_ENTRY', () => {
   });
 
   it('refuses while a job is in flight and deletes nothing', async () => {
-    await putTranslation(doneTranslationRecord('busy'));
-    await pinSummaryJob('busy');
+    await putTranslation(doneTranslationRecord('busy-delete'));
+    const releaseSummaryJob = await pinSummaryJob('busy-delete');
 
-    const res = await handle({ type: 'DELETE_LIBRARY_ENTRY', payload: { videoId: 'busy' } });
+    const res = await handle({ type: 'DELETE_LIBRARY_ENTRY', payload: { videoId: 'busy-delete' } });
 
     expect(res).toEqual({ ok: false, error: 'job in flight' });
     // 이게 이 테스트의 핵심이다: 거부했으면 아무것도 지우지 않았어야 한다.
-    expect(await getTranslation('busy')).not.toBeNull();
+    expect(await getTranslation('busy-delete')).not.toBeNull();
+
+    // 다음 테스트로 새지 않도록 여기서 정착시킨다 (pinSummaryJob의 위 주석 참고).
+    await releaseSummaryJob();
   });
 
   it('resolves ok for a videoId that has nothing stored', async () => {
