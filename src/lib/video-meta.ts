@@ -1,5 +1,5 @@
 import type { CaptionAvailability, VideoMeta } from '~/types/video';
-import { parseVideoId } from '~/lib/youtube';
+import { parseVideoId, thumbnailUrlFor } from '~/lib/youtube';
 
 /**
  * What `extractVideoMeta` can determine from a `Document` alone.
@@ -553,7 +553,7 @@ export function extractVideoMeta(doc: Document, url: string): ExtractedVideoMeta
     // ISOLATED-reachable and SPA-safe. NOTE: that `hqdefault.jpg` always
     // resolves is general knowledge, NOT measured; no HTTP request has ever
     // been issued against it by this project. Consumers should tolerate a 404.
-    thumbnailUrl: `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
+    thumbnailUrl: thumbnailUrlFor(videoId),
     durationSeconds: resolveDurationSeconds(doc, videoId),
     captionAvailability: resolveCaptionAvailability(doc, videoId),
   };

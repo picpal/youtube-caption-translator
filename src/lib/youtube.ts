@@ -80,3 +80,14 @@ export function parseVideoId(url: string | undefined): string | null {
 export function isYoutubeWatchUrl(url: string | undefined): boolean {
   return classifyYoutubeUrl(url) === 'watch';
 }
+
+/**
+ * 영상 id에서 유도한 썸네일 URL. 이 저장소에서 유일하게 검증된 썸네일 출처다 —
+ * `src/lib/video-meta.ts`가 원래 이 식을 인라인으로 갖고 있었고, 여기로 옮긴
+ * 이유는 서비스 워커(라이브러리 목록에서 `videos` 스토어에 짝이 없는 영상의
+ * 썸네일을 만든다)가 `video-meta.ts`의 DOM 파싱 코드를 번들에 끌어들이지 않고
+ * 쓸 수 있게 하기 위해서다.
+ */
+export function thumbnailUrlFor(videoId: string): string {
+  return `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`;
+}
