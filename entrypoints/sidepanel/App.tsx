@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type RefObject } from 'react';
 import { Button } from '~/components/Button';
 import { DownloadMenu } from '~/components/DownloadMenu';
+import { LibraryView } from '~/components/LibraryView';
 import { StatusBadge } from '~/components/StatusBadge';
 import { SummaryPanel } from '~/components/SummaryPanel';
 import { TranscriptList, type DisplayMode } from '~/components/TranscriptList';
@@ -67,9 +68,39 @@ export function App() {
   // (B2) and floating scroll-to-top button (B3) can both act on it.
   const scrollContainerRef = useRef<HTMLDivElement>(null);
 
+  // 패널의 최상위 뷰 (spec 2026-08-01 §3). 라이브러리를 열면 아래 본문 분기가
+  // ReadyBody를 언마운트하고, 닫으면 새로 마운트한다 — 그래서 라이브러리에서
+  // 지운 영상으로 돌아왔을 때 별도의 무효화 배관 없이 패널이 스스로 다시 읽는다.
+  // 대가는 §11에 있다: 번역이 도는 중에 다녀오면 진행률 퍼센트가 다음 progress
+  // 이벤트까지 최대 ~15초 비어 보인다. "번역 중"이라는 상태 자체는 저장된
+  // 레코드에서 즉시 복원되고(useTranslation의 shouldResume), 다시 보내는
+  // START_TRANSLATION은 background의 inFlightTranslations 중복 방지에 걸려 잡을
+  // 새로 시작하지 않는다.
+  const [view, setView] = useState<'video' | 'library'>('video');
+
   const loading = status === null;
   const present = status?.present === true;
   const ready = present && pageKind === 'watch';
+
+  // 라이브러리는 유튜브 탭이 아니어도 열려야 한다 — 이 화면의 주 용도가 "지금
+  // 보고 있지 않은 영상 찾기"다. 그래서 `ready`가 아니라 `present`가 조건이다.
+  const canOpenLibrary = present;
+
+  // 목록에서 고른 영상으로 이동한다. 활성 탭이 유튜브면 그 탭을 옮기고(탭이
+  // 쌓이지 않는다), 아니면 새 탭을 연다. 유튜브가 아닌 탭에서는 host_permission이
+  // 없어 `tab.url`이 undefined로 오는데, 그 경우도 새 탭 경로라 동작이 옳다.
+  // tabs.update/tabs.create 모두 "tabs" 권한을 요구하지 않는다.
+  const openVideo = (videoId: string) => {
+    const url = `https://www.youtube.com/watch?v=${videoId}`;
+    void chrome.tabs.query({ active: true, currentWindow: true }).then(([tab]) => {
+      if (tab?.id !== undefined && classifyYoutubeUrl(tab.url) !== 'other') {
+        void chrome.tabs.update(tab.id, { url });
+      } else {
+        void chrome.tabs.create({ url });
+      }
+      setView('video');
+    });
+  };
 
   // The panel is long-lived (unlike the popup this logic was originally
   // written for, which was destroyed and recreated on every open) — it
@@ -157,7 +188,17 @@ export function App() {
           <StatusBadge tone={loading ? 'muted' : present ? 'ok' : 'warn'}>
             {loading ? '확인 중' : present ? '준비됨' : '설정 필요'}
           </StatusBadge>
-          {ready && <DownloadMenu />}
+          {canOpenLibrary && (
+            <button
+              type="button"
+              onClick={() => setView(view === 'library' ? 'video' : 'library')}
+              aria-label={view === 'library' ? '뒤로' : '저장한 영상'}
+              className="rounded p-1 text-neutral-600 hover:bg-neutral-100 dark:text-neutral-400 dark:hover:bg-neutral-800"
+            >
+              {view === 'library' ? <BackIcon /> : <LibraryIcon />}
+            </button>
+          )}
+          {ready && view === 'video' && <DownloadMenu />}
           <button
             type="button"
             onClick={() => chrome.runtime.openOptionsPage()}
@@ -169,7 +210,11 @@ export function App() {
         </div>
       </header>
 
-      {ready ? (
+      {view === 'library' ? (
+        <div className="panel-scrollbar flex-1 overflow-auto">
+          <LibraryView onOpenVideo={openVideo} />
+        </div>
+      ) : ready ? (
         <div ref={scrollContainerRef} className="panel-scrollbar flex-1 overflow-auto">
           <ReadyBody scrollContainerRef={scrollContainerRef} />
         </div>
@@ -988,6 +1033,27 @@ function GearIcon() {
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
       <path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z" />
       <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.05a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h.05a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.05a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z" />
+    </svg>
+  );
+}
+
+/** 헤더의 GearIcon/DownloadIcon과 같은 방식의 인라인 SVG — 아이콘 라이브러리를
+ * 추가하지 않는다. */
+function LibraryIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M4 6h16" />
+      <path d="M4 12h16" />
+      <path d="M4 18h10" />
+    </svg>
+  );
+}
+
+function BackIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M19 12H5" />
+      <path d="m12 19-7-7 7-7" />
     </svg>
   );
 }
