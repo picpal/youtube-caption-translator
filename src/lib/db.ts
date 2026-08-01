@@ -264,6 +264,14 @@ export async function listTranslationDigests(): Promise<TranslationDigest[]> {
       db.close();
       reject(tx.error);
     };
+    // Fix round, Minor #3 — an abort with no preceding request error (e.g. a
+    // spontaneous abort) would otherwise leave this promise pending forever,
+    // and GET_LIBRARY's Promise.all along with it. Matches deleteVideoData's
+    // existing onerror/onabort shape below.
+    tx.onabort = () => {
+      db.close();
+      reject(tx.error);
+    };
   });
 }
 
@@ -284,6 +292,18 @@ export async function getAllVideos(): Promise<VideoMeta[]> {
       db.close();
       resolve(result);
     };
+    // Fix round, Minor #3 — see listTranslationDigests' onabort comment: with
+    // neither handler, a transaction that aborts without a preceding request
+    // error left this promise (and GET_LIBRARY's Promise.all) pending
+    // forever.
+    tx.onerror = () => {
+      db.close();
+      reject(tx.error);
+    };
+    tx.onabort = () => {
+      db.close();
+      reject(tx.error);
+    };
   });
 }
 
@@ -303,6 +323,16 @@ export async function getAllSummaries(): Promise<VideoSummary[]> {
     tx.oncomplete = () => {
       db.close();
       resolve(result);
+    };
+    // Fix round, Minor #3 — see getAllVideos' onabort comment above; the same
+    // hang applies here and GET_LIBRARY reads both in the same Promise.all.
+    tx.onerror = () => {
+      db.close();
+      reject(tx.error);
+    };
+    tx.onabort = () => {
+      db.close();
+      reject(tx.error);
     };
   });
 }
