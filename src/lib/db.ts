@@ -1,6 +1,8 @@
 import type { VideoMeta } from '~/types/video';
 import type { TranscriptSegment, TranslationRecord } from '~/types/transcript';
 import type { VideoSummary } from '~/types/summary';
+import { DEFAULT_TARGET_LANG } from '~/lib/target-lang';
+import type { TranslationDigest } from '~/types/library';
 
 // Hand-rolled IndexedDB wrapper instead of the `idb` package: the surface is
 // a handful of put/get operations on two object stores, and MV3 service
@@ -222,6 +224,114 @@ export async function getSummary(videoId: string): Promise<VideoSummary | null> 
     tx.oncomplete = () => {
       db.close();
       resolve(result);
+    };
+  });
+}
+
+// 라이브러리 목록용 조회 (spec 2026-08-01 §4.3). `getAll` 대신 커서를 쓰는 이유는
+// 읽기 속도가 아니다 — 실측으로 커서가 오히려 조금 느리다(4편 339 KB 기준
+// getAll 1.6 ms vs 커서 2.6 ms, 레코드마다 왕복이 생겨서). 이유는 결과 크기다:
+// 같은 입력에서 getAll은 339 KB를, 이 투영은 0.3 KB를 낸다. 그 차이가 그대로
+// sendMessage의 구조화 복제 비용이 된다.
+export async function listTranslationDigests(): Promise<TranslationDigest[]> {
+  const db = await openDb();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(TRANSLATIONS_STORE, 'readonly');
+    const request = tx.objectStore(TRANSLATIONS_STORE).openCursor();
+    const digests: TranslationDigest[] = [];
+    request.onsuccess = () => {
+      const cursor = request.result;
+      if (cursor === null) return;
+      const record = cursor.value as TranslationRecord;
+      digests.push({
+        videoId: record.videoId,
+        status: record.status,
+        segmentCount: record.segments.length,
+        targetLang: record.targetLang ?? DEFAULT_TARGET_LANG,
+        updatedAt: record.updatedAt,
+      });
+      cursor.continue();
+    };
+    request.onerror = () => {
+      db.close();
+      reject(request.error);
+    };
+    tx.oncomplete = () => {
+      db.close();
+      resolve(digests);
+    };
+    tx.onerror = () => {
+      db.close();
+      reject(tx.error);
+    };
+  });
+}
+
+export async function getAllVideos(): Promise<VideoMeta[]> {
+  const db = await openDb();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE_NAME, 'readonly');
+    const request = tx.objectStore(STORE_NAME).getAll();
+    let result: VideoMeta[] = [];
+    request.onsuccess = () => {
+      result = (request.result as VideoMeta[] | undefined) ?? [];
+    };
+    request.onerror = () => {
+      db.close();
+      reject(request.error);
+    };
+    tx.oncomplete = () => {
+      db.close();
+      resolve(result);
+    };
+  });
+}
+
+export async function getAllSummaries(): Promise<VideoSummary[]> {
+  const db = await openDb();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(SUMMARIES_STORE, 'readonly');
+    const request = tx.objectStore(SUMMARIES_STORE).getAll();
+    let result: VideoSummary[] = [];
+    request.onsuccess = () => {
+      result = (request.result as VideoSummary[] | undefined) ?? [];
+    };
+    request.onerror = () => {
+      db.close();
+      reject(request.error);
+    };
+    tx.oncomplete = () => {
+      db.close();
+      resolve(result);
+    };
+  });
+}
+
+// 번역과 요약을 한 트랜잭션으로 지운다. 원자성이 필요한 이유: 번역만 지워지고
+// 요약이 남으면, 목록에서 사라진 영상의 요약이 영원히 고아로 남는다(목록의 기준
+// 스토어가 `translations`이므로 다시 보이지 않는다).
+//
+// `videos`의 메타는 일부러 남긴다 — 제목·썸네일 캐시일 뿐이고 그 영상을 다시
+// 방문하면 어차피 덮어써진다 (spec §7.1).
+//
+// 없는 키를 지우는 것은 IndexedDB에서 성공하는 no-op이므로 이 함수는 멱등이다.
+export async function deleteVideoData(videoId: string): Promise<void> {
+  const db = await openDb();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction([TRANSLATIONS_STORE, SUMMARIES_STORE], 'readwrite');
+    tx.objectStore(TRANSLATIONS_STORE).delete(videoId);
+    tx.objectStore(SUMMARIES_STORE).delete(videoId);
+    tx.oncomplete = () => {
+      db.close();
+      resolve();
+    };
+    tx.onerror = () => {
+      db.close();
+      reject(tx.error);
+    };
+    tx.onabort = () => {
+      db.close();
+      reject(tx.error);
     };
   });
 }

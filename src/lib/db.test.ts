@@ -7,6 +7,7 @@ import {
   DB_NAME,
   STORE_NAME,
   TRANSLATIONS_STORE,
+  SUMMARIES_STORE,
   getTranslation,
   getVideo,
   putTranslation,
@@ -14,6 +15,10 @@ import {
   upsertBatch,
   putSummary,
   getSummary,
+  getAllSummaries,
+  getAllVideos,
+  listTranslationDigests,
+  deleteVideoData,
 } from './db';
 
 function makeMeta(overrides: Partial<VideoMeta> = {}): VideoMeta {
@@ -375,5 +380,79 @@ describe('putSummary / getSummary', () => {
     await putSummary(makeSummary({ purpose: 'first' }));
     await putSummary(makeSummary({ purpose: 'second' }));
     expect((await getSummary('zjkBMFhNj_g'))?.purpose).toBe('second');
+  });
+});
+
+describe('library queries', () => {
+  it('listTranslationDigests projects each record without its segments', async () => {
+    await putTranslation(
+      makeRecord({
+        videoId: 'aaa',
+        status: 'done',
+        segments: [makeSegment(), makeSegment({ index: 1 })],
+      }),
+    );
+
+    const digests = await listTranslationDigests();
+
+    expect(digests).toHaveLength(1);
+    expect(digests[0]).toEqual({
+      videoId: 'aaa',
+      status: 'done',
+      segmentCount: 2,
+      targetLang: 'ko',
+      updatedAt: digests[0].updatedAt,
+    });
+    // 투영이 실제로 segments를 떨어뜨렸는지 — 이게 이 함수의 존재 이유다.
+    expect('segments' in digests[0]).toBe(false);
+  });
+
+  it('listTranslationDigests defaults a record with no targetLang to ko', async () => {
+    const record = makeRecord({ videoId: 'bbb' });
+    delete record.targetLang;
+    await putTranslation(record);
+
+    const [digest] = await listTranslationDigests();
+
+    expect(digest.targetLang).toBe('ko');
+  });
+
+  it('listTranslationDigests returns an empty array when nothing is stored', async () => {
+    expect(await listTranslationDigests()).toEqual([]);
+  });
+
+  it('getAllVideos and getAllSummaries return every stored record', async () => {
+    await putVideo(makeMeta({ videoId: 'aaa' }));
+    await putVideo(makeMeta({ videoId: 'bbb' }));
+    await putSummary(makeSummary({ videoId: 'aaa' }));
+
+    expect((await getAllVideos()).map((v) => v.videoId).sort()).toEqual(['aaa', 'bbb']);
+    expect((await getAllSummaries()).map((s) => s.videoId)).toEqual(['aaa']);
+  });
+
+  it('deleteVideoData removes the translation and the summary but keeps the video meta', async () => {
+    await putVideo(makeMeta({ videoId: 'aaa' }));
+    await putTranslation(makeRecord({ videoId: 'aaa' }));
+    await putSummary(makeSummary({ videoId: 'aaa' }));
+
+    await deleteVideoData('aaa');
+
+    expect(await getTranslation('aaa')).toBeNull();
+    expect(await getSummary('aaa')).toBeNull();
+    // 메타는 제목·썸네일 캐시일 뿐이고 재방문 시 덮어써진다 (spec §7.1).
+    expect(await getVideo('aaa')).not.toBeNull();
+  });
+
+  it('deleteVideoData leaves other videos alone', async () => {
+    await putTranslation(makeRecord({ videoId: 'aaa' }));
+    await putTranslation(makeRecord({ videoId: 'bbb' }));
+
+    await deleteVideoData('aaa');
+
+    expect(await getTranslation('bbb')).not.toBeNull();
+  });
+
+  it('deleteVideoData resolves for a videoId that was never stored', async () => {
+    await expect(deleteVideoData('never-existed')).resolves.toBeUndefined();
   });
 });
