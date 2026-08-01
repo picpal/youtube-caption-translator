@@ -214,7 +214,7 @@ function LibraryRow({
             alt=""
             width={64}
             height={36}
-            className="mt-0.5 h-9 w-16 shrink-0 rounded object-cover"
+            className="mt-0.5 h-9 w-16 shrink-0 rounded bg-neutral-200 object-cover dark:bg-neutral-800"
           />
           <span className="min-w-0 flex-1">
             <span className="flex items-start gap-2">
