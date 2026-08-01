@@ -95,9 +95,17 @@ export interface StorageEstimateLike {
   quota?: number;
 }
 
+/**
+ * 단위를 반올림된 표시값 기준으로 고른다 — 원시 바이트로 단위를 먼저 정하면
+ * `1048575`(≈1 MiB 미만)처럼 `toFixed(1)`이 그 단위 안에서 `1024`로 올림되는
+ * 값이 "1024 KB"/"1024.0 MB"로 굳어버린다(리뷰에서 발견). 위 단위부터 확인해
+ * 반올림 결과가 그 단위에서 1 이상이면 그 단위로 확정한다.
+ */
 function formatBytes(bytes: number): string {
-  if (bytes >= 1024 ** 3) return `${(bytes / 1024 ** 3).toFixed(1)} GB`;
-  if (bytes >= 1024 ** 2) return `${(bytes / 1024 ** 2).toFixed(1)} MB`;
+  const gb = bytes / 1024 ** 3;
+  if (Number(gb.toFixed(1)) >= 1) return `${gb.toFixed(1)} GB`;
+  const mb = bytes / 1024 ** 2;
+  if (Number(mb.toFixed(1)) >= 1) return `${mb.toFixed(1)} MB`;
   return `${Math.max(1, Math.round(bytes / 1024))} KB`;
 }
 
