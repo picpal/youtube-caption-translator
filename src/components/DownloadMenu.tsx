@@ -152,12 +152,13 @@ function MenuItem({
 
 /** 헤더의 GearIcon과 같은 방식의 인라인 SVG — 아이콘 라이브러리를 추가하지 않는다.
  * viewBox는 표준 "0 0 24 24"가 아니라 "3 2 18 19"(경로 잉크박스)다. GearIcon은 전체 24×24를
- * 채우지만 이 다운로드 화살표는 3 2 18 19만 차지해서, viewBox를 크롭하면 같은 렌더 박스(18×18)에서
- * 두 아이콘의 시각적 크기가 같아진다 — 보정하지 않으면 다운로드 아이콘이 작아 보인다.
+ * 채우지만 이 다운로드 화살표는 3 2 18 19만 차지해서, viewBox를 크롭하면 렌더 박스가 거의 같은
+ * 크기에서 두 아이콘의 시각적 크기가 맞는다 — 보정하지 않으면 다운로드 아이콘이 작아 보인다.
+ * 렌더 박스는 다른 헤더 아이콘(18×18)보다 1px 작은 17×17 — 크롭 보정이 살짝 과해서 줄였다.
  */
 function DownloadIcon() {
   return (
-    <svg width="18" height="18" viewBox="3 2 18 19" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+    <svg width="17" height="17" viewBox="3 2 18 19" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
       <path d="M12 3v12" />
       <path d="m7 11 5 5 5-5" />
       <path d="M4 20h16" />
