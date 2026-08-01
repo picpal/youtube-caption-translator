@@ -210,7 +210,7 @@ export function App() {
         </div>
       </header>
 
-      {view === 'library' ? (
+      {view === 'library' && canOpenLibrary ? (
         <div className="panel-scrollbar flex-1 overflow-auto">
           <LibraryView onOpenVideo={openVideo} />
         </div>
