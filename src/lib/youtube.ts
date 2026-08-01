@@ -82,6 +82,25 @@ export function isYoutubeWatchUrl(url: string | undefined): boolean {
 }
 
 /**
+ * Whether a URL is any youtube.com page at all — unlike `classifyYoutubeUrl`,
+ * which returns `'other'` for the homepage, `/feed/…`, `/results?…`, and
+ * `/@handle` pages just as it does for a non-YouTube URL, this only tests the
+ * host. Built directly on `isYoutubeHostname` rather than on
+ * `classifyYoutubeUrl` for exactly that reason — a caller deciding "is this
+ * tab already on youtube.com, so it's safe to reuse instead of opening a new
+ * tab" needs the host answer, not the page-kind one. Same unreadable-url
+ * handling as `isYoutubeWatchUrl`: falls through to `false`.
+ */
+export function isYoutubeUrl(url: string | undefined): boolean {
+  if (!url) return false;
+  try {
+    return isYoutubeHostname(new URL(url).hostname);
+  } catch {
+    return false;
+  }
+}
+
+/**
  * 영상 id에서 유도한 썸네일 URL. 이 저장소에서 유일하게 검증된 썸네일 출처다 —
  * `src/lib/video-meta.ts`가 원래 이 식을 인라인으로 갖고 있었고, 여기로 옮긴
  * 이유는 서비스 워커(라이브러리 목록에서 `videos` 스토어에 짝이 없는 영상의
