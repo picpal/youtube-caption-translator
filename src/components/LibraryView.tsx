@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { Button } from '~/components/Button';
 import { StatusBadge } from '~/components/StatusBadge';
 import {
   entryBadge,
@@ -24,12 +25,27 @@ export function LibraryView({ onOpenVideo }: { onOpenVideo: (videoId: string) =>
   const [entries, setEntries] = useState<LibraryEntry[] | null>(null);
   const [query, setQuery] = useState('');
   const [storage, setStorage] = useState<StorageEstimateLike | null>(null);
+  // `GET_LIBRARY`가 거부되면(서비스워커가 아직 안 깨어있어 "Receiving end does
+  // not exist" 등) `entries`는 영원히 null로 남는다 — "불러오는 중"과 구분해야
+  // 무한 로딩 대신 재시도 방법을 보여줄 수 있다. 빈 배열로 대체하지 않는 이유:
+  // 그러면 "아직 저장한 영상이 없어요"가 뜨는데, 실제로는 있는지 없는지 몰라서
+  // 못 물어본 것뿐이다 — `durationSeconds`가 null일 때 0:00을 안 찍는 것과 같은
+  // 규율이다.
+  const [loadFailed, setLoadFailed] = useState(false);
+  // 재시도 버튼이 아래 effect를 다시 돌리게 하는 가장 단순한 방법 — 값 자체는
+  // 쓰지 않고 의존성 배열만 바꾼다.
+  const [reloadToken, setReloadToken] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
-    void sendMessage({ type: 'GET_LIBRARY' }).then((list) => {
-      if (!cancelled) setEntries(list);
-    });
+    setLoadFailed(false);
+    void sendMessage({ type: 'GET_LIBRARY' })
+      .then((list) => {
+        if (!cancelled) setEntries(list);
+      })
+      .catch(() => {
+        if (!cancelled) setLoadFailed(true);
+      });
     // 사이드패널은 확장과 같은 오리진이라 background를 경유할 이유가 없다.
     // 거부되면 편수만 보여준다 (formatStorageLine이 null을 그렇게 다룬다).
     void navigator.storage
@@ -41,12 +57,29 @@ export function LibraryView({ onOpenVideo }: { onOpenVideo: (videoId: string) =>
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [reloadToken]);
 
   // 날짜 표기가 "올해면 연도 생략"이라 기준 시각이 필요하다. 마운트 시점에 한 번
   // 고정한다 — 렌더마다 new Date()를 만들면 useMemo가 매번 무효화된다.
   const now = useMemo(() => new Date(), []);
   const shown = useMemo(() => (entries === null ? [] : filterLibrary(entries, query)), [entries, query]);
+
+  if (loadFailed) {
+    return (
+      <div className="mx-auto flex max-w-sm flex-col items-center gap-3 px-6 pt-10 text-center">
+        <p className="text-sm text-neutral-700 dark:text-neutral-300">목록을 불러오지 못했어요</p>
+        <Button
+          onClick={() => {
+            setEntries(null);
+            setLoadFailed(false);
+            setReloadToken((token) => token + 1);
+          }}
+        >
+          다시 시도
+        </Button>
+      </div>
+    );
+  }
 
   if (entries === null) {
     return <p className="p-6 text-sm text-neutral-500 dark:text-neutral-400">불러오는 중…</p>;
