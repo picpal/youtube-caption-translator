@@ -168,8 +168,11 @@ export type AppResponseMap = {
   GENERATE_SUMMARY: { ok: true; summary: VideoSummary } | { ok: false; error: string };
   SUMMARY_REFRESHED: { ok: true };
   // `updatedAt` 내림차순, 동률이면 `videoId` 오름차순 — 결정적 순서라 테스트가
-  // 순서를 단언할 수 있다.
-  GET_LIBRARY: LibraryEntry[];
+  // 순서를 단언할 수 있다. `ok: false`는 읽기 자체가 실패했다는 뜻이다(DB open
+  // 실패, 버전 변경 차단, 커서 오류 등) — 실패를 빈 배열로 뭉뚱그리면 패널이
+  // "저장한 영상이 없다"와 "물어보지도 못했다"를 구분할 방법이 없어, 실제로는
+  // 데이터가 있는데도 없다고 말하게 된다.
+  GET_LIBRARY: { ok: true; entries: LibraryEntry[] } | { ok: false; error: string };
   // `error`는 다른 핸들러들과 같은 규약: 원문 영어 사유를 돌려주고 한국어 문구는
   // 패널이 만든다. 진행 중 거부는 정확히 `'job in flight'`다.
   DELETE_LIBRARY_ENTRY: { ok: true } | { ok: false; error: string };

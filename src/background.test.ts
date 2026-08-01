@@ -1,6 +1,15 @@
 import 'fake-indexeddb/auto';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { DB_NAME, getVideo, getTranslation, getSummary, putTranslation, putSummary, putVideo } from '~/lib/db';
+import {
+  DB_NAME,
+  getVideo,
+  getTranslation,
+  getSummary,
+  putTranslation,
+  putSummary,
+  putVideo,
+  listTranslationDigests,
+} from '~/lib/db';
 import type { VideoMeta } from '~/types/video';
 import { analyzeGlossary, generateSummary, translateBatch, MODEL_ID } from '~/lib/gemini';
 import type { GenerateSummaryResult } from '~/lib/gemini';
@@ -8,6 +17,7 @@ import { captionHash, dedupeRows, reconstructSentences, rowsToSegments } from '~
 import type { AppMessage, RawTranscriptRow } from '~/types/message';
 import type { TranslationRecord } from '~/types/transcript';
 import type { VideoSummary } from '~/types/summary';
+import type { LibraryEntry } from '~/types/library';
 import { handle } from '../entrypoints/background';
 
 // GENERATE_SUMMARY suite (fix round, Important #3) — `generateSummary` is
@@ -28,6 +38,18 @@ import { handle } from '../entrypoints/background';
 vi.mock('~/lib/gemini', async (importOriginal) => {
   const actual = await importOriginal<typeof import('~/lib/gemini')>();
   return { ...actual, generateSummary: vi.fn(), analyzeGlossary: vi.fn(), translateBatch: vi.fn() };
+});
+
+// GET_LIBRARY failure suite (fix round, Important #2) — `listTranslationDigests`
+// is wrapped the same way, but defaults to calling straight through to the
+// real (fake-indexeddb-backed) implementation via `vi.fn(actual.fn)`; only
+// the one test below overrides it with `mockRejectedValueOnce` to force the
+// DB-layer failure GET_LIBRARY must now report as `{ ok: false }` instead of
+// resolving as an empty list. Every other test in this file exercises the
+// real function unchanged.
+vi.mock('~/lib/db', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('~/lib/db')>();
+  return { ...actual, listTranslationDigests: vi.fn(actual.listTranslationDigests) };
 });
 
 // Closes the M0 review's "no test for the message dispatch layer" gap: this
@@ -1297,6 +1319,17 @@ async function pinSummaryJob(videoId: string): Promise<() => Promise<void>> {
   };
 }
 
+// Fix round, Important #2 — GET_LIBRARY now resolves `{ ok: true, entries }`
+// or `{ ok: false, error }` instead of a bare array (message.ts's doc comment
+// on why). Every happy-path test below only cares about the entries, so this
+// asserts `ok: true` once and unwraps rather than repeating that check in
+// each test.
+async function getLibraryEntries(): Promise<LibraryEntry[]> {
+  const res = await handle({ type: 'GET_LIBRARY' });
+  if (!res.ok) throw new Error(`expected ok:true, got ${JSON.stringify(res)}`);
+  return res.entries;
+}
+
 describe('GET_LIBRARY', () => {
   it('lists only videos that have a translation record', async () => {
     // 방문만 해도 videos에 쌓인다 — 그것만으로는 목록에 들어오면 안 된다.
@@ -1304,7 +1337,7 @@ describe('GET_LIBRARY', () => {
     await putVideo(libraryMeta('translated', { title: '번역한 영상' }));
     await putTranslation(doneTranslationRecord('translated'));
 
-    const entries = await handle({ type: 'GET_LIBRARY' });
+    const entries = await getLibraryEntries();
 
     expect(entries.map((e) => e.videoId)).toEqual(['translated']);
     expect(entries[0].title).toBe('번역한 영상');
@@ -1313,7 +1346,7 @@ describe('GET_LIBRARY', () => {
   it('falls back to the videoId and a derived thumbnail when no meta is stored', async () => {
     await putTranslation(doneTranslationRecord('orphan'));
 
-    const [entry] = await handle({ type: 'GET_LIBRARY' });
+    const [entry] = await getLibraryEntries();
 
     expect(entry.title).toBe('orphan');
     expect(entry.thumbnailUrl).toBe('https://i.ytimg.com/vi/orphan/hqdefault.jpg');
@@ -1326,7 +1359,7 @@ describe('GET_LIBRARY', () => {
     await putSummary(librarySummary('withsum', ['tokio', 'executor']));
     await putTranslation(doneTranslationRecord('nosum'));
 
-    const entries = await handle({ type: 'GET_LIBRARY' });
+    const entries = await getLibraryEntries();
     const withSum = entries.find((e) => e.videoId === 'withsum');
     const noSum = entries.find((e) => e.videoId === 'nosum');
 
@@ -1341,7 +1374,7 @@ describe('GET_LIBRARY', () => {
     await putTranslation(doneTranslationRecord('zzz', { updatedAt: '2026-07-31T00:00:00.000Z' }));
     await putTranslation(doneTranslationRecord('aaa', { updatedAt: '2026-07-31T00:00:00.000Z' }));
 
-    const entries = await handle({ type: 'GET_LIBRARY' });
+    const entries = await getLibraryEntries();
 
     expect(entries.map((e) => e.videoId)).toEqual(['aaa', 'zzz', 'old']);
   });
@@ -1349,13 +1382,13 @@ describe('GET_LIBRARY', () => {
   it('carries the record status so the row can badge it', async () => {
     await putTranslation(doneTranslationRecord('broke', { status: 'failed' }));
 
-    const [entry] = await handle({ type: 'GET_LIBRARY' });
+    const [entry] = await getLibraryEntries();
 
     expect(entry.status).toBe('failed');
   });
 
   it('returns an empty array when nothing has been translated', async () => {
-    expect(await handle({ type: 'GET_LIBRARY' })).toEqual([]);
+    expect(await handle({ type: 'GET_LIBRARY' })).toEqual({ ok: true, entries: [] });
   });
 
   it('reports the in-flight job on the entry it belongs to', async () => {
@@ -1363,13 +1396,24 @@ describe('GET_LIBRARY', () => {
     await putTranslation(doneTranslationRecord('idle'));
     const releaseSummaryJob = await pinSummaryJob('busy-library');
 
-    const entries = await handle({ type: 'GET_LIBRARY' });
+    const entries = await getLibraryEntries();
 
     expect(entries.find((e) => e.videoId === 'busy-library')?.inFlight).toBe(true);
     expect(entries.find((e) => e.videoId === 'idle')?.inFlight).toBe(false);
 
     // 다음 테스트로 새지 않도록 여기서 정착시킨다 (pinSummaryJob의 위 주석 참고).
     await releaseSummaryJob();
+  });
+
+  // This is the fix itself: a DB-layer failure must surface as `ok: false`,
+  // not resolve as an empty list indistinguishable from "nothing saved yet"
+  // (see LibraryView.tsx's own comment on why that distinction matters).
+  it('reports ok: false with the underlying error when a DB read fails, instead of resolving as an empty list', async () => {
+    vi.mocked(listTranslationDigests).mockRejectedValueOnce(new Error('db unavailable'));
+
+    const res = await handle({ type: 'GET_LIBRARY' });
+
+    expect(res).toEqual({ ok: false, error: 'db unavailable' });
   });
 });
 
@@ -1385,7 +1429,7 @@ describe('DELETE_LIBRARY_ENTRY', () => {
     expect(await getTranslation('gone')).toBeNull();
     expect(await getSummary('gone')).toBeNull();
     expect(await getVideo('gone')).not.toBeNull();
-    expect(await handle({ type: 'GET_LIBRARY' })).toEqual([]);
+    expect(await handle({ type: 'GET_LIBRARY' })).toEqual({ ok: true, entries: [] });
   });
 
   it('refuses while a job is in flight and deletes nothing', async () => {

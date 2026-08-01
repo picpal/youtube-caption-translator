@@ -44,8 +44,16 @@ export function LibraryView({ onOpenVideo }: { onOpenVideo: (videoId: string) =>
     let cancelled = false;
     setLoadFailed(false);
     void sendMessage({ type: 'GET_LIBRARY' })
-      .then((list) => {
-        if (!cancelled) setEntries(list);
+      .then((res) => {
+        if (cancelled) return;
+        // `res.ok === false` means the read itself failed (see message.ts's
+        // GET_LIBRARY doc comment) — same retry path as a rejected
+        // sendMessage below, not a second error surface.
+        if (res.ok) {
+          setEntries(res.entries);
+        } else {
+          setLoadFailed(true);
+        }
       })
       .catch(() => {
         if (!cancelled) setLoadFailed(true);
