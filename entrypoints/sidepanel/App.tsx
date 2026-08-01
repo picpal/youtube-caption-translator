@@ -90,16 +90,24 @@ export function App() {
   // 쌓이지 않는다), 아니면 새 탭을 연다. 유튜브가 아닌 탭에서는 host_permission이
   // 없어 `tab.url`이 undefined로 오는데, 그 경우도 새 탭 경로라 동작이 옳다.
   // tabs.update/tabs.create 모두 "tabs" 권한을 요구하지 않는다.
+  //
+  // Fix round, Minor #4 — every failure path (tabs.query rejecting, or
+  // tabs.update rejecting because the tab closed between query and update)
+  // falls back to tabs.create rather than leaving the click silently inert,
+  // and setView('video') runs on every path: the user asked to leave the
+  // library either way.
   const openVideo = (videoId: string) => {
     const url = `https://www.youtube.com/watch?v=${videoId}`;
-    void chrome.tabs.query({ active: true, currentWindow: true }).then(([tab]) => {
-      if (tab?.id !== undefined && isYoutubeUrl(tab.url)) {
-        void chrome.tabs.update(tab.id, { url });
-      } else {
-        void chrome.tabs.create({ url });
-      }
-      setView('video');
-    });
+    void chrome.tabs
+      .query({ active: true, currentWindow: true })
+      .then(([tab]) => {
+        if (tab?.id !== undefined && isYoutubeUrl(tab.url)) {
+          return chrome.tabs.update(tab.id, { url }).catch(() => chrome.tabs.create({ url }));
+        }
+        return chrome.tabs.create({ url });
+      })
+      .catch(() => chrome.tabs.create({ url }))
+      .finally(() => setView('video'));
   };
 
   // The panel is long-lived (unlike the popup this logic was originally
