@@ -603,44 +603,58 @@ export async function handle<T extends AppMessage['type']>(
       // redelivered to the sender; there is no state to update on receipt.
       return { ok: true } as AppResponseMap[T];
     case 'GET_LIBRARY': {
-      // 목록의 기준 스토어는 `translations`다. `videos`를 기준으로 삼으면 안 된다 —
-      // 그 스토어는 watch 페이지를 방문하기만 해도 VIDEO_DETECTED 핸들러가
-      // 채우므로, 번역한 적 없는 영상이 목록에 섞인다. `videos`는 제목·썸네일을
-      // 붙이기 위해 조인만 한다.
-      const [digests, videos, summaries] = await Promise.all([
-        listTranslationDigests(),
-        getAllVideos(),
-        getAllSummaries(),
-      ]);
-      const metaById = new Map(videos.map((meta) => [meta.videoId, meta]));
-      const summaryById = new Map(summaries.map((summary) => [summary.videoId, summary]));
+      // Fix round, Important #2 — a read failure (DB open failure, a blocked
+      // version-change, a cursor error) must not resolve as an empty list:
+      // that reads to the panel as "you have nothing saved" when the truth is
+      // "we could not ask". Caught locally (not left to the outer
+      // onMessage/errorResponseFor wrapper) so this resolves with the same
+      // `{ ok: false, error }` shape every caller — including a direct
+      // `handle()` call, as the tests do — can observe.
+      try {
+        // 목록의 기준 스토어는 `translations`다. `videos`를 기준으로 삼으면 안 된다 —
+        // 그 스토어는 watch 페이지를 방문하기만 해도 VIDEO_DETECTED 핸들러가
+        // 채우므로, 번역한 적 없는 영상이 목록에 섞인다. `videos`는 제목·썸네일을
+        // 붙이기 위해 조인만 한다.
+        const [digests, videos, summaries] = await Promise.all([
+          listTranslationDigests(),
+          getAllVideos(),
+          getAllSummaries(),
+        ]);
+        const metaById = new Map(videos.map((meta) => [meta.videoId, meta]));
+        const summaryById = new Map(summaries.map((summary) => [summary.videoId, summary]));
 
-      const entries: LibraryEntry[] = digests.map((digest) => {
-        const meta = metaById.get(digest.videoId);
-        const summary = summaryById.get(digest.videoId);
+        const entries: LibraryEntry[] = digests.map((digest) => {
+          const meta = metaById.get(digest.videoId);
+          const summary = summaryById.get(digest.videoId);
+          return {
+            videoId: digest.videoId,
+            // 메타가 없어도 행을 빠뜨리지 않는다 — videoId가 제목 자리를 대신한다.
+            title: meta?.title ?? digest.videoId,
+            channelName: meta?.channelName ?? null,
+            thumbnailUrl: meta?.thumbnailUrl ?? thumbnailUrlFor(digest.videoId),
+            durationSeconds: meta?.durationSeconds ?? null,
+            status: digest.status,
+            targetLang: digest.targetLang,
+            segmentCount: digest.segmentCount,
+            keywords: summary?.keywords ?? [],
+            hasSummary: summary !== undefined,
+            updatedAt: digest.updatedAt,
+            // 두 맵 모두 이미 이 파일의 단일 진실이다 — 새 상태를 만들지 않는다.
+            inFlight:
+              inFlightTranslations.has(digest.videoId) || inFlightSummaries.has(digest.videoId),
+          };
+        });
+
+        entries.sort(
+          (a, b) => b.updatedAt.localeCompare(a.updatedAt) || a.videoId.localeCompare(b.videoId),
+        );
+        return { ok: true, entries } as AppResponseMap[T];
+      } catch (err) {
         return {
-          videoId: digest.videoId,
-          // 메타가 없어도 행을 빠뜨리지 않는다 — videoId가 제목 자리를 대신한다.
-          title: meta?.title ?? digest.videoId,
-          channelName: meta?.channelName ?? null,
-          thumbnailUrl: meta?.thumbnailUrl ?? thumbnailUrlFor(digest.videoId),
-          durationSeconds: meta?.durationSeconds ?? null,
-          status: digest.status,
-          targetLang: digest.targetLang,
-          segmentCount: digest.segmentCount,
-          keywords: summary?.keywords ?? [],
-          hasSummary: summary !== undefined,
-          updatedAt: digest.updatedAt,
-          // 두 맵 모두 이미 이 파일의 단일 진실이다 — 새 상태를 만들지 않는다.
-          inFlight:
-            inFlightTranslations.has(digest.videoId) || inFlightSummaries.has(digest.videoId),
-        };
-      });
-
-      entries.sort(
-        (a, b) => b.updatedAt.localeCompare(a.updatedAt) || a.videoId.localeCompare(b.videoId),
-      );
-      return entries as AppResponseMap[T];
+          ok: false,
+          error: err instanceof Error ? err.message : String(err),
+        } as AppResponseMap[T];
+      }
     }
     case 'DELETE_LIBRARY_ENTRY': {
       const { payload } = msg as Extract<AppMessage, { type: 'DELETE_LIBRARY_ENTRY' }>;
@@ -691,7 +705,7 @@ function errorResponseFor(msg: AppMessage, err: unknown): AppResponseMap[AppMess
     case 'SUMMARY_REFRESHED':
       return { ok: true };
     case 'GET_LIBRARY':
-      return [];
+      return { ok: false, error: message };
     case 'DELETE_LIBRARY_ENTRY':
       return { ok: false, error: message };
   }
