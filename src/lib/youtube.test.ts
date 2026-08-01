@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { classifyYoutubeUrl, isYoutubeWatchUrl, parseVideoId } from './youtube';
+import { classifyYoutubeUrl, isYoutubeWatchUrl, parseVideoId, thumbnailUrlFor } from './youtube';
 
 describe('isYoutubeWatchUrl', () => {
   it('returns false for undefined (unreadable url, e.g. no host permission)', () => {
@@ -119,5 +119,13 @@ describe('classifyYoutubeUrl', () => {
 
   it('classifies undefined as other', () => {
     expect(classifyYoutubeUrl(undefined)).toBe('other');
+  });
+});
+
+describe('thumbnailUrlFor', () => {
+  it('builds the hqdefault URL from a video id', () => {
+    expect(thumbnailUrlFor('zjkBMFhNj_g')).toBe(
+      'https://i.ytimg.com/vi/zjkBMFhNj_g/hqdefault.jpg',
+    );
   });
 });
