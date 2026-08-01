@@ -2,6 +2,7 @@ import type { ExtractedVideoMeta } from '~/lib/video-meta';
 import type { TranslationRecord } from '~/types/transcript';
 import type { VideoSummary } from './summary';
 import type { VideoMeta } from './video';
+import type { LibraryEntry } from './library';
 
 export type ApiKeyStatus =
   | { present: false }
@@ -104,7 +105,18 @@ export type AppMessage =
   // see the design doc's final-review correction), so it refetches
   // `GET_SUMMARY` on receipt for a matching videoId. No listener (panel
   // closed, or open on a different video) is the common case, not an error.
-  | { type: 'SUMMARY_REFRESHED'; payload: { videoId: string } };
+  | { type: 'SUMMARY_REFRESHED'; payload: { videoId: string } }
+  // panel -> background: 라이브러리 목록(spec 2026-08-01). 세 스토어를 조인한
+  // 경량 투영만 돌려준다 — `TranslationRecord`를 그대로 보내면 영상 100편에 약
+  // 18 MB가 구조화 복제를 통과한다(실측: 완료 레코드가 자막 구간당 약 594 B).
+  // payload가 없는 이유: 라이브러리는 언제나 전체 목록이고, 검색은 패널이
+  // 메모리에서 한다(대상이 수십 건이라 인덱스가 필요 없다).
+  | { type: 'GET_LIBRARY' }
+  // panel -> background: 한 영상의 번역과 요약을 지운다(`videos`의 메타는 남는다,
+  // spec §7.1). 진행 중인 잡이 있으면 거부한다 — 번역 도중 레코드를 지우면 다음
+  // `upsertBatch`가 레코드 부재를 보고 트랜잭션을 abort시켜(src/lib/db.ts:154)
+  // 파이프라인이 사용자에게 이유 없는 에러로 죽는다.
+  | { type: 'DELETE_LIBRARY_ENTRY'; payload: { videoId: string } };
 
 export type AppResponseMap = {
   SAVE_API_KEY: { ok: true; status: ApiKeyStatus } | { ok: false; error: string };
@@ -155,6 +167,12 @@ export type AppResponseMap = {
   // via translationErrorDisplay. A missing key is exactly 'API key not set'.
   GENERATE_SUMMARY: { ok: true; summary: VideoSummary } | { ok: false; error: string };
   SUMMARY_REFRESHED: { ok: true };
+  // `updatedAt` 내림차순, 동률이면 `videoId` 오름차순 — 결정적 순서라 테스트가
+  // 순서를 단언할 수 있다.
+  GET_LIBRARY: LibraryEntry[];
+  // `error`는 다른 핸들러들과 같은 규약: 원문 영어 사유를 돌려주고 한국어 문구는
+  // 패널이 만든다. 진행 중 거부는 정확히 `'job in flight'`다.
+  DELETE_LIBRARY_ENTRY: { ok: true } | { ok: false; error: string };
 };
 
 export type AppResponse<T extends AppMessage['type']> = AppResponseMap[T];
