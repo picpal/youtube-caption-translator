@@ -11,6 +11,12 @@ import {
   matchedKeywords,
 } from './library';
 
+// 자정 근처 값은 실행 머신의 시간대에 따라 날짜가 하루 밀린다. 정오를 기준으로
+// 만들면 어떤 시간대에서 읽어도 같은 날짜로 되돌아온다 — 표시 동작(사용자의
+// 시간대 기준 날짜)은 그대로 두고 테스트만 결정적으로 만든다.
+const localIso = (year: number, month: number, day: number): string =>
+  new Date(year, month - 1, day, 12, 0, 0).toISOString();
+
 function makeEntry(overrides: Partial<LibraryEntry> = {}): LibraryEntry {
   return {
     videoId: 'abc123',
@@ -23,7 +29,7 @@ function makeEntry(overrides: Partial<LibraryEntry> = {}): LibraryEntry {
     segmentCount: 142,
     keywords: ['transformer', 'attention'],
     hasSummary: true,
-    updatedAt: '2026-07-29T04:05:06.000Z',
+    updatedAt: localIso(2026, 7, 29),
     inFlight: false,
     ...overrides,
   };
@@ -110,10 +116,10 @@ describe('entryBadge', () => {
 });
 
 describe('formatEntryMeta', () => {
-  const now = new Date('2026-08-01T00:00:00.000Z');
+  const now = new Date(2026, 7, 1); // 2026-08-01, local
 
   it('joins channel, duration, language and date', () => {
-    const entry = makeEntry({ channelName: '어떤채널', durationSeconds: 1334, updatedAt: '2026-07-29T04:05:06.000Z' });
+    const entry = makeEntry({ channelName: '어떤채널', durationSeconds: 1334, updatedAt: localIso(2026, 7, 29) });
     expect(formatEntryMeta(entry, now)).toBe('어떤채널 · 22:14 · 한국어 · 7월 29일');
   });
 
@@ -129,7 +135,7 @@ describe('formatEntryMeta', () => {
   });
 
   it('spells out the year for an entry from another year', () => {
-    const entry = makeEntry({ updatedAt: '2025-12-31T04:00:00.000Z' });
+    const entry = makeEntry({ updatedAt: localIso(2025, 12, 31) });
     expect(formatEntryMeta(entry, now)).toContain('2025년 12월 31일');
   });
 
@@ -161,6 +167,25 @@ describe('formatStorageLine', () => {
 
   it('falls back to the count alone when the estimate has no numbers', () => {
     expect(formatStorageLine(12, {})).toBe('영상 12편');
+  });
+
+  // 1048575 = 1024*1024 - 1, 1073741823 = 1024**3 - 1: 반올림하면 다음 단위로
+  // 넘어가야 하는 값들. 단위를 원시 바이트로 고르면 "1024 KB"/"1024.0 MB"로
+  // 잘못 굳는다(리뷰에서 발견) — 이 경계에서만 표시값 기준 선택이 검증된다.
+  it('rolls a value just under 1 MiB up to 1.0 MB, not 1024 KB', () => {
+    expect(formatStorageLine(12, { usage: 1048575, quota: 1048575 })).toBe(
+      '영상 12편 · 1.0 MB / 1.0 MB',
+    );
+  });
+
+  it('rolls a value just under 1 GiB up to 1.0 GB, not 1024.0 MB', () => {
+    expect(formatStorageLine(12, { usage: 1073741823, quota: 1073741823 })).toBe(
+      '영상 12편 · 1.0 GB / 1.0 GB',
+    );
+  });
+
+  it('floors a small usage value at 1 KB, never 0 KB', () => {
+    expect(formatStorageLine(12, { usage: 500, quota: 500 })).toBe('영상 12편 · 1 KB / 1 KB');
   });
 });
 
