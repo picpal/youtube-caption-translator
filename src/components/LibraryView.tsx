@@ -69,6 +69,8 @@ export function LibraryView({ onOpenVideo }: { onOpenVideo: (videoId: string) =>
       <div className="mx-auto flex max-w-sm flex-col items-center gap-3 px-6 pt-10 text-center">
         <p className="text-sm text-neutral-700 dark:text-neutral-300">목록을 불러오지 못했어요</p>
         <Button
+          variant="secondary"
+          size="sm"
           onClick={() => {
             setEntries(null);
             setLoadFailed(false);
