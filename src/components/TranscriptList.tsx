@@ -186,11 +186,17 @@ export function TranscriptList({
                   onContextMenu: (e: React.MouseEvent) => {
                     e.preventDefault();
                     const selection = window.getSelection();
-                    // 선택이 이 행 안에 있을 때만 조각 후보로 본다 — 다른 행에서
-                    // 드래그해 둔 선택이 이 행의 메뉴에 딸려 오면 안 된다.
-                    const node = selection?.anchorNode ?? null;
-                    const withinRow =
-                      node !== null && rowRefs.current[i]?.contains(node) === true;
+                    // 선택이 이 행과 조금이라도 겹칠 때만 조각 후보로 본다 — 다른
+                    // 행에서만 드래그해 둔 선택이 이 행의 메뉴에 딸려 오면 안
+                    // 된다. finding D2 — `anchorNode`만 보면 드래그 방향에 따라
+                    // 결과가 갈렸다: 행 2→4로 드래그하면 anchor는 행 2에 있어
+                    // 행 4를 우클릭했을 때(마우스를 놓은, 가장 자연스러운 위치)는
+                    // "선택한 부분만 기억하기"가 아예 안 떴다. `containsNode`는
+                    // 방향과 무관하게 선택 Range와 이 행이 겹치는지를 직접 보므로
+                    // 어느 쪽 끝을 우클릭해도(그 사이 어느 행을 우클릭해도) 같게
+                    // 동작한다.
+                    const rowEl = rowRefs.current[i];
+                    const withinRow = rowEl !== null && (selection?.containsNode(rowEl, true) ?? false);
                     // finding I2/C2 — 닫힐 때 포커스를 돌려받을 대상은 항상
                     // "지금 우클릭한 이 행"이어야 한다. `document.activeElement`를
                     // 무조건 우선하면, 행 5를 포커스한 채로 스크롤해 행 40을
