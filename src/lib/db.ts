@@ -418,9 +418,21 @@ async function mutateBookmarks(
 
 // 같은 bookmarkId를 두 번 넣지 않는다 — 메시지가 재전달돼도 목록이 불어나지
 // 않게 하는 멱등성이다.
+//
+// finding I1 — bookmarkId만 보는 것으로는 부족하다. ☆ 연타는 두 번째 클릭이
+// 첫 응답(메시지 왕복 + 서비스워커 기상)을 받기 전에 나갈 수 있고, 그때 둘 다
+// "아직 저장 안 됨"으로 보여 서로 다른 bookmarkId로 ADD_BOOKMARK를 두 번
+// 보낸다. 그래서 kind:'row' + 같은 segmentId도 같은 북마크로 흡수한다 — 이미
+// 저장된 행을 다시 저장하는 것은 재전달이든 연타든 결과가 같아야 한다.
+// excerpt는 흡수하지 않는다: 한 행에서 조각을 여러 개 저장하는 것은 정상이라
+// segmentId가 같다는 것만으로 중복이라 볼 수 없다(spec §6.2).
 export function addBookmark(videoId: string, bookmark: Bookmark): Promise<Bookmark[]> {
   return mutateBookmarks(videoId, (current) =>
-    current.some((existing) => existing.bookmarkId === bookmark.bookmarkId)
+    current.some(
+      (existing) =>
+        existing.bookmarkId === bookmark.bookmarkId ||
+        (bookmark.kind === 'row' && existing.kind === 'row' && existing.segmentId === bookmark.segmentId),
+    )
       ? current
       : [...current, bookmark],
   );

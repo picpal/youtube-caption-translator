@@ -536,6 +536,38 @@ describe('bookmarks', () => {
     expect(await addBookmark('zjkBMFhNj_g', bookmark)).toEqual([bookmark]);
   });
 
+  it('absorbs a second row bookmark for the same segmentId even with a different bookmarkId', async () => {
+    const first = makeBookmark();
+    await addBookmark('zjkBMFhNj_g', first);
+    // 연타 클릭 — 두 번째 클릭이 첫 응답을 받기 전에 나가면 각자 자기만의
+    // crypto.randomUUID()로 ADD_BOOKMARK를 보낸다. bookmarkId만 보는 멱등성
+    // 가드로는 이 케이스를 걸러내지 못하므로, kind:'row' + 같은 segmentId도
+    // 흡수해야 한다(finding I1).
+    const rapidSecond = makeBookmark({ bookmarkId: 'bm-2' });
+    expect(await addBookmark('zjkBMFhNj_g', rapidSecond)).toEqual([first]);
+  });
+
+  it('does not dedupe excerpt bookmarks from the same row', async () => {
+    const excerptA = makeBookmark({
+      bookmarkId: 'bm-x1',
+      kind: 'excerpt',
+      excerpt: 'the key thing is the softmax',
+      sourceText: undefined,
+      translatedText: undefined,
+    } as Partial<Bookmark>);
+    const excerptB = makeBookmark({
+      bookmarkId: 'bm-x2',
+      kind: 'excerpt',
+      excerpt: 'a second phrase from the same row',
+      sourceText: undefined,
+      translatedText: undefined,
+    } as Partial<Bookmark>);
+    await addBookmark('zjkBMFhNj_g', excerptA);
+    // 발췌는 같은 행에서 여러 개를 저장하는 것이 정상이라(spec §6.2) 중복
+    // 판정을 하지 않는다.
+    expect(await addBookmark('zjkBMFhNj_g', excerptB)).toHaveLength(2);
+  });
+
   it('keeps each video s bookmarks separate', async () => {
     await addBookmark('video-a', makeBookmark({ bookmarkId: 'a-1' }));
     await addBookmark('video-b', makeBookmark({ bookmarkId: 'b-1' }));
@@ -560,7 +592,9 @@ describe('bookmarks', () => {
 
   it('deletes by bookmarkId and returns the rest', async () => {
     const first = makeBookmark();
-    const second = makeBookmark({ bookmarkId: 'bm-2' });
+    // 다른 segmentId — 같은 행 두 번 저장은 이제 흡수되므로(finding I1), 삭제
+    // 대상이 실제로 남는지 보려면 서로 다른 행이어야 한다.
+    const second = makeBookmark({ bookmarkId: 'bm-2', segmentId: 'zjkBMFhNj_g:7', startSec: 70 });
     await addBookmark('zjkBMFhNj_g', first);
     await addBookmark('zjkBMFhNj_g', second);
 

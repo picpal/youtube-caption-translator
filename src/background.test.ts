@@ -1490,7 +1490,9 @@ describe('bookmark messages', () => {
 
   it('DELETE_BOOKMARK removes one and returns the rest', async () => {
     const first = testBookmark();
-    const second = testBookmark({ bookmarkId: 'bm-2', startSec: 90 });
+    // 다른 segmentId — 같은 행을 두 번 저장하는 요청은 이제 흡수되므로
+    // (finding I1), 삭제 대상이 실제로 남는지 보려면 서로 다른 행이어야 한다.
+    const second = testBookmark({ bookmarkId: 'bm-2', segmentId: 'vid:7', startSec: 90 });
     await handle({ type: 'ADD_BOOKMARK', payload: { videoId: 'vid', bookmark: first } });
     await handle({ type: 'ADD_BOOKMARK', payload: { videoId: 'vid', bookmark: second } });
 
