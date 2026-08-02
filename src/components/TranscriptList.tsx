@@ -122,6 +122,11 @@ export function TranscriptList({
     x: number;
     y: number;
     selectionText: string | null;
+    /** finding I2 — 메뉴가 닫힐 때 포커스를 돌려받을 요소. 우클릭 시점의
+     * `document.activeElement`(키보드로 연 경우 이미 이 행의 시크 div)를
+     * 우선하고, 마우스 우클릭처럼 포커스를 옮기지 않아 `<body>`가 남아 있는
+     * 흔한 경우엔 이 행의 시크 div로 대신한다. */
+    restoreFocusTo: HTMLElement | null;
   } | null>(null);
 
   // Capture-phase document listener: the actual scroll container is the
@@ -186,6 +191,15 @@ export function TranscriptList({
                     const node = selection?.anchorNode ?? null;
                     const withinRow =
                       node !== null && rowRefs.current[i]?.contains(node) === true;
+                    // finding I2 — 마우스 우클릭은 보통 포커스를 옮기지 않아
+                    // `document.activeElement`가 `<body>`로 남는다. 그럴 땐
+                    // 이 행의 시크 div(role="button")로 대신한다. Shift+F10 같은
+                    // 키보드 경로는 이미 그 div가 activeElement이므로 그대로 쓴다.
+                    const active = document.activeElement;
+                    const restoreFocusTo =
+                      active instanceof HTMLElement && active !== document.body
+                        ? active
+                        : (rowRefs.current[i]?.querySelector<HTMLElement>('[role="button"]') ?? null);
                     setMenu({
                       segmentId: segment.segmentId,
                       x: e.clientX,
@@ -193,6 +207,7 @@ export function TranscriptList({
                       selectionText: withinRow
                         ? normalizeSelection(selection?.toString())
                         : null,
+                      restoreFocusTo,
                     });
                   },
                 }
@@ -226,7 +241,14 @@ export function TranscriptList({
               <button
                 type="button"
                 onClick={(e) => {
-                  // 이 클릭이 위로 새면 행의 시크가 함께 발동한다.
+                  // finding I3 — ☆는 시크 div의 형제이지 자식이 아니므로(§3.2의
+                  // 3분할), 이 클릭이 새더라도 닿는 곳은 onClick이 없는
+                  // wrapper뿐이라 지금은 이 stopPropagation이 실질적으로 아무
+                  // 것도 막지 않는다. 시크가 같이 발동하지 않는 진짜 이유는 그
+                  // DOM 분리 자체다. 그래도 남겨두는 건 wrapper에 나중에
+                  // onClick이 붙거나 document 레벨 클릭 리스너가 생겼을 때를
+                  // 대비한 보험이라 — 없애도 지금 당장 깨지는 건 없지만, 있어도
+                  // 비용이 없다.
                   e.stopPropagation();
                   onToggleRow(segment);
                 }}
@@ -279,6 +301,7 @@ export function TranscriptList({
             setMenu(null);
           }}
           onClose={() => setMenu(null)}
+          restoreFocusTo={menu.restoreFocusTo}
         />
       )}
     </div>
