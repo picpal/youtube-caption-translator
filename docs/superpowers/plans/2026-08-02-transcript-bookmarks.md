@@ -926,10 +926,23 @@ import type { Bookmark } from '~/types/bookmark';
     }
 ```
 
-> `GET_LIBRARY`처럼 내부 try/catch를 두지 않는다. 여기서는 바깥
-> `onMessage`/`errorResponseFor` 래퍼가 이미 `{ ok: false, error }`라는 **같은
-> 모양**으로 접어 주기 때문이다 — `GET_LIBRARY`가 로컬 catch를 둔 이유는 그 응답이
-> `{ ok: true, entries }`라서 폴백 모양이 달라서였다.
+> **정정 (Task 3 리뷰, 2026-08-02).** 이 자리에 원래 "로컬 try/catch를 두지 않는다 —
+> `GET_LIBRARY`가 로컬 catch를 둔 건 성공 응답이 `{ ok: true, entries }`라 폴백
+> 모양이 달라서다"라고 적혀 있었는데, **틀린 근거였다.** `errorResponseFor`는
+> `GET_LIBRARY`에도 `{ ok: false, error }`를 돌려주므로 모양은 애초에 같다.
+> `GET_LIBRARY`가 로컬 catch를 둔 진짜 이유는 그 함수의 주석이 직접 말한다
+> (`background.ts:606-613`): **"직접 `handle()` 호출 — 테스트가 하는 것 — 도 같은
+> `{ ok: false, error }` 형태를 관찰할 수 있도록."**
+>
+> 따라서 `GET_BOOKMARKS`에는 `GET_LIBRARY`와 같은 로컬 try/catch를 **둔다.**
+> Step 1의 실패 테스트가 `handle()`을 직접 await하므로, 로컬 catch가 없으면
+> 거부가 그대로 던져져 `{ ok: false }`로 resolve되지 않는다. 프로덕션에서는
+> 바깥 래퍼(`background.ts:286-296`)가 같은 일을 하므로 두 방식이 동등하고,
+> 차이는 오직 직접 호출 경로에서만 드러난다.
+>
+> 쓰기 둘(`ADD_BOOKMARK`/`DELETE_BOOKMARK`)에는 두지 않는다 —
+> `DELETE_LIBRARY_ENTRY`와 같은 자리다(실패 경로 테스트가 없는 쓰기). 이 비대칭은
+> 이 파일에 이미 존재하던 것이고, 새로 만드는 것이 아니다.
 
 - [ ] **Step 5: errorResponseFor를 exhaustive하게 유지한다**
 
