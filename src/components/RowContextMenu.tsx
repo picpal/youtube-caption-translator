@@ -58,8 +58,14 @@ export function RowContextMenu({
     // 언마운트(=닫힘) 시 트리거로 포커스를 되돌린다 — 위 restoreFocusToRef 주석
     // 참고. 키보드로 메뉴를 연 사용자가 Escape를 누르면 다음 Tab이 문서 맨
     // 위가 아니라 우클릭했던 그 행에서 이어져야 한다.
+    //
+    // finding C3 — `preventScroll: true` 없이 `.focus()`만 부르면 브라우저가
+    // 그 요소를 뷰포트로 스크롤한다. 복귀 대상이 스크롤 컨테이너 안의 행이라,
+    // 휠 스크롤로 메뉴를 멀리 치웠다가(→ I4의 스크롤 리스너가 onClose를
+    // 부른다) 이 복귀가 그 스크롤을 도로 되돌리는 역효과가 난다. 여기서
+    // 필요한 건 포커스 복귀뿐이고 뷰포트를 움직이는 건 부작용이다.
     return () => {
-      restoreFocusToRef.current?.focus();
+      restoreFocusToRef.current?.focus({ preventScroll: true });
     };
   }, []);
 

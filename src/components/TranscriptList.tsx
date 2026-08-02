@@ -122,10 +122,10 @@ export function TranscriptList({
     x: number;
     y: number;
     selectionText: string | null;
-    /** finding I2 — 메뉴가 닫힐 때 포커스를 돌려받을 요소. 우클릭 시점의
-     * `document.activeElement`(키보드로 연 경우 이미 이 행의 시크 div)를
-     * 우선하고, 마우스 우클릭처럼 포커스를 옮기지 않아 `<body>`가 남아 있는
-     * 흔한 경우엔 이 행의 시크 div로 대신한다. */
+    /** finding I2/C2 — 메뉴가 닫힐 때 포커스를 돌려받을 요소. 항상 "지금
+     * 우클릭한 이 행" 안에서만 고른다 — `document.activeElement`가 이 행
+     * 밖에 있으면(다른 행을 포커스한 채 스크롤 후 우클릭한 경우 등) 그 값을
+     * 쓰지 않고 이 행의 시크 div로 대신한다. */
     restoreFocusTo: HTMLElement | null;
   } | null>(null);
 
@@ -191,13 +191,19 @@ export function TranscriptList({
                     const node = selection?.anchorNode ?? null;
                     const withinRow =
                       node !== null && rowRefs.current[i]?.contains(node) === true;
-                    // finding I2 — 마우스 우클릭은 보통 포커스를 옮기지 않아
-                    // `document.activeElement`가 `<body>`로 남는다. 그럴 땐
-                    // 이 행의 시크 div(role="button")로 대신한다. Shift+F10 같은
-                    // 키보드 경로는 이미 그 div가 activeElement이므로 그대로 쓴다.
+                    // finding I2/C2 — 닫힐 때 포커스를 돌려받을 대상은 항상
+                    // "지금 우클릭한 이 행"이어야 한다. `document.activeElement`를
+                    // 무조건 우선하면, 행 5를 포커스한 채로 스크롤해 행 40을
+                    // 우클릭했을 때 엉뚱하게 행 5로 복귀한다(행 5의 시크 div가
+                    // 여전히 activeElement이므로). 그래서 위 `withinRow`와 같은
+                    // containment 판정으로 activeElement가 "이 행 안"일 때만
+                    // 쓴다 — Shift+F10 같은 키보드 경로는 이미 그 조건을
+                    // 만족하므로 그대로 activeElement가 쓰인다. 마우스 우클릭처럼
+                    // activeElement가 이 행 밖(대개 `<body>`)에 남는 흔한
+                    // 경우엔 이 행의 시크 div(role="button")로 대신한다.
                     const active = document.activeElement;
                     const restoreFocusTo =
-                      active instanceof HTMLElement && active !== document.body
+                      active instanceof HTMLElement && rowRefs.current[i]?.contains(active) === true
                         ? active
                         : (rowRefs.current[i]?.querySelector<HTMLElement>('[role="button"]') ?? null);
                     setMenu({
