@@ -8,7 +8,7 @@ import type { DisplayMode } from '~/components/TranscriptList';
 const DISPLAY_MODE_KEY = 'panelDisplayMode';
 const LAST_TAB_KEY = 'panelLastTab';
 
-export type PanelTab = 'transcript' | 'summary';
+export type PanelTab = 'transcript' | 'summary' | 'notes';
 
 export interface PanelPrefs {
   displayMode: DisplayMode;
@@ -18,7 +18,7 @@ export interface PanelPrefs {
 export const DEFAULT_PANEL_PREFS: PanelPrefs = { displayMode: 'both', lastTab: 'transcript' };
 
 const DISPLAY_MODES: readonly DisplayMode[] = ['both', 'ko'];
-const PANEL_TABS: readonly PanelTab[] = ['transcript', 'summary'];
+const PANEL_TABS: readonly PanelTab[] = ['transcript', 'summary', 'notes'];
 
 // Per-field fallback: a corrupt/legacy value in one key must not take the
 // other key's valid value down with it.

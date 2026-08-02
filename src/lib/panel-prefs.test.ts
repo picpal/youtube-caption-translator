@@ -64,6 +64,11 @@ describe('loadPanelPrefs', () => {
     store.panelLastTab = 'summary';
     expect(await loadPanelPrefs()).toEqual({ displayMode: 'both', lastTab: 'summary' });
   });
+
+  it('accepts notes as a stored tab', async () => {
+    store.panelLastTab = 'notes';
+    expect((await loadPanelPrefs()).lastTab).toBe('notes');
+  });
 });
 
 describe('save functions', () => {
@@ -94,5 +99,10 @@ describe('save functions', () => {
     await savePanelDisplayMode('ko');
     await savePanelLastTab('summary');
     expect(await loadPanelPrefs()).toEqual({ displayMode: 'ko', lastTab: 'summary' });
+  });
+
+  it('round-trips notes through storage', async () => {
+    await savePanelLastTab('notes');
+    expect((await loadPanelPrefs()).lastTab).toBe('notes');
   });
 });
