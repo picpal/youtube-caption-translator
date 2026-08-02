@@ -55,7 +55,7 @@
 | `entrypoints/background.ts` | 수정 — 핸들러 3개 + `errorResponseFor` 3분기 | 3 |
 | `src/background.test.ts` | 수정 | 3 |
 | `src/features/bookmarks/useBookmarks.ts` | 신규 — 조회/추가/삭제 훅 | 4 |
-| `src/components/TranscriptList.tsx` | 수정 — 행 3분할, ☆ 버튼, `visibleTexts` 인자 확장 | 4, 5, 6 |
+| `src/components/TranscriptList.tsx` | 수정 — 행 3분할, ☆ 버튼, `SegmentTexts` 추출·export, `visibleTexts` 인자 확장 | 4, 5, 6 |
 | `src/components/RowContextMenu.tsx` | 신규 — 우클릭 메뉴 | 5 |
 | `src/components/NotesPanel.tsx` | 신규 — Notes 탭 본문 | 6 |
 | `src/lib/panel-prefs.ts` | 수정 — `PanelTab`에 `'notes'` | 7 |
@@ -1175,24 +1175,7 @@ export function TranscriptList({
                 {formatTimestamp(segment.startSec)}
               </span>
               <div className="flex min-w-0 flex-col gap-1">
-                {texts.kind === 'dual' ? (
-                  <>
-                    <span className="text-xs leading-relaxed text-neutral-500 dark:text-neutral-400">
-                      {texts.secondaryText}
-                    </span>
-                    <span className="text-[13px] leading-relaxed text-neutral-900 dark:text-neutral-100">
-                      {texts.primaryText}
-                    </span>
-                  </>
-                ) : texts.kind === 'secondary-only' ? (
-                  <span className="text-xs leading-relaxed text-neutral-500 dark:text-neutral-400">
-                    {texts.text}
-                  </span>
-                ) : (
-                  <span className="text-[13px] leading-relaxed text-neutral-900 dark:text-neutral-100">
-                    {texts.text}
-                  </span>
-                )}
+                <SegmentTexts texts={texts} />
               </div>
             </div>
 
@@ -1222,9 +1205,42 @@ export function TranscriptList({
         );
 ```
 
-파일 끝에 아이콘을 더한다:
+파일 끝에 텍스트 렌더와 아이콘을 더한다. `SegmentTexts`는 **export한다** — Task 6의
+`NotesPanel`이 같은 컴포넌트를 쓴다. 세 분기의 마크업이 두 화면에 각자 복제되면
+타이포그래피가 조용히 갈라지고, `visibleTexts`를 공유하는 이유가 반쯤 무의미해진다.
 
 ```tsx
+/**
+ * `visibleTexts`의 세 결과를 그리는 유일한 자리. Transcript 행과 Notes 행이 이
+ * 컴포넌트를 공유하므로 두 화면의 타이포그래피는 구조적으로 갈라질 수 없다.
+ */
+export function SegmentTexts({ texts }: { texts: VisibleTexts }) {
+  if (texts.kind === 'dual') {
+    return (
+      <>
+        <span className="text-xs leading-relaxed text-neutral-500 dark:text-neutral-400">
+          {texts.secondaryText}
+        </span>
+        <span className="text-[13px] leading-relaxed text-neutral-900 dark:text-neutral-100">
+          {texts.primaryText}
+        </span>
+      </>
+    );
+  }
+  if (texts.kind === 'secondary-only') {
+    return (
+      <span className="text-xs leading-relaxed text-neutral-500 dark:text-neutral-400">
+        {texts.text}
+      </span>
+    );
+  }
+  return (
+    <span className="text-[13px] leading-relaxed text-neutral-900 dark:text-neutral-100">
+      {texts.text}
+    </span>
+  );
+}
+
 /** `LibraryView`의 `TrashIcon`과 같은 방식의 인라인 SVG — 아이콘 라이브러리를 추가하지 않는다. */
 function StarIcon({ filled }: { filled: boolean }) {
   return (
@@ -1540,7 +1556,7 @@ export function visibleTexts(
 
 ```tsx
 import { Button } from '~/components/Button';
-import { visibleTexts, type DisplayMode } from '~/components/TranscriptList';
+import { SegmentTexts, visibleTexts, type DisplayMode } from '~/components/TranscriptList';
 import { formatTimestamp } from '~/lib/transcript-parse';
 import type { Bookmark } from '~/types/bookmark';
 
@@ -1631,33 +1647,9 @@ function BookmarkTexts({ bookmark, displayMode }: { bookmark: Bookmark; displayM
     );
   }
 
-  // Transcript의 행과 똑같은 규칙으로 displayMode를 존중한다 — 같은 함수를 쓰므로
-  // 두 화면이 어긋날 수 없다.
-  const texts = visibleTexts(bookmark, displayMode);
-  if (texts.kind === 'dual') {
-    return (
-      <>
-        <span className="text-xs leading-relaxed text-neutral-500 dark:text-neutral-400">
-          {texts.secondaryText}
-        </span>
-        <span className="text-[13px] leading-relaxed text-neutral-900 dark:text-neutral-100">
-          {texts.primaryText}
-        </span>
-      </>
-    );
-  }
-  if (texts.kind === 'secondary-only') {
-    return (
-      <span className="text-xs leading-relaxed text-neutral-500 dark:text-neutral-400">
-        {texts.text}
-      </span>
-    );
-  }
-  return (
-    <span className="text-[13px] leading-relaxed text-neutral-900 dark:text-neutral-100">
-      {texts.text}
-    </span>
-  );
+  // Transcript의 행과 똑같은 규칙으로 displayMode를 존중한다 — 판단(visibleTexts)도
+  // 마크업(SegmentTexts)도 같은 것을 쓰므로 두 화면이 어긋날 수 없다.
+  return <SegmentTexts texts={visibleTexts(bookmark, displayMode)} />;
 }
 
 /** `LibraryView`의 것과 같은 인라인 SVG. */
