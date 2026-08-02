@@ -33,6 +33,23 @@ export function bookmarkedSegmentIds(bookmarks: readonly Bookmark[]): Set<string
   return ids;
 }
 
+/**
+ * finding C1 — 북마크에 찍힐 `targetLang`은 드롭다운의 지금 설정이 아니라,
+ * 스냅샷될 텍스트가 실제로 번역된 언어여야 한다. 드롭다운을 바꾸고 아직
+ * 다시 생성하지 않은 동안(App.tsx의 번역 언어 불일치 배너가 뜨는 바로 그
+ * 창)에는 이 둘이 갈린다 — 그 순간 ☆를 누르면 예전 언어의 텍스트가 저장되므로
+ * 그 언어로 찍혀야 한다. `record`가 아직 없을 때만(이론상으로만 — 북마크
+ * 진입점 자체가 완료된 번역을 전제한다) 드롭다운 값으로 대체한다. `?? 'ko'`는
+ * 언어 일반화 이전에 저장된 레코드에 `targetLang`이 없는 경우의 기존 관용과
+ * 같다(App.tsx의 배너 조건이 쓰는 것과 동일한 폴백).
+ */
+export function bookmarkTargetLang(
+  record: { targetLang?: TargetLang } | null,
+  dropdownTargetLang: TargetLang,
+): TargetLang {
+  return record !== null ? (record.targetLang ?? 'ko') : dropdownTargetLang;
+}
+
 /** 토글의 해제 쪽이 지울 대상. 조각은 중복 판정을 하지 않으므로 걸리지 않는다. */
 export function findRowBookmark(
   bookmarks: readonly Bookmark[],

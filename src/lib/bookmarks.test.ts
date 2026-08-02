@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   bookmarkedSegmentIds,
+  bookmarkTargetLang,
   createExcerptBookmark,
   createRowBookmark,
   findRowBookmark,
@@ -154,6 +155,23 @@ describe('createExcerptBookmark', () => {
       'zh',
     );
     expect(created.targetLang).toBe('zh');
+  });
+});
+
+describe('bookmarkTargetLang', () => {
+  it('prefers the record s targetLang over the dropdown when a record exists (finding C1)', () => {
+    // 배너 조건(App.tsx의 translationLangMismatch)이 참인 동안, 즉 드롭다운을
+    // 바꿨지만 아직 다시 생성하지 않은 동안이 이 둘이 실제로 갈리는 유일한
+    // 창이다 — 스냅샷될 텍스트는 record의 언어를 따라야 한다.
+    expect(bookmarkTargetLang({ targetLang: 'ja' }, 'ko')).toBe('ja');
+  });
+
+  it('falls back to ko for a record with no targetLang (pre-generalization record)', () => {
+    expect(bookmarkTargetLang({}, 'en')).toBe('ko');
+  });
+
+  it('falls back to the dropdown value when there is no record yet', () => {
+    expect(bookmarkTargetLang(null, 'ja')).toBe('ja');
   });
 });
 

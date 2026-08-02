@@ -19,6 +19,7 @@ import {
 } from '~/features/translation/progress-display';
 import { useTranslation, type TranslationProgressState } from '~/features/translation/useTranslation';
 import { useCurrentVideo } from '~/features/video/useCurrentVideo';
+import { bookmarkTargetLang } from '~/lib/bookmarks';
 import { activeSegmentIndex } from '~/lib/playback-sync';
 import { formatTimestamp } from '~/lib/transcript-parse';
 import { loadPanelPrefs, savePanelDisplayMode, savePanelLastTab, type PanelTab } from '~/lib/panel-prefs';
@@ -512,7 +513,13 @@ function ReadyBody({ scrollContainerRef }: { scrollContainerRef: RefObject<HTMLD
   // spec §8 — `failed` 영상에는 북마크 진입점을 두지 않는다. `showSummaryTab`이
   // 곧 그 게이트다(= showTranscriptList && status === 'done'). 훅 자체는 항상
   // 호출한다 — 조건부 호출은 rules-of-hooks 위반이다.
-  const bookmarks = useBookmarks(videoId, targetLang);
+  //
+  // finding C1 — `targetLang`(드롭다운의 지금 설정)이 아니라 스냅샷될 그
+  // 텍스트가 실제로 번역된 언어를 넘긴다. 판단(`bookmarkTargetLang`)은
+  // src/lib/bookmarks.ts의 순수 함수로 뽑아 단위 테스트로 고정했다 — 재생성
+  // 없이 드롭다운만 바꾼 동안 뜨는 번역 언어 불일치 배너(위
+  // `translationLangMismatch`)가 바로 그 둘이 갈리는 창이다.
+  const bookmarks = useBookmarks(videoId, bookmarkTargetLang(record, targetLang));
   const activeIndex =
     showTranscriptList && record !== null && playback.currentTime !== null
       ? activeSegmentIndex(record.segments, playback.currentTime)
