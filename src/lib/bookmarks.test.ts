@@ -123,6 +123,11 @@ describe('createRowBookmark', () => {
     expect(created.translatedText).toBeNull();
     expect(created.sourceText).toBe('the key thing is the softmax');
   });
+
+  it('records the targetLang the panel was set to at save time (finding M1)', () => {
+    const created = createRowBookmark(segment(), 'bm-new', new Date('2026-08-02T03:04:05.000Z'), 'ja');
+    expect(created.targetLang).toBe('ja');
+  });
 });
 
 describe('createExcerptBookmark', () => {
@@ -138,6 +143,17 @@ describe('createExcerptBookmark', () => {
       // 앞뒤 공백은 저장 전에 털어낸다 — 드래그 선택은 거의 항상 공백을 물고 온다.
       excerpt: 'the softmax',
     });
+  });
+
+  it('records the targetLang the panel was set to at save time (finding M1)', () => {
+    const created = createExcerptBookmark(
+      segment(),
+      'the softmax',
+      'bm-x',
+      new Date('2026-08-02T00:00:00.000Z'),
+      'zh',
+    );
+    expect(created.targetLang).toBe('zh');
   });
 });
 

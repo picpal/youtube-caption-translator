@@ -1,3 +1,5 @@
+import type { TargetLang } from '~/lib/target-lang';
+
 // spec 2026-08-02 §4.1. 스토어에 들어가는 모양과 패널이 주고받는 모양이 같다 —
 // 라이브러리(`TranslationDigest`)와 달리 경량 투영을 만들지 않는 이유는 규모다:
 // 한 건이 최대 두 문장 스냅샷(약 500 B)이고 영상당 수십 건이라, 50건이 약 25 KB로
@@ -12,6 +14,11 @@ interface BookmarkBase {
   /** 시크 앵커. 초 단위라 세그먼트가 재분할돼도 유효하다. */
   startSec: number;
   createdAt: string;
+  /** finding M1 — 저장 순간 패널의 번역 언어. 값을 계산으로 나중에 채울 수 있는
+   * 다른 필드(§4.1의 "나중에 필드를 더해도 공짜")와 달리, 이건 저장 그 시점에만
+   * 알 수 있는 값이라 지금 안 담으면 기존 북마크는 영원히 못 채운다. 지금은
+   * write-only다 — 불일치 배너나 내보내기 표시는 아직 만들지 않는다. */
+  targetLang?: TargetLang;
 }
 
 /**

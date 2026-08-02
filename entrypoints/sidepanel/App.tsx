@@ -512,7 +512,7 @@ function ReadyBody({ scrollContainerRef }: { scrollContainerRef: RefObject<HTMLD
   // spec §8 — `failed` 영상에는 북마크 진입점을 두지 않는다. `showSummaryTab`이
   // 곧 그 게이트다(= showTranscriptList && status === 'done'). 훅 자체는 항상
   // 호출한다 — 조건부 호출은 rules-of-hooks 위반이다.
-  const bookmarks = useBookmarks(videoId);
+  const bookmarks = useBookmarks(videoId, targetLang);
   const activeIndex =
     showTranscriptList && record !== null && playback.currentTime !== null
       ? activeSegmentIndex(record.segments, playback.currentTime)

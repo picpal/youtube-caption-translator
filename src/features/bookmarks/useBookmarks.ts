@@ -9,6 +9,7 @@ import {
 import { sendMessage } from '~/lib/messaging';
 import type { Bookmark } from '~/types/bookmark';
 import type { TranscriptSegment } from '~/types/transcript';
+import type { TargetLang } from '~/lib/target-lang';
 
 export interface BookmarksState {
   /** 항상 `startSec` 오름차순. 소비자가 다시 정렬하지 않는다. */
@@ -31,7 +32,11 @@ export interface BookmarksState {
  * 사용자가 체감하는 지연은 확장 내부 메시지 왕복 한 번이고, 그 대가로 롤백해야
  * 하는 중간 상태가 아예 생기지 않는다.
  */
-export function useBookmarks(videoId: string | null): BookmarksState {
+// finding M1 — `targetLang`은 ReadyBody가 이미 들고 있는 상태이고, 이 훅은 그
+// 값을 저장 순간의 스냅샷으로만 쓴다(구독하지 않는다). 훅 시그니처에 넣는 이유는
+// `createRowBookmark`/`createExcerptBookmark`가 순수 함수로 남아야 해서다 —
+// panel-prefs나 storage를 직접 읽게 하면 그 순수성이 깨진다.
+export function useBookmarks(videoId: string | null, targetLang: TargetLang): BookmarksState {
   const [bookmarks, setBookmarks] = useState<Bookmark[]>([]);
   const [loadFailed, setLoadFailed] = useState(false);
   const [reloadToken, setReloadToken] = useState(0);
@@ -77,7 +82,14 @@ export function useBookmarks(videoId: string | null): BookmarksState {
           // 요청을 보낸 뒤 영상이 바뀌었다 — 이전 영상의 목록으로 지금
           // 화면(다른 영상)을 덮지 않는다.
           if (generation !== generationRef.current) return;
-          if (res.ok) setBookmarks(sortBookmarks(res.bookmarks));
+          if (res.ok) {
+            setBookmarks(sortBookmarks(res.bookmarks));
+            // finding M4 — 조회가 실패해 Notes가 "불러오지 못했어요"를 그리고
+            // 있어도, 쓰기가 성공했다면 그 실패는 더 이상 사실이 아니다. 지우지
+            // 않으면 ☆로 저장은 되는데 Notes는 계속 실패 화면을 보여주는
+            // 상태가 남는다.
+            setLoadFailed(false);
+          }
         })
         // 확장 컨텍스트 무효화 등으로 거부되면 목록을 그대로 둔다 — ★가 켜지지
         // 않는 것이 사용자에게 보이는 실패 신호다.
@@ -99,19 +111,19 @@ export function useBookmarks(videoId: string | null): BookmarksState {
         );
         return;
       }
-      const bookmark = createRowBookmark(segment, crypto.randomUUID(), new Date());
+      const bookmark = createRowBookmark(segment, crypto.randomUUID(), new Date(), targetLang);
       applyWrite(() => sendMessage({ type: 'ADD_BOOKMARK', payload: { videoId, bookmark } }));
     },
-    [applyWrite, bookmarks, videoId],
+    [applyWrite, bookmarks, videoId, targetLang],
   );
 
   const saveExcerpt = useCallback(
     (segment: TranscriptSegment, text: string) => {
       if (videoId === null) return;
-      const bookmark = createExcerptBookmark(segment, text, crypto.randomUUID(), new Date());
+      const bookmark = createExcerptBookmark(segment, text, crypto.randomUUID(), new Date(), targetLang);
       applyWrite(() => sendMessage({ type: 'ADD_BOOKMARK', payload: { videoId, bookmark } }));
     },
-    [applyWrite, videoId],
+    [applyWrite, videoId, targetLang],
   );
 
   const remove = useCallback(

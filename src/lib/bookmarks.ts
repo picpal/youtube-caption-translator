@@ -1,5 +1,6 @@
 import type { Bookmark } from '~/types/bookmark';
 import type { TranscriptSegment } from '~/types/transcript';
+import type { TargetLang } from '~/lib/target-lang';
 
 /**
  * 북마크에 대한 모든 판단은 여기 모인다 — 이 저장소에는 컴포넌트 렌더 테스트
@@ -44,6 +45,9 @@ export function createRowBookmark(
   segment: TranscriptSegment,
   bookmarkId: string,
   now: Date,
+  // finding M1 — 저장 순간에만 알 수 있는 값이라 호출부(useBookmarks)가 넘긴다.
+  // 이 함수는 여전히 시계·난수·storage를 읽지 않는다.
+  targetLang?: TargetLang,
 ): Bookmark {
   return {
     bookmarkId,
@@ -55,6 +59,7 @@ export function createRowBookmark(
     kind: 'row',
     sourceText: segment.sourceText,
     translatedText: segment.translatedText,
+    targetLang,
   };
 }
 
@@ -63,6 +68,7 @@ export function createExcerptBookmark(
   text: string,
   bookmarkId: string,
   now: Date,
+  targetLang?: TargetLang,
 ): Bookmark {
   return {
     bookmarkId,
@@ -71,6 +77,7 @@ export function createExcerptBookmark(
     createdAt: now.toISOString(),
     kind: 'excerpt',
     excerpt: text.trim(),
+    targetLang,
   };
 }
 
