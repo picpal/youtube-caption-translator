@@ -55,7 +55,7 @@
 | `entrypoints/background.ts` | 수정 — 핸들러 3개 + `errorResponseFor` 3분기 | 3 |
 | `src/background.test.ts` | 수정 | 3 |
 | `src/features/bookmarks/useBookmarks.ts` | 신규 — 조회/추가/삭제 훅 | 4 |
-| `src/components/TranscriptList.tsx` | 수정 — 행 3분할, ☆ 버튼, `visibleTexts` 인자 확장 | 4, 5, 6 |
+| `src/components/TranscriptList.tsx` | 수정 — 행 3분할, ☆ 버튼, `SegmentTexts` 추출·export, `visibleTexts` 인자 확장 | 4, 5, 6 |
 | `src/components/RowContextMenu.tsx` | 신규 — 우클릭 메뉴 | 5 |
 | `src/components/NotesPanel.tsx` | 신규 — Notes 탭 본문 | 6 |
 | `src/lib/panel-prefs.ts` | 수정 — `PanelTab`에 `'notes'` | 7 |
@@ -64,6 +64,7 @@
 | `src/lib/export-doc.ts` | 수정 — `renderBookmarksMarkdown` | 8 |
 | `src/lib/export-doc.test.ts` | 수정 | 8 |
 | `src/features/export/useExportData.ts` | 수정 — `bookmarks` 추가 | 8 |
+| `src/features/export/useExportData.test.ts` | 수정 — **이 표에서 누락됐던 항목** (Task 8 구현 중 발견). `fetchExportData`를 직접 테스트하므로 4번째 `GET_BOOKMARKS` 호출을 더하면 목 테이블과 호출 수 단언이 깨진다 | 8 |
 | `src/components/DownloadMenu.tsx` | 수정 — 세 번째 항목 | 8 |
 
 ---
@@ -926,10 +927,23 @@ import type { Bookmark } from '~/types/bookmark';
     }
 ```
 
-> `GET_LIBRARY`처럼 내부 try/catch를 두지 않는다. 여기서는 바깥
-> `onMessage`/`errorResponseFor` 래퍼가 이미 `{ ok: false, error }`라는 **같은
-> 모양**으로 접어 주기 때문이다 — `GET_LIBRARY`가 로컬 catch를 둔 이유는 그 응답이
-> `{ ok: true, entries }`라서 폴백 모양이 달라서였다.
+> **정정 (Task 3 리뷰, 2026-08-02).** 이 자리에 원래 "로컬 try/catch를 두지 않는다 —
+> `GET_LIBRARY`가 로컬 catch를 둔 건 성공 응답이 `{ ok: true, entries }`라 폴백
+> 모양이 달라서다"라고 적혀 있었는데, **틀린 근거였다.** `errorResponseFor`는
+> `GET_LIBRARY`에도 `{ ok: false, error }`를 돌려주므로 모양은 애초에 같다.
+> `GET_LIBRARY`가 로컬 catch를 둔 진짜 이유는 그 함수의 주석이 직접 말한다
+> (`background.ts:606-613`): **"직접 `handle()` 호출 — 테스트가 하는 것 — 도 같은
+> `{ ok: false, error }` 형태를 관찰할 수 있도록."**
+>
+> 따라서 `GET_BOOKMARKS`에는 `GET_LIBRARY`와 같은 로컬 try/catch를 **둔다.**
+> Step 1의 실패 테스트가 `handle()`을 직접 await하므로, 로컬 catch가 없으면
+> 거부가 그대로 던져져 `{ ok: false }`로 resolve되지 않는다. 프로덕션에서는
+> 바깥 래퍼(`background.ts:286-296`)가 같은 일을 하므로 두 방식이 동등하고,
+> 차이는 오직 직접 호출 경로에서만 드러난다.
+>
+> 쓰기 둘(`ADD_BOOKMARK`/`DELETE_BOOKMARK`)에는 두지 않는다 —
+> `DELETE_LIBRARY_ENTRY`와 같은 자리다(실패 경로 테스트가 없는 쓰기). 이 비대칭은
+> 이 파일에 이미 존재하던 것이고, 새로 만드는 것이 아니다.
 
 - [ ] **Step 5: errorResponseFor를 exhaustive하게 유지한다**
 
@@ -1175,24 +1189,7 @@ export function TranscriptList({
                 {formatTimestamp(segment.startSec)}
               </span>
               <div className="flex min-w-0 flex-col gap-1">
-                {texts.kind === 'dual' ? (
-                  <>
-                    <span className="text-xs leading-relaxed text-neutral-500 dark:text-neutral-400">
-                      {texts.secondaryText}
-                    </span>
-                    <span className="text-[13px] leading-relaxed text-neutral-900 dark:text-neutral-100">
-                      {texts.primaryText}
-                    </span>
-                  </>
-                ) : texts.kind === 'secondary-only' ? (
-                  <span className="text-xs leading-relaxed text-neutral-500 dark:text-neutral-400">
-                    {texts.text}
-                  </span>
-                ) : (
-                  <span className="text-[13px] leading-relaxed text-neutral-900 dark:text-neutral-100">
-                    {texts.text}
-                  </span>
-                )}
+                <SegmentTexts texts={texts} />
               </div>
             </div>
 
@@ -1222,9 +1219,42 @@ export function TranscriptList({
         );
 ```
 
-파일 끝에 아이콘을 더한다:
+파일 끝에 텍스트 렌더와 아이콘을 더한다. `SegmentTexts`는 **export한다** — Task 6의
+`NotesPanel`이 같은 컴포넌트를 쓴다. 세 분기의 마크업이 두 화면에 각자 복제되면
+타이포그래피가 조용히 갈라지고, `visibleTexts`를 공유하는 이유가 반쯤 무의미해진다.
 
 ```tsx
+/**
+ * `visibleTexts`의 세 결과를 그리는 유일한 자리. Transcript 행과 Notes 행이 이
+ * 컴포넌트를 공유하므로 두 화면의 타이포그래피는 구조적으로 갈라질 수 없다.
+ */
+export function SegmentTexts({ texts }: { texts: VisibleTexts }) {
+  if (texts.kind === 'dual') {
+    return (
+      <>
+        <span className="text-xs leading-relaxed text-neutral-500 dark:text-neutral-400">
+          {texts.secondaryText}
+        </span>
+        <span className="text-[13px] leading-relaxed text-neutral-900 dark:text-neutral-100">
+          {texts.primaryText}
+        </span>
+      </>
+    );
+  }
+  if (texts.kind === 'secondary-only') {
+    return (
+      <span className="text-xs leading-relaxed text-neutral-500 dark:text-neutral-400">
+        {texts.text}
+      </span>
+    );
+  }
+  return (
+    <span className="text-[13px] leading-relaxed text-neutral-900 dark:text-neutral-100">
+      {texts.text}
+    </span>
+  );
+}
+
 /** `LibraryView`의 `TrashIcon`과 같은 방식의 인라인 SVG — 아이콘 라이브러리를 추가하지 않는다. */
 function StarIcon({ filled }: { filled: boolean }) {
   return (
@@ -1540,7 +1570,7 @@ export function visibleTexts(
 
 ```tsx
 import { Button } from '~/components/Button';
-import { visibleTexts, type DisplayMode } from '~/components/TranscriptList';
+import { SegmentTexts, visibleTexts, type DisplayMode } from '~/components/TranscriptList';
 import { formatTimestamp } from '~/lib/transcript-parse';
 import type { Bookmark } from '~/types/bookmark';
 
@@ -1631,33 +1661,9 @@ function BookmarkTexts({ bookmark, displayMode }: { bookmark: Bookmark; displayM
     );
   }
 
-  // Transcript의 행과 똑같은 규칙으로 displayMode를 존중한다 — 같은 함수를 쓰므로
-  // 두 화면이 어긋날 수 없다.
-  const texts = visibleTexts(bookmark, displayMode);
-  if (texts.kind === 'dual') {
-    return (
-      <>
-        <span className="text-xs leading-relaxed text-neutral-500 dark:text-neutral-400">
-          {texts.secondaryText}
-        </span>
-        <span className="text-[13px] leading-relaxed text-neutral-900 dark:text-neutral-100">
-          {texts.primaryText}
-        </span>
-      </>
-    );
-  }
-  if (texts.kind === 'secondary-only') {
-    return (
-      <span className="text-xs leading-relaxed text-neutral-500 dark:text-neutral-400">
-        {texts.text}
-      </span>
-    );
-  }
-  return (
-    <span className="text-[13px] leading-relaxed text-neutral-900 dark:text-neutral-100">
-      {texts.text}
-    </span>
-  );
+  // Transcript의 행과 똑같은 규칙으로 displayMode를 존중한다 — 판단(visibleTexts)도
+  // 마크업(SegmentTexts)도 같은 것을 쓰므로 두 화면이 어긋날 수 없다.
+  return <SegmentTexts texts={visibleTexts(bookmark, displayMode)} />;
 }
 
 /** `LibraryView`의 것과 같은 인라인 SVG. */

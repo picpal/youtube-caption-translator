@@ -3,6 +3,7 @@ import type { TranslationRecord } from '~/types/transcript';
 import type { VideoSummary } from './summary';
 import type { VideoMeta } from './video';
 import type { LibraryEntry } from './library';
+import type { Bookmark } from '~/types/bookmark';
 
 export type ApiKeyStatus =
   | { present: false }
@@ -116,7 +117,19 @@ export type AppMessage =
   // spec §7.1). 진행 중인 잡이 있으면 거부한다 — 번역 도중 레코드를 지우면 다음
   // `upsertBatch`가 레코드 부재를 보고 트랜잭션을 abort시켜(src/lib/db.ts:154)
   // 파이프라인이 사용자에게 이유 없는 에러로 죽는다.
-  | { type: 'DELETE_LIBRARY_ENTRY'; payload: { videoId: string } };
+  | { type: 'DELETE_LIBRARY_ENTRY'; payload: { videoId: string } }
+  // panel -> background: 한 영상의 기억한 문장(spec 2026-08-02 §4.3). 조회는
+  // 투영 없이 전체를 그대로 보낸다 — 영상당 수십 건, 한 건 약 500 B라 구조화
+  // 복제에 부담이 없다.
+  | { type: 'GET_BOOKMARKS'; payload: { videoId: string } }
+  // 쓰기 둘 다 갱신된 전체 목록으로 답한다. 패널이 쓰기 후 재조회할 필요가 없고,
+  // 낙관적 업데이트를 롤백하는 상태 기계도 생기지 않는다.
+  //
+  // `bookmark`를 패널이 완성해서 보내는 이유: `bookmarkId`(crypto.randomUUID)와
+  // `createdAt`을 background가 채우면, 응답이 오기 전까지 패널이 그 항목을 그릴
+  // 수 없다. 같은 `bookmarkId`의 재전달은 db 레이어가 멱등으로 흡수한다.
+  | { type: 'ADD_BOOKMARK'; payload: { videoId: string; bookmark: Bookmark } }
+  | { type: 'DELETE_BOOKMARK'; payload: { videoId: string; bookmarkId: string } };
 
 export type AppResponseMap = {
   SAVE_API_KEY: { ok: true; status: ApiKeyStatus } | { ok: false; error: string };
@@ -176,6 +189,9 @@ export type AppResponseMap = {
   // `error`는 다른 핸들러들과 같은 규약: 원문 영어 사유를 돌려주고 한국어 문구는
   // 패널이 만든다. 진행 중 거부는 정확히 `'job in flight'`다.
   DELETE_LIBRARY_ENTRY: { ok: true } | { ok: false; error: string };
+  GET_BOOKMARKS: { ok: true; bookmarks: Bookmark[] } | { ok: false; error: string };
+  ADD_BOOKMARK: { ok: true; bookmarks: Bookmark[] } | { ok: false; error: string };
+  DELETE_BOOKMARK: { ok: true; bookmarks: Bookmark[] } | { ok: false; error: string };
 };
 
 export type AppResponse<T extends AppMessage['type']> = AppResponseMap[T];

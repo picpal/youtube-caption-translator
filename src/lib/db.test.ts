@@ -3,11 +3,13 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import type { VideoMeta } from '~/types/video';
 import type { TranscriptSegment, TranslationRecord } from '~/types/transcript';
 import type { VideoSummary } from '~/types/summary';
+import type { Bookmark } from '~/types/bookmark';
 import {
   DB_NAME,
   STORE_NAME,
   TRANSLATIONS_STORE,
   SUMMARIES_STORE,
+  BOOKMARKS_STORE,
   getTranslation,
   getVideo,
   putTranslation,
@@ -19,6 +21,9 @@ import {
   getAllVideos,
   listTranslationDigests,
   deleteVideoData,
+  getBookmarks,
+  addBookmark,
+  deleteBookmark,
 } from './db';
 
 function makeMeta(overrides: Partial<VideoMeta> = {}): VideoMeta {
@@ -454,5 +459,170 @@ describe('library queries', () => {
 
   it('deleteVideoData resolves for a videoId that was never stored', async () => {
     await expect(deleteVideoData('never-existed')).resolves.toBeUndefined();
+  });
+});
+
+function makeBookmark(overrides: Partial<Bookmark> = {}): Bookmark {
+  return {
+    bookmarkId: 'bm-1',
+    segmentId: 'zjkBMFhNj_g:3',
+    startSec: 30,
+    createdAt: '2026-08-02T00:00:00.000Z',
+    kind: 'row',
+    sourceText: 'source text 3',
+    translatedText: '원문 3',
+    ...overrides,
+  } as Bookmark;
+}
+
+// v3까지만 만들어 두고 열어, 실제 3->4 onupgradeneeded 전이를 태운다.
+// seedV1Database와 같은 관용 — 같은 버전으로 여는 no-op을 마이그레이션이라고
+// 부르지 않기 위해서다.
+function seedV3Database(rec: TranslationRecord): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(DB_NAME, 3);
+    request.onupgradeneeded = () => {
+      const db = request.result;
+      db.createObjectStore(STORE_NAME, { keyPath: 'videoId' });
+      db.createObjectStore(TRANSLATIONS_STORE, { keyPath: 'videoId' });
+      db.createObjectStore(SUMMARIES_STORE, { keyPath: 'videoId' });
+    };
+    request.onsuccess = () => {
+      const db = request.result;
+      const tx = db.transaction(TRANSLATIONS_STORE, 'readwrite');
+      tx.objectStore(TRANSLATIONS_STORE).put(rec);
+      tx.oncomplete = () => {
+        db.close();
+        resolve();
+      };
+      tx.onerror = () => {
+        db.close();
+        reject(tx.error);
+      };
+    };
+    request.onerror = () => reject(request.error);
+  });
+}
+
+describe('v3 -> v4 migration', () => {
+  it('adds the bookmarks store without touching existing translations data', async () => {
+    const seeded = makeRecord({ status: 'done' });
+    await seedV3Database(seeded);
+
+    // db.ts의 어떤 호출이든 DB_VERSION(4)로 열어 3->4 전이를 일으킨다.
+    expect(await getTranslation(seeded.videoId)).toEqual(seeded);
+    expect(await getBookmarks(seeded.videoId)).toEqual([]);
+  });
+});
+
+describe('bookmarks', () => {
+  it('returns an empty array for a video that has none', async () => {
+    expect(await getBookmarks('zjkBMFhNj_g')).toEqual([]);
+  });
+
+  it('adds bookmarks and returns the updated list', async () => {
+    const first = makeBookmark();
+    expect(await addBookmark('zjkBMFhNj_g', first)).toEqual([first]);
+
+    const second = makeBookmark({ bookmarkId: 'bm-2', segmentId: 'zjkBMFhNj_g:7', startSec: 70 });
+    expect(await addBookmark('zjkBMFhNj_g', second)).toEqual([first, second]);
+    expect(await getBookmarks('zjkBMFhNj_g')).toEqual([first, second]);
+  });
+
+  it('is idempotent on a repeated bookmarkId', async () => {
+    const bookmark = makeBookmark();
+    await addBookmark('zjkBMFhNj_g', bookmark);
+    // 같은 메시지가 재전달돼도 두 번 들어가면 안 된다.
+    expect(await addBookmark('zjkBMFhNj_g', bookmark)).toEqual([bookmark]);
+  });
+
+  it('absorbs a second row bookmark for the same segmentId even with a different bookmarkId', async () => {
+    const first = makeBookmark();
+    await addBookmark('zjkBMFhNj_g', first);
+    // 연타 클릭 — 두 번째 클릭이 첫 응답을 받기 전에 나가면 각자 자기만의
+    // crypto.randomUUID()로 ADD_BOOKMARK를 보낸다. bookmarkId만 보는 멱등성
+    // 가드로는 이 케이스를 걸러내지 못하므로, kind:'row' + 같은 segmentId도
+    // 흡수해야 한다(finding I1).
+    const rapidSecond = makeBookmark({ bookmarkId: 'bm-2' });
+    expect(await addBookmark('zjkBMFhNj_g', rapidSecond)).toEqual([first]);
+  });
+
+  it('does not dedupe excerpt bookmarks from the same row', async () => {
+    const excerptA = makeBookmark({
+      bookmarkId: 'bm-x1',
+      kind: 'excerpt',
+      excerpt: 'the key thing is the softmax',
+      sourceText: undefined,
+      translatedText: undefined,
+    } as Partial<Bookmark>);
+    const excerptB = makeBookmark({
+      bookmarkId: 'bm-x2',
+      kind: 'excerpt',
+      excerpt: 'a second phrase from the same row',
+      sourceText: undefined,
+      translatedText: undefined,
+    } as Partial<Bookmark>);
+    await addBookmark('zjkBMFhNj_g', excerptA);
+    // 발췌는 같은 행에서 여러 개를 저장하는 것이 정상이라(spec §6.2) 중복
+    // 판정을 하지 않는다.
+    expect(await addBookmark('zjkBMFhNj_g', excerptB)).toHaveLength(2);
+  });
+
+  it('keeps each video s bookmarks separate', async () => {
+    await addBookmark('video-a', makeBookmark({ bookmarkId: 'a-1' }));
+    await addBookmark('video-b', makeBookmark({ bookmarkId: 'b-1' }));
+
+    expect(await getBookmarks('video-a')).toHaveLength(1);
+    expect((await getBookmarks('video-b'))[0].bookmarkId).toBe('b-1');
+  });
+
+  it('stores an excerpt bookmark with its own shape', async () => {
+    const excerpt = makeBookmark({
+      bookmarkId: 'bm-x',
+      kind: 'excerpt',
+      excerpt: 'the key thing is the softmax',
+      sourceText: undefined,
+      translatedText: undefined,
+    } as Partial<Bookmark>);
+    const stored = (await addBookmark('zjkBMFhNj_g', excerpt))[0];
+    expect(stored.kind).toBe('excerpt');
+    if (stored.kind !== 'excerpt') throw new Error('expected an excerpt bookmark');
+    expect(stored.excerpt).toBe('the key thing is the softmax');
+  });
+
+  it('deletes by bookmarkId and returns the rest', async () => {
+    const first = makeBookmark();
+    // 다른 segmentId — 같은 행 두 번 저장은 이제 흡수되므로(finding I1), 삭제
+    // 대상이 실제로 남는지 보려면 서로 다른 행이어야 한다.
+    const second = makeBookmark({ bookmarkId: 'bm-2', segmentId: 'zjkBMFhNj_g:7', startSec: 70 });
+    await addBookmark('zjkBMFhNj_g', first);
+    await addBookmark('zjkBMFhNj_g', second);
+
+    expect(await deleteBookmark('zjkBMFhNj_g', 'bm-1')).toEqual([second]);
+  });
+
+  it('treats an unknown bookmarkId as a no-op', async () => {
+    const bookmark = makeBookmark();
+    await addBookmark('zjkBMFhNj_g', bookmark);
+    expect(await deleteBookmark('zjkBMFhNj_g', 'nope')).toEqual([bookmark]);
+  });
+
+  it('treats a delete on a video with no record as a no-op', async () => {
+    expect(await deleteBookmark('never-seen', 'bm-1')).toEqual([]);
+  });
+});
+
+describe('deleteVideoData cascade', () => {
+  it('deletes bookmarks along with the translation and summary', async () => {
+    const videoId = 'zjkBMFhNj_g';
+    await putTranslation(makeRecord({ status: 'done' }));
+    await putSummary(makeSummary());
+    await addBookmark(videoId, makeBookmark());
+
+    await deleteVideoData(videoId);
+
+    expect(await getTranslation(videoId)).toBeNull();
+    expect(await getSummary(videoId)).toBeNull();
+    expect(await getBookmarks(videoId)).toEqual([]);
   });
 });

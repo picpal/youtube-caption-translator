@@ -4,6 +4,7 @@ import { parseVideoId } from '~/lib/youtube';
 import type { TranslationRecord } from '~/types/transcript';
 import type { VideoSummary } from '~/types/summary';
 import type { VideoMeta } from '~/types/video';
+import type { Bookmark } from '~/types/bookmark';
 
 export type ExportDataState =
   | { status: 'loading' }
@@ -13,6 +14,7 @@ export type ExportDataState =
       video: VideoMeta;
       record: TranslationRecord;
       summary: VideoSummary | null;
+      bookmarks: Bookmark[];
     };
 
 /**
@@ -25,10 +27,11 @@ export type ExportDataState =
  */
 export async function fetchExportData(videoId: string): Promise<ExportDataState> {
   try {
-    const [video, record, summary] = await Promise.all([
+    const [video, record, summary, bookmarksRes] = await Promise.all([
       sendMessage({ type: 'GET_VIDEO_META', payload: { videoId } }),
       sendMessage({ type: 'GET_TRANSLATION', payload: { videoId } }),
       sendMessage({ type: 'GET_SUMMARY', payload: { videoId } }),
+      sendMessage({ type: 'GET_BOOKMARKS', payload: { videoId } }),
     ]);
 
     if (!video) return { status: 'unavailable', reason: 'no-video' };
@@ -37,7 +40,15 @@ export async function fetchExportData(videoId: string): Promise<ExportDataState>
     // in-flight one (summary.generating) has nothing to embed yet, so this
     // deliberately drops that flag rather than threading a fourth "still
     // generating" export state through export.html.
-    return { status: 'ready', video, record, summary: summary.summary };
+    return {
+      status: 'ready',
+      video,
+      record,
+      summary: summary.summary,
+      // 북마크 조회 실패가 스크립트/요약 내보내기까지 막지는 않는다 — 그 두
+      // 항목은 이 값 없이도 완결된다. 대신 기억한 문장 항목이 0개로 비활성화된다.
+      bookmarks: bookmarksRes.ok ? bookmarksRes.bookmarks : [],
+    };
   } catch {
     return { status: 'unavailable', reason: 'no-video' };
   }

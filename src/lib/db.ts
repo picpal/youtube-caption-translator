@@ -3,6 +3,7 @@ import type { TranscriptSegment, TranslationRecord } from '~/types/transcript';
 import type { VideoSummary } from '~/types/summary';
 import { DEFAULT_TARGET_LANG } from '~/lib/target-lang';
 import type { TranslationDigest } from '~/types/library';
+import type { Bookmark, BookmarkRecord } from '~/types/bookmark';
 
 // Hand-rolled IndexedDB wrapper instead of the `idb` package: the surface is
 // a handful of put/get operations on two object stores, and MV3 service
@@ -15,7 +16,7 @@ import type { TranslationDigest } from '~/types/library';
 // Storage key, not a display name — changing it starts a fresh empty
 // database (existing rows under the old name are orphaned, not migrated).
 export const DB_NAME = 'youtube-caption-translator';
-export const DB_VERSION = 3;
+export const DB_VERSION = 4;
 export const STORE_NAME = 'videos';
 // M2: one record per video, keyed the same way as `videos` so it can be
 // looked up alongside VideoMeta with the same id.
@@ -24,6 +25,11 @@ export const TRANSLATIONS_STORE = 'translations';
 // translation record (spec 2026-07-30 §2). Keyed like the other stores so
 // regeneration is a plain overwrite of the same key.
 export const SUMMARIES_STORE = 'summaries';
+// M3: 사용자가 고른 문장(spec 2026-08-02 §4.2). 영상당 레코드 하나에 배열로
+// 담는다 — 북마크마다 레코드를 만들면 `videoId` 인덱스가 필요해지는데, 이 파일
+// 서두의 판단("인덱스가 필요해지면 idb 패키지를 재검토")이 걸리는 선이다. 배열이면
+// 인덱스가 필요 없고 나머지 세 스토어와 키 규칙도 같아진다.
+export const BOOKMARKS_STORE = 'bookmarks';
 
 function openDb(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
@@ -42,6 +48,9 @@ function openDb(): Promise<IDBDatabase> {
       }
       if (!db.objectStoreNames.contains(SUMMARIES_STORE)) {
         db.createObjectStore(SUMMARIES_STORE, { keyPath: 'videoId' });
+      }
+      if (!db.objectStoreNames.contains(BOOKMARKS_STORE)) {
+        db.createObjectStore(BOOKMARKS_STORE, { keyPath: 'videoId' });
       }
     };
     request.onsuccess = () => resolve(request.result);
@@ -337,8 +346,106 @@ export async function getAllSummaries(): Promise<VideoSummary[]> {
   });
 }
 
-// 번역과 요약을 한 트랜잭션으로 지운다. 원자성이 필요한 이유: 번역만 지워지고
-// 요약이 남으면, 목록에서 사라진 영상의 요약이 영원히 고아로 남는다(목록의 기준
+export async function getBookmarks(videoId: string): Promise<Bookmark[]> {
+  const db = await openDb();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(BOOKMARKS_STORE, 'readonly');
+    const request = tx.objectStore(BOOKMARKS_STORE).get(videoId);
+    let result: Bookmark[] = [];
+    request.onsuccess = () => {
+      // 레코드 부재는 정상이다(그 영상에서 아직 아무것도 저장하지 않음) — 빈
+      // 배열로 접는다. `null`을 돌려주면 모든 호출부가 같은 폴백을 반복해야 한다.
+      result = (request.result as BookmarkRecord | undefined)?.bookmarks ?? [];
+    };
+    request.onerror = () => {
+      db.close();
+      reject(request.error);
+    };
+    tx.oncomplete = () => {
+      db.close();
+      resolve(result);
+    };
+    tx.onerror = () => {
+      db.close();
+      reject(tx.error);
+    };
+    tx.onabort = () => {
+      db.close();
+      reject(tx.error);
+    };
+  });
+}
+
+// 추가와 삭제가 공유하는 read-modify-write. get -> put이 사이에 `await` 없이 한
+// readwrite 트랜잭션 안에서 끝나므로, 같은 videoId에 대한 동시 호출이 stale read로
+// 서로를 덮어쓸 수 없다 — `upsertBatch`가 세운 같은 관용이다.
+async function mutateBookmarks(
+  videoId: string,
+  mutate: (current: Bookmark[]) => Bookmark[],
+): Promise<Bookmark[]> {
+  const db = await openDb();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(BOOKMARKS_STORE, 'readwrite');
+    const store = tx.objectStore(BOOKMARKS_STORE);
+    const getRequest = store.get(videoId);
+    let next: Bookmark[] = [];
+
+    getRequest.onsuccess = () => {
+      const existing = getRequest.result as BookmarkRecord | undefined;
+      next = mutate(existing?.bookmarks ?? []);
+      const updated: BookmarkRecord = { videoId, bookmarks: next };
+      store.put(updated);
+    };
+    getRequest.onerror = () => {
+      db.close();
+      reject(getRequest.error);
+    };
+
+    tx.oncomplete = () => {
+      db.close();
+      resolve(next);
+    };
+    tx.onerror = () => {
+      db.close();
+      reject(tx.error);
+    };
+    tx.onabort = () => {
+      db.close();
+      reject(tx.error);
+    };
+  });
+}
+
+// 같은 bookmarkId를 두 번 넣지 않는다 — 메시지가 재전달돼도 목록이 불어나지
+// 않게 하는 멱등성이다.
+//
+// finding I1 — bookmarkId만 보는 것으로는 부족하다. ☆ 연타는 두 번째 클릭이
+// 첫 응답(메시지 왕복 + 서비스워커 기상)을 받기 전에 나갈 수 있고, 그때 둘 다
+// "아직 저장 안 됨"으로 보여 서로 다른 bookmarkId로 ADD_BOOKMARK를 두 번
+// 보낸다. 그래서 kind:'row' + 같은 segmentId도 같은 북마크로 흡수한다 — 이미
+// 저장된 행을 다시 저장하는 것은 재전달이든 연타든 결과가 같아야 한다.
+// excerpt는 흡수하지 않는다: 한 행에서 조각을 여러 개 저장하는 것은 정상이라
+// segmentId가 같다는 것만으로 중복이라 볼 수 없다(spec §6.2).
+export function addBookmark(videoId: string, bookmark: Bookmark): Promise<Bookmark[]> {
+  return mutateBookmarks(videoId, (current) =>
+    current.some(
+      (existing) =>
+        existing.bookmarkId === bookmark.bookmarkId ||
+        (bookmark.kind === 'row' && existing.kind === 'row' && existing.segmentId === bookmark.segmentId),
+    )
+      ? current
+      : [...current, bookmark],
+  );
+}
+
+export function deleteBookmark(videoId: string, bookmarkId: string): Promise<Bookmark[]> {
+  return mutateBookmarks(videoId, (current) =>
+    current.filter((existing) => existing.bookmarkId !== bookmarkId),
+  );
+}
+
+// 번역·요약·북마크를 한 트랜잭션으로 지운다. 원자성이 필요한 이유: 셋이 갈라지면
+// 목록에서 사라진 영상의 요약이나 북마크가 영원히 고아로 남는다(목록의 기준
 // 스토어가 `translations`이므로 다시 보이지 않는다).
 //
 // `videos`의 메타는 일부러 남긴다 — 제목·썸네일 캐시일 뿐이고 그 영상을 다시
@@ -348,9 +455,10 @@ export async function getAllSummaries(): Promise<VideoSummary[]> {
 export async function deleteVideoData(videoId: string): Promise<void> {
   const db = await openDb();
   return new Promise((resolve, reject) => {
-    const tx = db.transaction([TRANSLATIONS_STORE, SUMMARIES_STORE], 'readwrite');
+    const tx = db.transaction([TRANSLATIONS_STORE, SUMMARIES_STORE, BOOKMARKS_STORE], 'readwrite');
     tx.objectStore(TRANSLATIONS_STORE).delete(videoId);
     tx.objectStore(SUMMARIES_STORE).delete(videoId);
+    tx.objectStore(BOOKMARKS_STORE).delete(videoId);
     tx.oncomplete = () => {
       db.close();
       resolve();

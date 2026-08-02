@@ -2,12 +2,14 @@ import { useEffect, useRef, useState, type RefObject } from 'react';
 import { Button } from '~/components/Button';
 import { DownloadMenu } from '~/components/DownloadMenu';
 import { LibraryView } from '~/components/LibraryView';
+import { NotesPanel } from '~/components/NotesPanel';
 import { StatusBadge } from '~/components/StatusBadge';
 import { SummaryPanel } from '~/components/SummaryPanel';
 import { TranscriptList, type DisplayMode } from '~/components/TranscriptList';
 import { UnsupportedBanner } from '~/components/UnsupportedBanner';
 import { VideoCard } from '~/components/VideoCard';
 import { useApiKey } from '~/features/api-key/useApiKey';
+import { useBookmarks } from '~/features/bookmarks/useBookmarks';
 import { usePlaybackSync } from '~/features/playback/usePlaybackSync';
 import { useSummary } from '~/features/summary/useSummary';
 import { translationErrorDisplay } from '~/features/translation/error-display';
@@ -17,6 +19,7 @@ import {
 } from '~/features/translation/progress-display';
 import { useTranslation, type TranslationProgressState } from '~/features/translation/useTranslation';
 import { useCurrentVideo } from '~/features/video/useCurrentVideo';
+import { bookmarkTargetLang } from '~/lib/bookmarks';
 import { activeSegmentIndex } from '~/lib/playback-sync';
 import { formatTimestamp } from '~/lib/transcript-parse';
 import { loadPanelPrefs, savePanelDisplayMode, savePanelLastTab, type PanelTab } from '~/lib/panel-prefs';
@@ -506,6 +509,17 @@ function ReadyBody({ scrollContainerRef }: { scrollContainerRef: RefObject<HTMLD
 
   // Playback sync (spec §3.2): stream only while the list is on screen.
   const playback = usePlaybackSync({ videoId, tabId, enabled: showTranscriptList });
+
+  // spec §8 — `failed` 영상에는 북마크 진입점을 두지 않는다. `showSummaryTab`이
+  // 곧 그 게이트다(= showTranscriptList && status === 'done'). 훅 자체는 항상
+  // 호출한다 — 조건부 호출은 rules-of-hooks 위반이다.
+  //
+  // finding C1 — `targetLang`(드롭다운의 지금 설정)이 아니라 스냅샷될 그
+  // 텍스트가 실제로 번역된 언어를 넘긴다. 판단(`bookmarkTargetLang`)은
+  // src/lib/bookmarks.ts의 순수 함수로 뽑아 단위 테스트로 고정했다 — 재생성
+  // 없이 드롭다운만 바꾼 동안 뜨는 번역 언어 불일치 배너(위
+  // `translationLangMismatch`)가 바로 그 둘이 갈리는 창이다.
+  const bookmarks = useBookmarks(videoId, bookmarkTargetLang(record, targetLang));
   const activeIndex =
     showTranscriptList && record !== null && playback.currentTime !== null
       ? activeSegmentIndex(record.segments, playback.currentTime)
@@ -522,7 +536,7 @@ function ReadyBody({ scrollContainerRef }: { scrollContainerRef: RefObject<HTMLD
   // Summary tab (M3 spec §5). All hooks below live above the no-metadata
   // early return for the same Rules-of-Hooks reason documented on
   // showTranscriptList above.
-  const [activeTab, setActiveTab] = useState<'transcript' | 'summary'>('transcript');
+  const [activeTab, setActiveTab] = useState<PanelTab>('transcript');
   const summaryState = useSummary({ videoId, enabled: showSummaryTab });
   const summaryElapsedSeconds = useElapsedSeconds(summaryState.status === 'generating');
 
@@ -564,9 +578,12 @@ function ReadyBody({ scrollContainerRef }: { scrollContainerRef: RefObject<HTMLD
   useEffect(() => {
     if (!showSummaryTab || lastTabRestoredRef.current || storedLastTab === null) return;
     lastTabRestoredRef.current = true;
-    if (storedLastTab === 'summary') {
-      if (activeTab !== 'summary') restoringTabRef.current = true;
-      setActiveTab('summary');
+    // `'summary'` 하드코딩에서 넓혔다 — 탭이 셋이 되면서, 복원할 값은 "transcript가
+    // 아닌 무엇"이다. 게이트(showSummaryTab)는 Summary와 Notes가 공유하므로
+    // 아래 스냅백 effect는 그대로 둔다.
+    if (storedLastTab !== 'transcript') {
+      if (activeTab !== storedLastTab) restoringTabRef.current = true;
+      setActiveTab(storedLastTab);
     }
   }, [showSummaryTab, storedLastTab, activeTab]);
 
@@ -741,6 +758,7 @@ function ReadyBody({ scrollContainerRef }: { scrollContainerRef: RefObject<HTMLD
                   [
                     ['transcript', 'Transcript'],
                     ['summary', 'Summary'],
+                    ['notes', 'Notes'],
                   ] as const
                 ).map(([tab, label]) => (
                   <button
@@ -759,6 +777,13 @@ function ReadyBody({ scrollContainerRef }: { scrollContainerRef: RefObject<HTMLD
                     }`}
                   >
                     {label}
+                    {tab === 'notes' && bookmarks.bookmarks.length > 0 && (
+                      // 우클릭은 발견이 어려운 인터랙션이라, 저장한 것이 있다는
+                      // 사실 자체가 탭에서 보여야 한다.
+                      <span className="ml-1 text-[10px] tabular-nums text-neutral-400 dark:text-neutral-500">
+                        {bookmarks.bookmarks.length}
+                      </span>
+                    )}
                   </button>
                 ))}
               </div>
@@ -770,8 +795,20 @@ function ReadyBody({ scrollContainerRef }: { scrollContainerRef: RefObject<HTMLD
                     displayMode={displayMode}
                     activeIndex={activeIndex}
                     onSeekRow={(segment) => playback.seek(segment.startSec)}
+                    savedSegmentIds={bookmarks.savedSegmentIds}
+                    onToggleRow={bookmarks.toggleRow}
+                    onSaveExcerpt={bookmarks.saveExcerpt}
                   />
                 </>
+              ) : activeTab === 'notes' ? (
+                <NotesPanel
+                  bookmarks={bookmarks.bookmarks}
+                  displayMode={displayMode}
+                  loadFailed={bookmarks.loadFailed}
+                  onSeek={(startSec) => playback.seek(startSec)}
+                  onRemove={bookmarks.remove}
+                  onRetry={bookmarks.reload}
+                />
               ) : (
                 <>
                   {summaryLangMismatchBanner}

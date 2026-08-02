@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { buildExportModel, buildFileBaseName, renderMarkdown } from './export-doc';
+import { buildExportModel, buildFileBaseName, renderBookmarksMarkdown, renderMarkdown } from './export-doc';
 import type { ExportInput } from './export-doc';
 import type { TranslationRecord, TranscriptSegment } from '~/types/transcript';
 import type { VideoSummary } from '~/types/summary';
 import type { VideoMeta } from '~/types/video';
+import type { Bookmark } from '~/types/bookmark';
 
 const VIDEO_ID = 'zjkBMFhNj_g';
 // 로컬 시간 컴포넌트로 만든다(월은 0-based) — UTC 문자열을 쓰면 실행 타임존에 따라
@@ -204,5 +205,123 @@ describe('renderMarkdown', () => {
     const md = renderMarkdown(buildExportModel(input({ record: partial, displayMode: 'ko' })));
     expect(md).toContain(`**[0:12](https://youtu.be/${VIDEO_ID}?t=12)** Only source.`);
     expect(md).not.toContain('  \n');
+  });
+});
+
+function bookmarkFixture(overrides: Partial<Bookmark> = {}): Bookmark {
+  return {
+    bookmarkId: 'bm-1',
+    segmentId: 'zjkBMFhNj_g:3',
+    startSec: 724,
+    createdAt: '2026-08-02T00:00:00.000Z',
+    kind: 'row',
+    sourceText: "Let's talk about attention",
+    translatedText: '먼저 어텐션에 대해 얘기해 봅시다',
+    ...overrides,
+  } as Bookmark;
+}
+
+describe('renderBookmarksMarkdown', () => {
+  const video = VIDEO;
+  // 로컬 시간 컴포넌트(월은 0-based) — 파일 상단 EXPORTED_AT과 같은 이유다.
+  const exportedAt = new Date(2026, 7, 2, 10, 30);
+
+  it('renders a row bookmark with both texts under a linked timestamp', () => {
+    const md = renderBookmarksMarkdown({ video, bookmarks: [bookmarkFixture()], exportedAt });
+
+    expect(md).toContain(`## [12:04](https://youtu.be/${video.videoId}?t=724)`);
+    expect(md).toContain("Let's talk about attention");
+    expect(md).toContain('먼저 어텐션에 대해 얘기해 봅시다');
+  });
+
+  it('keeps both texts even though the panel may be showing only one', () => {
+    // 표시 설정은 화면을 좁히는 선택이지 저장된 내용을 버리는 선택이 아니다 —
+    // 그래서 이 함수는 displayMode를 아예 받지 않는다.
+    const md = renderBookmarksMarkdown({ video, bookmarks: [bookmarkFixture()], exportedAt });
+    const lines = md.split('\n');
+    expect(lines.some((l) => l === "Let's talk about attention")).toBe(true);
+    expect(lines.some((l) => l === '먼저 어텐션에 대해 얘기해 봅시다')).toBe(true);
+  });
+
+  it('emits the source alone when a row was never translated', () => {
+    const md = renderBookmarksMarkdown({
+      video,
+      bookmarks: [bookmarkFixture({ translatedText: null } as Partial<Bookmark>)],
+      exportedAt,
+    });
+    expect(md).toContain("Let's talk about attention");
+    // 빈 행을 만들지 않는다 — export-doc의 I4가 남긴 규율.
+    expect(md).not.toMatch(/\n\n\n\n/);
+  });
+
+  it('renders an excerpt as a blockquote', () => {
+    const md = renderBookmarksMarkdown({
+      video,
+      bookmarks: [
+        bookmarkFixture({
+          bookmarkId: 'bm-x',
+          kind: 'excerpt',
+          excerpt: 'the key thing is the softmax',
+          sourceText: undefined,
+          translatedText: undefined,
+        } as Partial<Bookmark>),
+      ],
+      exportedAt,
+    });
+    expect(md).toContain('> the key thing is the softmax');
+  });
+
+  it('keeps every line of a multi-line excerpt inside the blockquote', () => {
+    // 여러 행을 가로질러 드래그한 조각은 `\n`을 품은 채로 저장된다
+    // (createExcerptBookmark는 선택 문자열을 그대로 trim만 한다). 한 배열
+    // 원소에 `> ${excerpt}`를 통째로 넣으면 join 이후 두 번째 줄부터는 `>`
+    // 없이 그냥 본문으로 새 나간다 — 각 줄에 프리픽스를 따로 붙여야 한다.
+    const md = renderBookmarksMarkdown({
+      video,
+      bookmarks: [
+        bookmarkFixture({
+          bookmarkId: 'bm-multi',
+          kind: 'excerpt',
+          excerpt: 'the key thing is the softmax\nbut also consider scaling',
+          sourceText: undefined,
+          translatedText: undefined,
+        } as Partial<Bookmark>),
+      ],
+      exportedAt,
+    });
+    const lines = md.split('\n');
+    expect(lines).toContain('> the key thing is the softmax');
+    expect(lines).toContain('> but also consider scaling');
+    // 두 번째 줄이 `>` 없이 본문으로 새 나가지 않았는지 직접 확인한다.
+    expect(lines.some((l) => l === 'but also consider scaling')).toBe(false);
+  });
+
+  it('orders entries by startSec regardless of input order', () => {
+    const md = renderBookmarksMarkdown({
+      video,
+      bookmarks: [
+        bookmarkFixture({ bookmarkId: 'late', startSec: 1721 }),
+        bookmarkFixture({ bookmarkId: 'early', startSec: 12 }),
+      ],
+      exportedAt,
+    });
+    expect(md.indexOf('[0:12]')).toBeLessThan(md.indexOf('[28:41]'));
+  });
+
+  it('states the count in the meta line', () => {
+    const md = renderBookmarksMarkdown({
+      video,
+      bookmarks: [bookmarkFixture(), bookmarkFixture({ bookmarkId: 'bm-2', startSec: 900 })],
+      exportedAt,
+    });
+    expect(md).toContain('기억한 문장 2개');
+  });
+
+  it('renders a header and meta line even with no bookmarks', () => {
+    // 메뉴가 0개일 때 이 항목을 비활성화하므로 실제로는 도달하지 않지만, 빈
+    // 입력에서 예외를 던지지 않는다는 것은 이 함수의 계약이다.
+    const md = renderBookmarksMarkdown({ video, bookmarks: [], exportedAt });
+    expect(md).toContain(`# ${video.title}`);
+    expect(md).toContain('기억한 문장 0개');
   });
 });

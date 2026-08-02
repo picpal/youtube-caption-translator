@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { buildExportModel, renderMarkdown } from '~/lib/export-doc';
+import { buildExportModel, buildFileBaseName, renderBookmarksMarkdown, renderMarkdown } from '~/lib/export-doc';
 import { loadPanelPrefs } from '~/lib/panel-prefs';
 import { useExportData } from '~/features/export/useExportData';
 import type { ExportDataState } from '~/features/export/useExportData';
@@ -49,6 +49,21 @@ export function DownloadMenu() {
   }, [open]);
 
   const ready = data.status === 'ready';
+  const bookmarkCount = data.status === 'ready' ? data.bookmarks.length : 0;
+
+  // Blob 저장이 두 곳으로 늘어 공통 부분만 뽑았다. `URL.revokeObjectURL`을
+  // setTimeout으로 미루는 이유는 앵커 클릭이 비동기로 소비하기 때문이다.
+  const saveBlob = (text: string, fileName: string) => {
+    const blob = new Blob([text], { type: 'text/markdown;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = fileName;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 0);
+  };
 
   const downloadMarkdown = async () => {
     if (data.status !== 'ready') return;
@@ -61,18 +76,24 @@ export function DownloadMenu() {
         displayMode,
         exportedAt: new Date(),
       });
-      const blob = new Blob([renderMarkdown(model)], { type: 'text/markdown;charset=utf-8' });
-      const url = URL.createObjectURL(blob);
-      const anchor = document.createElement('a');
-      anchor.href = url;
-      anchor.download = `${model.fileBaseName}.md`;
-      document.body.appendChild(anchor);
-      anchor.click();
-      anchor.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 0);
+      saveBlob(renderMarkdown(model), `${model.fileBaseName}.md`);
     } catch {
       // loadPanelPrefs가 컨텍스트 무효화 등으로 거부되면 메뉴만 닫는다 — 클릭이
       // 조용히 아무 일도 하지 않는 것보다는 낫다.
+    } finally {
+      setOpen(false);
+    }
+  };
+
+  const downloadBookmarks = () => {
+    if (data.status !== 'ready') return;
+    try {
+      const text = renderBookmarksMarkdown({
+        video: data.video,
+        bookmarks: data.bookmarks,
+        exportedAt: new Date(),
+      });
+      saveBlob(text, `${buildFileBaseName(data.video.title, data.video.videoId)}-notes.md`);
     } finally {
       setOpen(false);
     }
@@ -111,6 +132,9 @@ export function DownloadMenu() {
           <MenuItem disabled={!ready} onClick={openPrintPage}>
             PDF (인쇄)
           </MenuItem>
+          <MenuItem disabled={!ready || bookmarkCount === 0} onClick={downloadBookmarks}>
+            기억한 문장 (.md)
+          </MenuItem>
           <p className="border-t border-neutral-100 px-3 py-2 text-[10.5px] leading-relaxed text-neutral-500 dark:border-neutral-900 dark:text-neutral-400">
             {hintFor(data)}
           </p>
@@ -125,7 +149,12 @@ function hintFor(data: ExportDataState): string {
   if (data.status === 'unavailable') {
     return data.reason === 'not-done' ? '번역 완료 후 내려받을 수 있어요' : '영상을 인식하지 못했어요';
   }
-  return data.summary ? '스크립트와 요약이 함께 담깁니다' : '요약 없음 — 스크립트만 포함';
+  const base = data.summary ? '스크립트와 요약이 함께 담깁니다' : '요약 없음 — 스크립트만 포함';
+  // 기억한 문장 항목이 왜 비활성인지 말해 준다 — summary 유무와 무관하게 덧붙인다.
+  // 중첩 삼항으로 짜면 "요약 없음 + 북마크 없음" 조합이 summary 쪽 문구에 가려
+  // 사라진다(수정 전 버그) — 그래서 base 문구에 항상 같은 조각을 붙이는 가산
+  // 방식으로 바꿨다. 앞의 두 항목은 이 상태와 무관하게 계속 쓸 수 있다.
+  return data.bookmarks.length === 0 ? `${base} · 기억한 문장 없음` : base;
 }
 
 function MenuItem({
