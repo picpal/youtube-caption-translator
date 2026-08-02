@@ -53,8 +53,20 @@ export function RowContextMenu({
     setPlacement({ left, top });
   }, [x, y, items.length]);
 
+  // finding D1 — `visibility: hidden`인 요소는 포커스를 받지 못한다(브라우저
+  // 표준 동작, CDP로 실측 확인). 마운트 시 1회(`[]`)로 이 focus() 호출을
+  // 걸었더니, 메뉴가 아직 배치를 재기 전(=hidden)인 첫 렌더에 대고 부르는
+  // 셈이라 조용히 실패했다 — 우클릭 메뉴가 키보드로는 아예 닿지 않는 상태였다.
+  // `placement`가 확정돼 `visible`로 바뀐 뒤에만 포커스를 건다. 같은 메뉴가
+  // 다른 행으로 옮겨갈 때도(재마운트 없이 `x`/`y`가 바뀌어 placement가 다시
+  // 계산될 때) 이 effect가 다시 돌아 첫 항목에 포커스를 건다 — 그 경우에도
+  // "새로 연 메뉴의 첫 항목에 포커스"가 맞는 동작이다.
   useEffect(() => {
+    if (placement === null) return;
     ref.current?.querySelector<HTMLButtonElement>('[role="menuitem"]')?.focus();
+  }, [placement]);
+
+  useEffect(() => {
     // 언마운트(=닫힘) 시 트리거로 포커스를 되돌린다 — 위 restoreFocusToRef 주석
     // 참고. 키보드로 메뉴를 연 사용자가 Escape를 누르면 다음 Tab이 문서 맨
     // 위가 아니라 우클릭했던 그 행에서 이어져야 한다.
