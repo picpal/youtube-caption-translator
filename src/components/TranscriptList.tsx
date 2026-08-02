@@ -139,9 +139,16 @@ export function TranscriptList({
             ref={(el) => {
               rowRefs.current[i] = el;
             }}
-            className={`group flex items-start gap-1 pr-2 ${
+            // fix round 1, Finding 2 — `pr-2` only when a star actually sits
+            // in that gutter; without it, a `bookmarkable={false}` row (the
+            // `failed`-video branch) must be pixel-identical to the
+            // pre-Task-4 single-div row. Hover moved here (was on the inner
+            // seek div) so it paints the SAME box as the active-row
+            // background below — otherwise the two highlights disagree on
+            // width whenever a star is present.
+            className={`group flex items-start gap-1 ${bookmarkable ? 'pr-2' : ''} ${
               active ? 'bg-neutral-100 dark:bg-neutral-800/60' : ''
-            }`}
+            } ${interactive ? 'hover:bg-neutral-50 dark:hover:bg-neutral-900' : ''}`}
           >
             <div
               {...(interactive
@@ -157,9 +164,7 @@ export function TranscriptList({
                     },
                   }
                 : {})}
-              className={`flex min-w-0 flex-1 gap-3 px-4 py-3 ${
-                interactive ? 'cursor-pointer hover:bg-neutral-50 dark:hover:bg-neutral-900' : ''
-              }`}
+              className={`flex min-w-0 flex-1 gap-3 px-4 py-3 ${interactive ? 'cursor-pointer' : ''}`}
             >
               <span className="w-12 flex-none text-right font-mono text-[11px] tabular-nums text-neutral-500 dark:text-neutral-400">
                 {formatTimestamp(segment.startSec)}

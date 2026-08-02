@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   bookmarkedSegmentIds,
   createExcerptBookmark,
@@ -36,7 +36,16 @@ export function useBookmarks(videoId: string | null): BookmarksState {
   const [loadFailed, setLoadFailed] = useState(false);
   const [reloadToken, setReloadToken] = useState(0);
 
+  // `cancelled` (아래 effect 안) 은 그 effect 자신의 in-flight 조회만 막는다.
+  // 쓰기(`applyWrite`)는 effect 밖에서 살아 움직이는 별도의 요청이라 그걸로
+  // 못 막는다 — videoId가 바뀐 뒤에도 이전 영상의 쓰기 응답이 새 목록을
+  // 덮어쓸 수 있다(fix round 1, Finding 1). generation을 videoId가 바뀔
+  // 때마다(null로 가는 경우 포함) 올리고, 응답이 돌아왔을 때 이미 값이
+  // 달라졌으면 버린다.
+  const generationRef = useRef(0);
+
   useEffect(() => {
+    generationRef.current += 1;
     if (videoId === null) {
       setBookmarks([]);
       setLoadFailed(false);
@@ -62,8 +71,12 @@ export function useBookmarks(videoId: string | null): BookmarksState {
 
   const applyWrite = useCallback(
     (send: () => Promise<{ ok: true; bookmarks: Bookmark[] } | { ok: false; error: string }>) => {
+      const generation = generationRef.current;
       void send()
         .then((res) => {
+          // 요청을 보낸 뒤 영상이 바뀌었다 — 이전 영상의 목록으로 지금
+          // 화면(다른 영상)을 덮지 않는다.
+          if (generation !== generationRef.current) return;
           if (res.ok) setBookmarks(sortBookmarks(res.bookmarks));
         })
         // 확장 컨텍스트 무효화 등으로 거부되면 목록을 그대로 둔다 — ★가 켜지지
