@@ -57,7 +57,14 @@ export type VisibleTexts =
   | { kind: 'secondary-only'; text: string }
   | { kind: 'primary-only'; text: string };
 
-export function visibleTexts(segment: TranscriptSegment, mode: DisplayMode): VisibleTexts {
+export function visibleTexts(
+  // `TranscriptSegment`가 아니라 이 함수가 실제로 읽는 두 필드만 요구한다.
+  // 그래야 `kind: 'row'`로 좁힌 `Bookmark`(같은 두 필드를 같은 타입으로 가진다)를
+  // 어댑터 객체 없이 그대로 넘길 수 있다 — Notes 탭이 Transcript와 똑같이
+  // displayMode를 존중하게 만드는 유일한 이유다.
+  segment: { sourceText: string; translatedText: string | null },
+  mode: DisplayMode,
+): VisibleTexts {
   if (mode === 'both') {
     return segment.translatedText !== null
       ? { kind: 'dual', secondaryText: segment.sourceText, primaryText: segment.translatedText }
