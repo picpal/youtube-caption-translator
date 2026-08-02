@@ -102,8 +102,16 @@ export function TranscriptList({
   // 열려 있는 우클릭 메뉴. 한 번에 하나만 뜬다 — 다른 행을 우클릭하면 이전 것이
   // 교체된다. 선택 텍스트는 우클릭 순간에 얼어붙힌다: 메뉴 항목을 클릭하는
   // 시점에는 브라우저가 Selection을 이미 지웠을 수 있다.
+  //
+  // fix round 1, Finding (Important) — `segment` 객체가 아니라 `segmentId`만
+  // 얼린다. 번역이 이 메뉴가 열려 있는 동안 갱신되면(예: 재생성) `segments`가
+  // 새 객체로 바뀌는데, 우클릭 시점의 객체를 그대로 들고 있다가 저장하면 그
+  // 순간의 `translatedText`가 북마크에 영구히 박제된다 — 패널은 이미 새
+  // 번역을 보여주는데 저장된 북마크만 옛 텍스트를 갖는 어긋남이 생긴다.
+  // `segmentId`로만 식별해 두면 선택 시점에 `segments`에서 현재 객체를 다시
+  // 찾을 수 있다(아래 onSelect).
   const [menu, setMenu] = useState<{
-    segment: TranscriptSegment;
+    segmentId: string;
     x: number;
     y: number;
     selectionText: string | null;
@@ -172,7 +180,7 @@ export function TranscriptList({
                     const withinRow =
                       node !== null && rowRefs.current[i]?.contains(node) === true;
                     setMenu({
-                      segment,
+                      segmentId: segment.segmentId,
                       x: e.clientX,
                       y: e.clientY,
                       selectionText: withinRow
@@ -238,17 +246,28 @@ export function TranscriptList({
           x={menu.x}
           y={menu.y}
           items={rowMenuItems({
-            saved: savedSegmentIds?.has(menu.segment.segmentId) ?? false,
+            saved: savedSegmentIds?.has(menu.segmentId) ?? false,
             selectionText: menu.selectionText,
           })}
           onSelect={(item) => {
+            // fix round 1, Finding (Important) — 클릭 시점에 `segments`에서
+            // 현재 객체를 다시 찾는다. 우클릭 시점의 객체를 그대로 썼다면,
+            // 그 사이 번역이 갱신돼도 저장되는 텍스트는 우클릭 순간 것으로
+            // 굳는다. 행이 그 사이 사라졌으면(찾지 못하면) 조용히 옛 객체로
+            // 저장하는 대신 아무 것도 하지 않고 메뉴만 닫는다 — 사라진 행을
+            // 저장하는 것보다는 아무 일도 안 하는 쪽이 덜 위험하다.
+            const current = segments.find((s) => s.segmentId === menu.segmentId) ?? null;
+            if (current === null) {
+              setMenu(null);
+              return;
+            }
             if (item.action === 'save-excerpt') {
-              if (menu.selectionText !== null) onSaveExcerpt?.(menu.segment, menu.selectionText);
+              if (menu.selectionText !== null) onSaveExcerpt?.(current, menu.selectionText);
             } else {
               // save-row와 remove-row는 같은 토글이다 — 어느 쪽 라벨이 떴는지는
               // rowMenuItems가 이미 saved로 결정했고, toggleRow가 같은 판정을
               // 다시 한다(findRowBookmark).
-              onToggleRow(menu.segment);
+              onToggleRow(current);
             }
             setMenu(null);
           }}
