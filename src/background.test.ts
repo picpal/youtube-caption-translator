@@ -9,6 +9,7 @@ import {
   putSummary,
   putVideo,
   listTranslationDigests,
+  getBookmarks,
 } from '~/lib/db';
 import type { VideoMeta } from '~/types/video';
 import { analyzeGlossary, generateSummary, translateBatch, MODEL_ID } from '~/lib/gemini';
@@ -18,6 +19,7 @@ import type { AppMessage, RawTranscriptRow } from '~/types/message';
 import type { TranslationRecord } from '~/types/transcript';
 import type { VideoSummary } from '~/types/summary';
 import type { LibraryEntry } from '~/types/library';
+import type { Bookmark } from '~/types/bookmark';
 import { handle } from '../entrypoints/background';
 
 // GENERATE_SUMMARY suite (fix round, Important #3) — `generateSummary` is
@@ -49,7 +51,11 @@ vi.mock('~/lib/gemini', async (importOriginal) => {
 // real function unchanged.
 vi.mock('~/lib/db', async (importOriginal) => {
   const actual = await importOriginal<typeof import('~/lib/db')>();
-  return { ...actual, listTranslationDigests: vi.fn(actual.listTranslationDigests) };
+  return {
+    ...actual,
+    listTranslationDigests: vi.fn(actual.listTranslationDigests),
+    getBookmarks: vi.fn(actual.getBookmarks),
+  };
 });
 
 // Closes the M0 review's "no test for the message dispatch layer" gap: this
@@ -1450,5 +1456,57 @@ describe('DELETE_LIBRARY_ENTRY', () => {
     expect(await handle({ type: 'DELETE_LIBRARY_ENTRY', payload: { videoId: 'nothing' } })).toEqual({
       ok: true,
     });
+  });
+});
+
+function testBookmark(overrides: Partial<Bookmark> = {}): Bookmark {
+  return {
+    bookmarkId: 'bm-1',
+    segmentId: 'vid:3',
+    startSec: 30,
+    createdAt: '2026-08-02T00:00:00.000Z',
+    kind: 'row',
+    sourceText: 'source',
+    translatedText: '번역',
+    ...overrides,
+  } as Bookmark;
+}
+
+describe('bookmark messages', () => {
+  it('GET_BOOKMARKS returns an empty list for a video with none', async () => {
+    const res = await handle({ type: 'GET_BOOKMARKS', payload: { videoId: 'vid' } });
+    expect(res).toEqual({ ok: true, bookmarks: [] });
+  });
+
+  it('ADD_BOOKMARK persists and returns the updated list', async () => {
+    const bookmark = testBookmark();
+    const added = await handle({ type: 'ADD_BOOKMARK', payload: { videoId: 'vid', bookmark } });
+    expect(added).toEqual({ ok: true, bookmarks: [bookmark] });
+
+    // 쓰기 응답만 믿지 않는다 — 실제로 저장됐는지 별도 조회로 확인한다.
+    const fetched = await handle({ type: 'GET_BOOKMARKS', payload: { videoId: 'vid' } });
+    expect(fetched).toEqual({ ok: true, bookmarks: [bookmark] });
+  });
+
+  it('DELETE_BOOKMARK removes one and returns the rest', async () => {
+    const first = testBookmark();
+    const second = testBookmark({ bookmarkId: 'bm-2', startSec: 90 });
+    await handle({ type: 'ADD_BOOKMARK', payload: { videoId: 'vid', bookmark: first } });
+    await handle({ type: 'ADD_BOOKMARK', payload: { videoId: 'vid', bookmark: second } });
+
+    const res = await handle({
+      type: 'DELETE_BOOKMARK',
+      payload: { videoId: 'vid', bookmarkId: 'bm-1' },
+    });
+    expect(res).toEqual({ ok: true, bookmarks: [second] });
+  });
+
+  it('reports a read failure as ok:false instead of an empty list', async () => {
+    // 빈 목록으로 접으면 패널이 "아직 없어요"를 띄우는데, 진실은 "물어보지
+    // 못했다"이다 — GET_LIBRARY가 Important #2에서 배운 것과 같은 구분이다.
+    vi.mocked(getBookmarks).mockRejectedValueOnce(new Error('db is gone'));
+
+    const res = await handle({ type: 'GET_BOOKMARKS', payload: { videoId: 'vid' } });
+    expect(res).toEqual({ ok: false, error: 'db is gone' });
   });
 });

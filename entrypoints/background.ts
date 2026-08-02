@@ -4,6 +4,7 @@ import { testGeminiKey, analyzeGlossary, translateBatch, generateSummary, MODEL_
 import {
   putVideo, getVideo, getTranslation, putTranslation, upsertBatch, getSummary, putSummary,
   listTranslationDigests, getAllVideos, getAllSummaries, deleteVideoData,
+  getBookmarks, addBookmark, deleteBookmark,
 } from '~/lib/db';
 import { thumbnailUrlFor } from '~/lib/youtube';
 import type { LibraryEntry } from '~/types/library';
@@ -669,6 +670,32 @@ export async function handle<T extends AppMessage['type']>(
       await deleteVideoData(payload.videoId);
       return { ok: true } as AppResponseMap[T];
     }
+    case 'GET_BOOKMARKS': {
+      const { payload } = msg as Extract<AppMessage, { type: 'GET_BOOKMARKS' }>;
+      // GET_LIBRARY와 같은 이유로 로컬에서 잡는다: 이 파일의 테스트는 handle()을
+      // chrome.runtime.onMessage 래퍼 없이 직접 호출하므로, 여기서 접지 않으면
+      // 실패가 handle()의 반환 프로미스를 reject시켜 버려 `{ ok: false }`로
+      // 접히는 대신 호출부까지 그대로 throw된다.
+      try {
+        const bookmarks = await getBookmarks(payload.videoId);
+        return { ok: true, bookmarks } as AppResponseMap[T];
+      } catch (err) {
+        return {
+          ok: false,
+          error: err instanceof Error ? err.message : String(err),
+        } as AppResponseMap[T];
+      }
+    }
+    case 'ADD_BOOKMARK': {
+      const { payload } = msg as Extract<AppMessage, { type: 'ADD_BOOKMARK' }>;
+      const bookmarks = await addBookmark(payload.videoId, payload.bookmark);
+      return { ok: true, bookmarks } as AppResponseMap[T];
+    }
+    case 'DELETE_BOOKMARK': {
+      const { payload } = msg as Extract<AppMessage, { type: 'DELETE_BOOKMARK' }>;
+      const bookmarks = await deleteBookmark(payload.videoId, payload.bookmarkId);
+      return { ok: true, bookmarks } as AppResponseMap[T];
+    }
   }
   throw new Error(`Unhandled message type: ${(msg as AppMessage).type}`);
 }
@@ -707,6 +734,10 @@ function errorResponseFor(msg: AppMessage, err: unknown): AppResponseMap[AppMess
     case 'GET_LIBRARY':
       return { ok: false, error: message };
     case 'DELETE_LIBRARY_ENTRY':
+      return { ok: false, error: message };
+    case 'GET_BOOKMARKS':
+    case 'ADD_BOOKMARK':
+    case 'DELETE_BOOKMARK':
       return { ok: false, error: message };
   }
 }
