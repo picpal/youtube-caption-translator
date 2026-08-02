@@ -64,6 +64,7 @@
 | `src/lib/export-doc.ts` | 수정 — `renderBookmarksMarkdown` | 8 |
 | `src/lib/export-doc.test.ts` | 수정 | 8 |
 | `src/features/export/useExportData.ts` | 수정 — `bookmarks` 추가 | 8 |
+| `src/features/export/useExportData.test.ts` | 수정 — **이 표에서 누락됐던 항목** (Task 8 구현 중 발견). `fetchExportData`를 직접 테스트하므로 4번째 `GET_BOOKMARKS` 호출을 더하면 목 테이블과 호출 수 단언이 깨진다 | 8 |
 | `src/components/DownloadMenu.tsx` | 수정 — 세 번째 항목 | 8 |
 
 ---
