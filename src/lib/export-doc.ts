@@ -193,7 +193,14 @@ export function renderBookmarksMarkdown({
     // 자르지 않는다.
     lines.push(`## [${formatTimestamp(bookmark.startSec)}](${videoUrl}?t=${bookmark.startSec})`, '');
     if (bookmark.kind === 'excerpt') {
-      lines.push(`> ${bookmark.excerpt}`, '');
+      // 여러 행에 걸친 드래그 선택은 `\n`을 그대로 품은 채 저장된다
+      // (createExcerptBookmark는 trim만 한다) — 통째로 한 줄에 넣으면 join 이후
+      // 두 번째 줄부터 `>` 없이 본문으로 새 나간다. 줄마다 프리픽스를 따로
+      // 붙여야 인용이 끊기지 않는다. 빈 줄은 `>`만 남겨 인용을 연속시킨다.
+      for (const excerptLine of bookmark.excerpt.split('\n')) {
+        lines.push(excerptLine === '' ? '>' : `> ${excerptLine}`);
+      }
+      lines.push('');
       continue;
     }
     lines.push(bookmark.sourceText, '');

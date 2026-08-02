@@ -149,13 +149,12 @@ function hintFor(data: ExportDataState): string {
   if (data.status === 'unavailable') {
     return data.reason === 'not-done' ? '번역 완료 후 내려받을 수 있어요' : '영상을 인식하지 못했어요';
   }
-  if (data.bookmarks.length === 0) {
-    // 기억한 문장 항목이 왜 비활성인지 말해 준다 — 앞의 두 항목은 멀쩡히 쓸 수 있다.
-    return data.summary
-      ? '스크립트와 요약이 함께 담깁니다 · 기억한 문장 없음'
-      : '요약 없음 — 스크립트만 포함';
-  }
-  return data.summary ? '스크립트와 요약이 함께 담깁니다' : '요약 없음 — 스크립트만 포함';
+  const base = data.summary ? '스크립트와 요약이 함께 담깁니다' : '요약 없음 — 스크립트만 포함';
+  // 기억한 문장 항목이 왜 비활성인지 말해 준다 — summary 유무와 무관하게 덧붙인다.
+  // 중첩 삼항으로 짜면 "요약 없음 + 북마크 없음" 조합이 summary 쪽 문구에 가려
+  // 사라진다(수정 전 버그) — 그래서 base 문구에 항상 같은 조각을 붙이는 가산
+  // 방식으로 바꿨다. 앞의 두 항목은 이 상태와 무관하게 계속 쓸 수 있다.
+  return data.bookmarks.length === 0 ? `${base} · 기억한 문장 없음` : base;
 }
 
 function MenuItem({

@@ -271,6 +271,31 @@ describe('renderBookmarksMarkdown', () => {
     expect(md).toContain('> the key thing is the softmax');
   });
 
+  it('keeps every line of a multi-line excerpt inside the blockquote', () => {
+    // 여러 행을 가로질러 드래그한 조각은 `\n`을 품은 채로 저장된다
+    // (createExcerptBookmark는 선택 문자열을 그대로 trim만 한다). 한 배열
+    // 원소에 `> ${excerpt}`를 통째로 넣으면 join 이후 두 번째 줄부터는 `>`
+    // 없이 그냥 본문으로 새 나간다 — 각 줄에 프리픽스를 따로 붙여야 한다.
+    const md = renderBookmarksMarkdown({
+      video,
+      bookmarks: [
+        bookmarkFixture({
+          bookmarkId: 'bm-multi',
+          kind: 'excerpt',
+          excerpt: 'the key thing is the softmax\nbut also consider scaling',
+          sourceText: undefined,
+          translatedText: undefined,
+        } as Partial<Bookmark>),
+      ],
+      exportedAt,
+    });
+    const lines = md.split('\n');
+    expect(lines).toContain('> the key thing is the softmax');
+    expect(lines).toContain('> but also consider scaling');
+    // 두 번째 줄이 `>` 없이 본문으로 새 나가지 않았는지 직접 확인한다.
+    expect(lines.some((l) => l === 'but also consider scaling')).toBe(false);
+  });
+
   it('orders entries by startSec regardless of input order', () => {
     const md = renderBookmarksMarkdown({
       video,
