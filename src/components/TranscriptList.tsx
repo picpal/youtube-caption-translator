@@ -1,6 +1,8 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { normalizeSelection, rowMenuItems } from '~/lib/bookmarks';
 import { isAutoScrollSuspended, isUserScroll } from '~/lib/playback-sync';
 import { formatTimestamp } from '~/lib/transcript-parse';
+import { RowContextMenu } from '~/components/RowContextMenu';
 import type { TranscriptSegment } from '~/types/transcript';
 
 /**
@@ -97,6 +99,16 @@ export function TranscriptList({
   const lastUserScrollAtRef = useRef<number | null>(null);
   const programmaticUntilRef = useRef<number | null>(null);
 
+  // 열려 있는 우클릭 메뉴. 한 번에 하나만 뜬다 — 다른 행을 우클릭하면 이전 것이
+  // 교체된다. 선택 텍스트는 우클릭 순간에 얼어붙힌다: 메뉴 항목을 클릭하는
+  // 시점에는 브라우저가 Selection을 이미 지웠을 수 있다.
+  const [menu, setMenu] = useState<{
+    segment: TranscriptSegment;
+    x: number;
+    y: number;
+    selectionText: string | null;
+  } | null>(null);
+
   // Capture-phase document listener: the actual scroll container is the
   // panel's outer overflow div (App.tsx), not this component, and capture
   // catches it regardless of which ancestor scrolls. Scroll events fired by
@@ -149,6 +161,27 @@ export function TranscriptList({
             className={`group flex items-start gap-1 ${bookmarkable ? 'pr-2' : ''} ${
               active ? 'bg-neutral-100 dark:bg-neutral-800/60' : ''
             } ${interactive ? 'hover:bg-neutral-50 dark:hover:bg-neutral-900' : ''}`}
+            {...(bookmarkable
+              ? {
+                  onContextMenu: (e: React.MouseEvent) => {
+                    e.preventDefault();
+                    const selection = window.getSelection();
+                    // 선택이 이 행 안에 있을 때만 조각 후보로 본다 — 다른 행에서
+                    // 드래그해 둔 선택이 이 행의 메뉴에 딸려 오면 안 된다.
+                    const node = selection?.anchorNode ?? null;
+                    const withinRow =
+                      node !== null && rowRefs.current[i]?.contains(node) === true;
+                    setMenu({
+                      segment,
+                      x: e.clientX,
+                      y: e.clientY,
+                      selectionText: withinRow
+                        ? normalizeSelection(selection?.toString())
+                        : null,
+                    });
+                  },
+                }
+              : {})}
           >
             <div
               {...(interactive
@@ -199,6 +232,29 @@ export function TranscriptList({
           </div>
         );
       })}
+
+      {menu !== null && onToggleRow !== undefined && (
+        <RowContextMenu
+          x={menu.x}
+          y={menu.y}
+          items={rowMenuItems({
+            saved: savedSegmentIds?.has(menu.segment.segmentId) ?? false,
+            selectionText: menu.selectionText,
+          })}
+          onSelect={(item) => {
+            if (item.action === 'save-excerpt') {
+              if (menu.selectionText !== null) onSaveExcerpt?.(menu.segment, menu.selectionText);
+            } else {
+              // save-row와 remove-row는 같은 토글이다 — 어느 쪽 라벨이 떴는지는
+              // rowMenuItems가 이미 saved로 결정했고, toggleRow가 같은 판정을
+              // 다시 한다(findRowBookmark).
+              onToggleRow(menu.segment);
+            }
+            setMenu(null);
+          }}
+          onClose={() => setMenu(null)}
+        />
+      )}
     </div>
   );
 }
