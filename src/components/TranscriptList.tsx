@@ -20,6 +20,13 @@ export interface TranscriptListProps {
   activeIndex?: number | null;
   /** Row click -> seek. Rows render as plain text when omitted. */
   onSeekRow?: (segment: TranscriptSegment) => void;
+  /** 통째로 저장된 행의 segmentId 집합 (spec 2026-08-02 §6.2 — 조각은 포함되지 않는다). */
+  savedSegmentIds?: ReadonlySet<string>;
+  /** 행 통째 저장/해제. **이 prop이 없으면 ☆도 우클릭도 렌더하지 않는다** —
+   * `failed` 영상 분기가 그 경로를 쓴다(spec §8). */
+  onToggleRow?: (segment: TranscriptSegment) => void;
+  /** 행 안에서 드래그한 텍스트를 조각으로 저장. Task 5에서 배선된다. */
+  onSaveExcerpt?: (segment: TranscriptSegment, text: string) => void;
 }
 
 /**
@@ -77,7 +84,15 @@ export function visibleTexts(segment: TranscriptSegment, mode: DisplayMode): Vis
  * highlight, no click/keyboard handlers, no auto-scroll effect since
  * `activeIndex` stays `null`).
  */
-export function TranscriptList({ segments, displayMode = 'both', activeIndex = null, onSeekRow }: TranscriptListProps) {
+export function TranscriptList({
+  segments,
+  displayMode = 'both',
+  activeIndex = null,
+  onSeekRow,
+  savedSegmentIds,
+  onToggleRow,
+  onSaveExcerpt,
+}: TranscriptListProps) {
   const rowRefs = useRef<(HTMLDivElement | null)[]>([]);
   const lastUserScrollAtRef = useRef<number | null>(null);
   const programmaticUntilRef = useRef<number | null>(null);
@@ -116,55 +131,109 @@ export function TranscriptList({ segments, displayMode = 'both', activeIndex = n
         const texts = visibleTexts(segment, displayMode);
         const active = i === activeIndex;
         const interactive = onSeekRow !== undefined;
+        const bookmarkable = onToggleRow !== undefined;
+        const saved = savedSegmentIds?.has(segment.segmentId) ?? false;
         return (
           <div
             key={segment.segmentId}
             ref={(el) => {
               rowRefs.current[i] = el;
             }}
-            {...(interactive
-              ? {
-                  role: 'button' as const,
-                  tabIndex: 0,
-                  onClick: () => onSeekRow(segment),
-                  onKeyDown: (e: React.KeyboardEvent) => {
-                    if (e.key === 'Enter' || e.key === ' ') {
-                      e.preventDefault();
-                      onSeekRow(segment);
-                    }
-                  },
-                }
-              : {})}
-            className={`flex gap-3 px-4 py-3 ${
+            className={`group flex items-start gap-1 pr-2 ${
               active ? 'bg-neutral-100 dark:bg-neutral-800/60' : ''
-            } ${interactive ? 'cursor-pointer hover:bg-neutral-50 dark:hover:bg-neutral-900' : ''}`}
+            }`}
           >
-            <span className="w-12 flex-none text-right font-mono text-[11px] tabular-nums text-neutral-500 dark:text-neutral-400">
-              {formatTimestamp(segment.startSec)}
-            </span>
-            <div className="flex min-w-0 flex-col gap-1">
-              {texts.kind === 'dual' ? (
-                <>
-                  <span className="text-xs leading-relaxed text-neutral-500 dark:text-neutral-400">
-                    {texts.secondaryText}
-                  </span>
-                  <span className="text-[13px] leading-relaxed text-neutral-900 dark:text-neutral-100">
-                    {texts.primaryText}
-                  </span>
-                </>
-              ) : texts.kind === 'secondary-only' ? (
-                <span className="text-xs leading-relaxed text-neutral-500 dark:text-neutral-400">
-                  {texts.text}
-                </span>
-              ) : (
-                <span className="text-[13px] leading-relaxed text-neutral-900 dark:text-neutral-100">
-                  {texts.text}
-                </span>
-              )}
+            <div
+              {...(interactive
+                ? {
+                    role: 'button' as const,
+                    tabIndex: 0,
+                    onClick: () => onSeekRow(segment),
+                    onKeyDown: (e: React.KeyboardEvent) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        onSeekRow(segment);
+                      }
+                    },
+                  }
+                : {})}
+              className={`flex min-w-0 flex-1 gap-3 px-4 py-3 ${
+                interactive ? 'cursor-pointer hover:bg-neutral-50 dark:hover:bg-neutral-900' : ''
+              }`}
+            >
+              <span className="w-12 flex-none text-right font-mono text-[11px] tabular-nums text-neutral-500 dark:text-neutral-400">
+                {formatTimestamp(segment.startSec)}
+              </span>
+              <div className="flex min-w-0 flex-col gap-1">
+                <SegmentTexts texts={texts} />
+              </div>
             </div>
+
+            {bookmarkable && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  // 이 클릭이 위로 새면 행의 시크가 함께 발동한다.
+                  e.stopPropagation();
+                  onToggleRow(segment);
+                }}
+                aria-label={saved ? '기억 해제' : '이 문장 기억하기'}
+                aria-pressed={saved}
+                // 저장된 행은 호버와 무관하게 계속 보인다 — 어느 행을 이미
+                // 저장했는지가 Transcript에서 바로 읽혀야 한다. focus-visible을
+                // 함께 거는 이유는 키보드 탐색으로도 닿을 수 있어야 해서다.
+                className={`mt-3 shrink-0 rounded p-1 transition-opacity hover:bg-neutral-100 dark:hover:bg-neutral-800 ${
+                  saved
+                    ? 'text-neutral-800 opacity-100 dark:text-neutral-200'
+                    : 'text-neutral-400 opacity-0 focus-visible:opacity-100 group-hover:opacity-100 dark:text-neutral-500'
+                }`}
+              >
+                <StarIcon filled={saved} />
+              </button>
+            )}
           </div>
         );
       })}
     </div>
+  );
+}
+
+/**
+ * `visibleTexts`의 세 결과를 그리는 유일한 자리. Transcript 행과 Notes 행이 이
+ * 컴포넌트를 공유하므로 두 화면의 타이포그래피는 구조적으로 갈라질 수 없다.
+ */
+export function SegmentTexts({ texts }: { texts: VisibleTexts }) {
+  if (texts.kind === 'dual') {
+    return (
+      <>
+        <span className="text-xs leading-relaxed text-neutral-500 dark:text-neutral-400">
+          {texts.secondaryText}
+        </span>
+        <span className="text-[13px] leading-relaxed text-neutral-900 dark:text-neutral-100">
+          {texts.primaryText}
+        </span>
+      </>
+    );
+  }
+  if (texts.kind === 'secondary-only') {
+    return (
+      <span className="text-xs leading-relaxed text-neutral-500 dark:text-neutral-400">
+        {texts.text}
+      </span>
+    );
+  }
+  return (
+    <span className="text-[13px] leading-relaxed text-neutral-900 dark:text-neutral-100">
+      {texts.text}
+    </span>
+  );
+}
+
+/** `LibraryView`의 `TrashIcon`과 같은 방식의 인라인 SVG — 아이콘 라이브러리를 추가하지 않는다. */
+function StarIcon({ filled }: { filled: boolean }) {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill={filled ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="m12 3 2.9 5.9 6.5.9-4.7 4.6 1.1 6.5-5.8-3-5.8 3 1.1-6.5L2.6 9.8l6.5-.9z" />
+    </svg>
   );
 }

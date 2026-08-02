@@ -8,6 +8,7 @@ import { TranscriptList, type DisplayMode } from '~/components/TranscriptList';
 import { UnsupportedBanner } from '~/components/UnsupportedBanner';
 import { VideoCard } from '~/components/VideoCard';
 import { useApiKey } from '~/features/api-key/useApiKey';
+import { useBookmarks } from '~/features/bookmarks/useBookmarks';
 import { usePlaybackSync } from '~/features/playback/usePlaybackSync';
 import { useSummary } from '~/features/summary/useSummary';
 import { translationErrorDisplay } from '~/features/translation/error-display';
@@ -506,6 +507,11 @@ function ReadyBody({ scrollContainerRef }: { scrollContainerRef: RefObject<HTMLD
 
   // Playback sync (spec §3.2): stream only while the list is on screen.
   const playback = usePlaybackSync({ videoId, tabId, enabled: showTranscriptList });
+
+  // spec §8 — `failed` 영상에는 북마크 진입점을 두지 않는다. `showSummaryTab`이
+  // 곧 그 게이트다(= showTranscriptList && status === 'done'). 훅 자체는 항상
+  // 호출한다 — 조건부 호출은 rules-of-hooks 위반이다.
+  const bookmarks = useBookmarks(videoId);
   const activeIndex =
     showTranscriptList && record !== null && playback.currentTime !== null
       ? activeSegmentIndex(record.segments, playback.currentTime)
@@ -770,6 +776,9 @@ function ReadyBody({ scrollContainerRef }: { scrollContainerRef: RefObject<HTMLD
                     displayMode={displayMode}
                     activeIndex={activeIndex}
                     onSeekRow={(segment) => playback.seek(segment.startSec)}
+                    savedSegmentIds={bookmarks.savedSegmentIds}
+                    onToggleRow={bookmarks.toggleRow}
+                    onSaveExcerpt={bookmarks.saveExcerpt}
                   />
                 </>
               ) : (
