@@ -32,13 +32,21 @@ export function FontSizeMenu({
   const wasOpenRef = useRef(false);
 
   // 열릴 때 첫 번째 '활성' 컨트롤로 포커스를 넣는다. 첫 항목을 고정으로 집으면
-  // 최소 배율에서 A−가 disabled라 포커스가 들어가지 않는다.
-  // rootRef는 트리거 버튼과 팝오버 둘 다를 감싸므로, 쿼리는 [role="group"]으로
-  // 스코핑해야 한다 — 그렇지 않으면 트리거 버튼이 먼저 선택돼서 팝오버 버튼들에 닿지 않는다.
+  // 최소 배율에서 A−가 비활성이라 포커스가 쓸모없는 곳에 들어간다.
+  // A−/A+는 네이티브 disabled 대신 aria-disabled를 쓴다(아래 StepButton 참고) —
+  // 포커스를 가진 버튼이 disabled가 되면 Chrome이 포커스를 <body>로 던지기 때문이다.
+  // 그래서 쿼리도 [disabled]뿐 아니라 [aria-disabled="true"]까지 함께 제외해야
+  // A−/A+ 중 실제로 동작하는 쪽을 잡는다. rootRef는 트리거 버튼과 팝오버 둘 다를
+  // 감싸므로, 쿼리는 [role="group"]으로 스코핑해야 한다 — 그렇지 않으면 트리거
+  // 버튼이 먼저 선택돼서 팝오버 버튼들에 닿지 않는다.
   useEffect(() => {
     if (open) {
       wasOpenRef.current = true;
-      rootRef.current?.querySelector<HTMLButtonElement>('[role="group"] button:not([disabled])')?.focus();
+      rootRef.current
+        ?.querySelector<HTMLButtonElement>(
+          '[role="group"] button:not([disabled]):not([aria-disabled="true"])',
+        )
+        ?.focus();
     } else if (wasOpenRef.current) {
       wasOpenRef.current = false;
       triggerRef.current?.focus();
@@ -122,6 +130,12 @@ export function FontSizeMenu({
   );
 }
 
+// 네이티브 disabled 대신 aria-disabled + no-op 핸들러를 쓴다. A−/A+는 경계값에서
+// "지금 포커스를 갖고 있는 바로 그 버튼"이 비활성으로 바뀌는데, 네이티브 disabled면
+// Chrome이 그 순간 포커스를 <body>로 옮겨버린다(예: 100%에서 A−를 눌러 90%로 내려가면
+// A−가 disabled되며 포커스 소실). aria-disabled는 포커스를 유지한 채로 "눌러도
+// 반응 없음"만 만들어 그 문제가 없다. stepFontScale이 경계에서 이미 클램프하므로
+// (font-scale.ts) 핸들러의 no-op은 안전장치일 뿐 로직을 바꾸지 않는다.
 function StepButton({
   label,
   disabled,
@@ -133,13 +147,21 @@ function StepButton({
   onClick: () => void;
   children: React.ReactNode;
 }) {
+  const handleClick = () => {
+    if (disabled) return;
+    onClick();
+  };
   return (
     <button
       type="button"
       aria-label={label}
-      disabled={disabled}
-      onClick={onClick}
-      className="h-7 flex-1 rounded-[5px] border border-neutral-200 text-[12.5px] font-semibold text-neutral-800 hover:bg-neutral-50 disabled:cursor-not-allowed disabled:border-neutral-100 disabled:text-neutral-300 dark:border-neutral-800 dark:text-neutral-200 dark:hover:bg-neutral-900 dark:disabled:border-neutral-900 dark:disabled:text-neutral-700"
+      aria-disabled={disabled}
+      onClick={handleClick}
+      className={
+        disabled
+          ? 'h-7 flex-1 cursor-not-allowed rounded-[5px] border border-neutral-100 text-[12.5px] font-semibold text-neutral-300 dark:border-neutral-900 dark:text-neutral-700'
+          : 'h-7 flex-1 rounded-[5px] border border-neutral-200 text-[12.5px] font-semibold text-neutral-800 hover:bg-neutral-50 dark:border-neutral-800 dark:text-neutral-200 dark:hover:bg-neutral-900'
+      }
     >
       {children}
     </button>

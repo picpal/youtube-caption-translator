@@ -116,7 +116,10 @@ export function SummaryPanel({
             }}
             className="flex cursor-pointer gap-2.5 border-b border-neutral-100 py-1.5 last:border-b-0 hover:bg-neutral-50 dark:border-neutral-900 dark:hover:bg-neutral-900"
           >
-            <span className="body-sm w-[3.5em] flex-none font-mono tabular-nums text-neutral-500 dark:text-neutral-400">
+            {/* w-[4.4em]는 TranscriptList/NotesPanel 타임코드 컬럼과 같은 값 — 3.5em으로는
+                130% 이상에서 `h:mm:ss`(7자 ≈ 4.2em)가 넘쳐 옆 소제목과 겹친다. 100%에서
+                10.4px 넓어지는 건 §4.1 "픽셀 단위 동일" 규칙의 의도적 예외다. */}
+            <span className="body-sm w-[4.4em] flex-none font-mono tabular-nums text-neutral-500 dark:text-neutral-400">
               {formatTimestamp(section.startSec)}
             </span>
             <span className="body-lg text-neutral-800 dark:text-neutral-200">{section.title}</span>
