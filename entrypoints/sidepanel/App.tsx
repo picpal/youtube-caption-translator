@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type RefObject } from 'react';
 import { Button } from '~/components/Button';
 import { DownloadMenu } from '~/components/DownloadMenu';
+import { FontSizeMenu } from '~/components/FontSizeMenu';
 import { LibraryView } from '~/components/LibraryView';
 import { NotesPanel } from '~/components/NotesPanel';
 import { StatusBadge } from '~/components/StatusBadge';
@@ -20,9 +21,16 @@ import {
 import { useTranslation, type TranslationProgressState } from '~/features/translation/useTranslation';
 import { useCurrentVideo } from '~/features/video/useCurrentVideo';
 import { bookmarkTargetLang } from '~/lib/bookmarks';
+import { DEFAULT_FONT_SCALE } from '~/lib/font-scale';
 import { activeSegmentIndex } from '~/lib/playback-sync';
 import { formatTimestamp } from '~/lib/transcript-parse';
-import { loadPanelPrefs, savePanelDisplayMode, savePanelLastTab, type PanelTab } from '~/lib/panel-prefs';
+import {
+  loadPanelPrefs,
+  savePanelDisplayMode,
+  savePanelFontScale,
+  savePanelLastTab,
+  type PanelTab,
+} from '~/lib/panel-prefs';
 import {
   DEFAULT_TARGET_LANG,
   getTargetLang,
@@ -80,6 +88,35 @@ export function App() {
   // START_TRANSLATION은 background의 inFlightTranslations 중복 방지에 걸려 잡을
   // 새로 시작하지 않는다.
   const [view, setView] = useState<'video' | 'library'>('video');
+
+  // 본문 배율 (spec 2026-08-05 §5.3). 헤더가 이 컴포넌트에 있어 여기서 소유한다.
+  // ReadyBody도 loadPanelPrefs를 부르므로 storage.local.get이 한 번 더 나가지만,
+  // 로컬 읽기 한 번이 ReadyBody를 거치는 프롭 드릴링보다 싸다 — 게다가 ReadyBody는
+  // 준비 상태에서만 마운트되는 반면 이 버튼은 항상 떠 있어야 한다.
+  const [fontScale, setFontScale] = useState(DEFAULT_FONT_SCALE);
+
+  useEffect(() => {
+    let cancelled = false;
+    void loadPanelPrefs()
+      .then((prefs) => {
+        if (!cancelled) setFontScale(prefs.fontScale);
+      })
+      .catch(() => {}); // 컨텍스트 무효화 등 — 기본 배율로 그냥 간다
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // 상태를 본문 컴포넌트로 내려보내지 않고 CSS 변수 하나로 흘린다 — 배율을 바꿔도
+  // 스크립트 수백 행이 리렌더되지 않는다.
+  useEffect(() => {
+    document.documentElement.style.setProperty('--panel-font-scale', String(fontScale));
+  }, [fontScale]);
+
+  const changeFontScale = (next: number) => {
+    setFontScale(next);
+    void savePanelFontScale(next).catch(() => {}); // displayMode 저장과 같은 규칙
+  };
 
   const loading = status === null;
   const present = status?.present === true;
@@ -210,6 +247,7 @@ export function App() {
             </button>
           )}
           {ready && view === 'video' && <DownloadMenu />}
+          <FontSizeMenu scale={fontScale} onChange={changeFontScale} />
           <button
             type="button"
             onClick={() => chrome.runtime.openOptionsPage()}
