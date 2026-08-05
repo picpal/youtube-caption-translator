@@ -25,6 +25,7 @@ export function FontSizeMenu({
   onChange: (next: number) => void;
 }) {
   const [open, setOpen] = useState(false);
+  const isDefaultScale = scale === DEFAULT_FONT_SCALE;
   const rootRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   // 마운트 시(open이 처음부터 false) 트리거로 포커스를 되돌리지 않기 위한 추적 —
@@ -33,18 +34,19 @@ export function FontSizeMenu({
 
   // 열릴 때 첫 번째 '활성' 컨트롤로 포커스를 넣는다. 첫 항목을 고정으로 집으면
   // 최소 배율에서 A−가 비활성이라 포커스가 쓸모없는 곳에 들어간다.
-  // A−/A+는 네이티브 disabled 대신 aria-disabled를 쓴다(아래 StepButton 참고) —
-  // 포커스를 가진 버튼이 disabled가 되면 Chrome이 포커스를 <body>로 던지기 때문이다.
-  // 그래서 쿼리도 [disabled]뿐 아니라 [aria-disabled="true"]까지 함께 제외해야
-  // A−/A+ 중 실제로 동작하는 쪽을 잡는다. rootRef는 트리거 버튼과 팝오버 둘 다를
-  // 감싸므로, 쿼리는 [role="group"]으로 스코핑해야 한다 — 그렇지 않으면 트리거
-  // 버튼이 먼저 선택돼서 팝오버 버튼들에 닿지 않는다.
+  // 팝오버 안 세 버튼(A−/A+/기본값으로) 모두 네이티브 disabled 대신 aria-disabled를
+  // 쓴다(아래 StepButton과 기본값으로 버튼 참고) — 포커스를 가진 버튼이 disabled가
+  // 되면 Chrome이 포커스를 <body>로 던지기 때문이다. 그래서 쿼리는 [aria-disabled="true"]를
+  // 제외해 셋 중 실제로 동작하는 컨트롤을 잡는다(네이티브 disabled를 쓰는 버튼은
+  // 이제 이 그룹 안에 없다). rootRef는 트리거 버튼과 팝오버 둘 다를 감싸므로, 쿼리는
+  // [role="group"]으로 스코핑해야 한다 — 그렇지 않으면 트리거 버튼이 먼저 선택돼서
+  // 팝오버 버튼들에 닿지 않는다.
   useEffect(() => {
     if (open) {
       wasOpenRef.current = true;
       rootRef.current
         ?.querySelector<HTMLButtonElement>(
-          '[role="group"] button:not([disabled]):not([aria-disabled="true"])',
+          '[role="group"] button:not([aria-disabled="true"])',
         )
         ?.focus();
     } else if (wasOpenRef.current) {
@@ -116,11 +118,22 @@ export function FontSizeMenu({
               A+
             </StepButton>
           </div>
+          {/* 이 버튼도 A−/A+와 같은 이유로 aria-disabled를 쓴다 — 130%에서 이 버튼을
+              직접 클릭하면 자기 자신이 포커스를 가진 채로 scale이 기본값이 되어
+              disabled로 바뀌는 경로가 있고(스텝 버튼을 거칠 필요가 없다), 네이티브
+              disabled였다면 그 순간 포커스가 <body>로 떨어진다. */}
           <button
             type="button"
-            disabled={scale === DEFAULT_FONT_SCALE}
-            onClick={() => onChange(DEFAULT_FONT_SCALE)}
-            className="mt-1.5 w-full rounded px-2 py-1 text-[11px] text-neutral-500 hover:bg-neutral-50 disabled:cursor-not-allowed disabled:text-neutral-300 dark:text-neutral-400 dark:hover:bg-neutral-900 dark:disabled:text-neutral-700"
+            aria-disabled={isDefaultScale}
+            onClick={() => {
+              if (isDefaultScale) return;
+              onChange(DEFAULT_FONT_SCALE);
+            }}
+            className={
+              isDefaultScale
+                ? 'mt-1.5 w-full cursor-not-allowed rounded px-2 py-1 text-[11px] text-neutral-300 dark:text-neutral-700'
+                : 'mt-1.5 w-full rounded px-2 py-1 text-[11px] text-neutral-500 hover:bg-neutral-50 dark:text-neutral-400 dark:hover:bg-neutral-900'
+            }
           >
             기본값으로
           </button>
