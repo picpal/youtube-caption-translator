@@ -605,10 +605,14 @@ export function FontSizeMenu({
 
   // 열릴 때 첫 번째 '활성' 컨트롤로 포커스를 넣는다. 첫 항목을 고정으로 집으면
   // 최소 배율에서 A−가 disabled라 포커스가 들어가지 않는다.
+  // rootRef는 트리거 버튼과 팝오버 둘 다를 감싸므로 쿼리를 [role="group"]으로
+  // 좁힌다 — 그러지 않으면 문서 순서상 트리거가 먼저 잡혀 효과가 무력화된다.
   useEffect(() => {
     if (open) {
       wasOpenRef.current = true;
-      rootRef.current?.querySelector<HTMLButtonElement>('button:not([disabled])')?.focus();
+      rootRef.current
+        ?.querySelector<HTMLButtonElement>('[role="group"] button:not([disabled])')
+        ?.focus();
     } else if (wasOpenRef.current) {
       wasOpenRef.current = false;
       triggerRef.current?.focus();
