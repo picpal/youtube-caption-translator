@@ -116,7 +116,7 @@ export function DownloadMenu() {
         aria-label="내려받기"
         aria-haspopup="menu"
         aria-expanded={open}
-        className="rounded p-1 text-neutral-600 hover:bg-neutral-100 dark:text-neutral-400 dark:hover:bg-neutral-800"
+        className="flex h-7 w-7 shrink-0 items-center justify-center rounded text-neutral-600 hover:bg-neutral-100 dark:text-neutral-400 dark:hover:bg-neutral-800"
       >
         <DownloadIcon />
       </button>
@@ -180,14 +180,16 @@ function MenuItem({
 }
 
 /** 헤더의 GearIcon과 같은 방식의 인라인 SVG — 아이콘 라이브러리를 추가하지 않는다.
- * viewBox는 표준 "0 0 24 24"가 아니라 "3 2 18 19"(경로 잉크박스)다. GearIcon은 전체 24×24를
- * 채우지만 이 다운로드 화살표는 3 2 18 19만 차지해서, viewBox를 크롭하면 렌더 박스가 거의 같은
- * 크기에서 두 아이콘의 시각적 크기가 맞는다 — 보정하지 않으면 다운로드 아이콘이 작아 보인다.
- * 렌더 박스는 다른 헤더 아이콘(18×18)보다 1px 작은 17×17 — 크롭 보정이 살짝 과해서 줄였다.
+ *
+ * Task 8 후속(광학 크기 통일) — 이전에는 viewBox를 경로 잉크박스("3 2 18 19")로
+ * 잘라 렌더 박스를 부풀리는 방식으로 다른 헤더 아이콘과 크기를 맞췄는데, 그
+ * 결과 이 아이콘만 잉크가 유독 크게(~15×16px) 보였다. 표준 "0 0 24 24"로
+ * 되돌리면 같은 path가 잉크 x16/y17로 자연스럽게 다른 아이콘들과 맞는다 —
+ * path 데이터는 그대로다.
  */
 function DownloadIcon() {
   return (
-    <svg width="17" height="17" viewBox="3 2 18 19" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
       <path d="M12 3v12" />
       <path d="m7 11 5 5 5-5" />
       <path d="M4 20h16" />

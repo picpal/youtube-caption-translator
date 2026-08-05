@@ -241,7 +241,7 @@ export function App() {
               type="button"
               onClick={() => setView(view === 'library' ? 'video' : 'library')}
               aria-label={view === 'library' ? '뒤로' : '저장한 영상'}
-              className="rounded p-1 text-neutral-600 hover:bg-neutral-100 dark:text-neutral-400 dark:hover:bg-neutral-800"
+              className="flex h-7 w-7 shrink-0 items-center justify-center rounded text-neutral-600 hover:bg-neutral-100 dark:text-neutral-400 dark:hover:bg-neutral-800"
             >
               {view === 'library' ? <BackIcon /> : <LibraryIcon />}
             </button>
@@ -252,7 +252,7 @@ export function App() {
             type="button"
             onClick={() => chrome.runtime.openOptionsPage()}
             aria-label="설정 열기"
-            className="rounded p-1 text-neutral-600 hover:bg-neutral-100 dark:text-neutral-400 dark:hover:bg-neutral-800"
+            className="flex h-7 w-7 shrink-0 items-center justify-center rounded text-neutral-600 hover:bg-neutral-100 dark:text-neutral-400 dark:hover:bg-neutral-800"
           >
             <GearIcon />
           </button>
@@ -1111,32 +1111,48 @@ function OnboardingBody() {
   );
 }
 
+// Task 8 후속(광학 크기 통일) — 원래 잉크 범위(2→22, 20유닛)가 헤더의 다른
+// 아이콘보다 크게 보였다. path는 그대로 두고 <g> 하나로 0.875배 축소 +
+// 재배치해서 잉크를 17.5유닛으로 줄인다(목표 ≈17).
 function GearIcon() {
   return (
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-      <path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z" />
-      <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.05a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h.05a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.05a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z" />
+      <g transform="translate(1.5 1.5) scale(0.875)">
+        <path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z" />
+        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.05a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h.05a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.05a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z" />
+      </g>
     </svg>
   );
 }
 
 /** 헤더의 GearIcon/DownloadIcon과 같은 방식의 인라인 SVG — 아이콘 라이브러리를
- * 추가하지 않는다. */
+ * 추가하지 않는다.
+ *
+ * Task 8 후속 — 3선 햄버거라 원래 세로 잉크(12)가 다른 아이콘(≈17)보다 작아
+ * 보였다. 가로를 3.5→20.5(잉크 17, BackIcon과 동일한 폭)로 넓히고 줄 간격을
+ * 4.5/12/19.5로 벌려 세로 잉크를 15로 키운다. 브리프의 시작값(13)으로 실제
+ * 캡처해보니 세 줄이 다른 컨트롤보다 눈에 띄게 작아 보여, 한 단계 더
+ * 벌렸다(캡처 비교 후 조정 — task-8-report.md 참고). 셋째 줄은 원래처럼 짧게
+ * 유지한다.
+ */
 function LibraryIcon() {
   return (
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-      <path d="M4 6h16" />
-      <path d="M4 12h16" />
-      <path d="M4 18h10" />
+      <path d="M3.5 4.5h17" />
+      <path d="M3.5 12h17" />
+      <path d="M3.5 19.5h11.5" />
     </svg>
   );
 }
 
+// Task 8 후속 — 라이브러리 뷰에서 LibraryIcon과 같은 자리를 차지하므로 같은
+// 잉크 범위(17)로 맞춘다. 중심(12,12) 기준으로 원래 좌표(14유닛 잉크)를
+// 1.214배 키운 값 — LibraryIcon의 가로 범위(3.5→20.5)와 정확히 겹친다.
 function BackIcon() {
   return (
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-      <path d="M19 12H5" />
-      <path d="m12 19-7-7 7-7" />
+      <path d="M20.5 12H3.5" />
+      <path d="m12 20.5-8.5-8.5 8.5-8.5" />
     </svg>
   );
 }

@@ -71,7 +71,10 @@ export function FontSizeMenu({
         aria-label="글자 크기"
         aria-haspopup="true"
         aria-expanded={open}
-        className="rounded px-1.5 py-1 text-[12px] font-semibold leading-none text-neutral-600 hover:bg-neutral-100 dark:text-neutral-400 dark:hover:bg-neutral-800"
+        // Task 8 후속(광학 크기 통일) — 텍스트 글리프라 대문자 높이가 폰트
+        // 크기의 ~0.72배뿐이라, 다른 헤더 아이콘의 렌더 잉크(≈12.75px)에 맞추려면
+        // 폰트 자체를 12px보다 키워야 한다. 15px에서 시작해 눈으로 맞춘 값.
+        className="flex h-7 w-7 shrink-0 items-center justify-center rounded text-[15px] font-semibold leading-none text-neutral-600 hover:bg-neutral-100 dark:text-neutral-400 dark:hover:bg-neutral-800"
       >
         Aa
       </button>
