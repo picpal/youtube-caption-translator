@@ -6,7 +6,7 @@ import type { VideoSummary } from '~/types/summary';
 // Section label style matches App.tsx's existing "자막 표시"/"번역 결과"
 // micro-labels; row hover/press affordances mirror TranscriptList's rows.
 const LABEL_CLS =
-  'text-[10.5px] font-semibold tracking-wide text-neutral-400 dark:text-neutral-500';
+  'body-xs font-semibold tracking-wide text-neutral-400 dark:text-neutral-500';
 
 interface SummaryPanelProps {
   summary: VideoSummary | null;
@@ -28,14 +28,14 @@ export function SummaryPanel({
   onSeekSection,
 }: SummaryPanelProps) {
   if (status === 'loading') {
-    return <p className="px-4 py-6 text-[12px] text-neutral-400 dark:text-neutral-500">요약 불러오는 중…</p>;
+    return <p className="body-md px-4 py-6 text-neutral-400 dark:text-neutral-500">요약 불러오는 중…</p>;
   }
 
   if (status === 'generating') {
     return (
       <div className="flex flex-col items-center gap-2 px-4 py-8">
         <div className="h-4 w-4 animate-spin rounded-full border-2 border-neutral-300 border-t-neutral-700 dark:border-neutral-700 dark:border-t-neutral-200" />
-        <p className="text-[12px] text-neutral-500 dark:text-neutral-400">
+        <p className="body-md text-neutral-500 dark:text-neutral-400">
           요약 생성 중… {elapsedSeconds}초
         </p>
       </div>
@@ -45,7 +45,7 @@ export function SummaryPanel({
   if (status === 'failed') {
     return (
       <div className="flex flex-col items-start gap-3 px-4 py-6">
-        <p className="text-[12.5px] leading-relaxed text-red-600 dark:text-red-400">
+        <p className="body-lg leading-relaxed text-red-600 dark:text-red-400">
           {translationErrorDisplay(error ?? '')}
         </p>
         <button
@@ -62,7 +62,7 @@ export function SummaryPanel({
   if (summary === null) {
     return (
       <div className="flex flex-col items-center gap-3 px-4 py-8 text-center">
-        <p className="text-[12px] leading-relaxed text-neutral-500 dark:text-neutral-400">
+        <p className="body-md leading-relaxed text-neutral-500 dark:text-neutral-400">
           이 영상의 핵심 요약을 만들 수 있어요.
           <br />
           문제·핵심 주장·발표 흐름·키워드·결론으로 정리됩니다.
@@ -82,7 +82,7 @@ export function SummaryPanel({
   return (
     <div className="flex flex-col gap-5 px-4 pb-9 pt-4">
       <span className={LABEL_CLS}>이 영상이 다루는 문제</span>
-      <p className="-mt-3 text-[12.5px] leading-relaxed text-neutral-800 dark:text-neutral-200">
+      <p className="-mt-3 body-lg leading-relaxed text-neutral-800 dark:text-neutral-200">
         {summary.purpose}
       </p>
 
@@ -90,10 +90,10 @@ export function SummaryPanel({
         <span className={LABEL_CLS}>핵심 주장</span>
         {summary.mainArguments.map((arg, i) => (
           <div key={i} className="flex gap-2">
-            <span className="pt-[2px] font-mono text-[10px] text-neutral-400 dark:text-neutral-500">
+            <span className="body-2xs pt-[2px] font-mono text-neutral-400 dark:text-neutral-500">
               {String(i + 1).padStart(2, '0')}
             </span>
-            <span className="text-[12.5px] leading-relaxed text-neutral-800 dark:text-neutral-200">
+            <span className="body-lg leading-relaxed text-neutral-800 dark:text-neutral-200">
               {arg}
             </span>
           </div>
@@ -116,10 +116,10 @@ export function SummaryPanel({
             }}
             className="flex cursor-pointer gap-2.5 border-b border-neutral-100 py-1.5 last:border-b-0 hover:bg-neutral-50 dark:border-neutral-900 dark:hover:bg-neutral-900"
           >
-            <span className="w-[38px] flex-none font-mono text-[11px] tabular-nums text-neutral-500 dark:text-neutral-400">
+            <span className="body-sm w-[3.5em] flex-none font-mono tabular-nums text-neutral-500 dark:text-neutral-400">
               {formatTimestamp(section.startSec)}
             </span>
-            <span className="text-[12.5px] text-neutral-800 dark:text-neutral-200">{section.title}</span>
+            <span className="body-lg text-neutral-800 dark:text-neutral-200">{section.title}</span>
           </div>
         ))}
       </div>
@@ -130,7 +130,7 @@ export function SummaryPanel({
           {summary.keywords.map((keyword, i) => (
             <span
               key={i}
-              className="rounded border border-neutral-200 bg-neutral-100 px-2 py-0.5 text-[11px] text-neutral-700 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-300"
+              className="body-sm rounded border border-neutral-200 bg-neutral-100 px-2 py-0.5 text-neutral-700 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-300"
             >
               {keyword}
             </span>
@@ -140,7 +140,7 @@ export function SummaryPanel({
 
       <div className="flex flex-col gap-1.5 border-t border-neutral-200 pt-4 dark:border-neutral-800">
         <span className={LABEL_CLS}>결론</span>
-        <p className="text-[12.5px] leading-relaxed text-neutral-800 dark:text-neutral-200">
+        <p className="body-lg leading-relaxed text-neutral-800 dark:text-neutral-200">
           {summary.conclusion}
         </p>
       </div>
