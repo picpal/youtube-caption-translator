@@ -3,6 +3,7 @@ import {
   DEFAULT_PANEL_PREFS,
   loadPanelPrefs,
   savePanelDisplayMode,
+  savePanelFontScale,
   savePanelLastTab,
 } from './panel-prefs';
 
@@ -33,36 +34,60 @@ describe('loadPanelPrefs', () => {
   it('loads both keys in a single get call', async () => {
     await loadPanelPrefs();
     expect(chrome.storage.local.get).toHaveBeenCalledOnce();
-    expect(chrome.storage.local.get).toHaveBeenCalledWith(['panelDisplayMode', 'panelLastTab']);
+    expect(chrome.storage.local.get).toHaveBeenCalledWith([
+      'panelDisplayMode',
+      'panelLastTab',
+      'panelFontScale',
+    ]);
   });
 
   it('returns defaults when nothing is stored', async () => {
-    expect(await loadPanelPrefs()).toEqual({ displayMode: 'both', lastTab: 'transcript' });
-    expect(DEFAULT_PANEL_PREFS).toEqual({ displayMode: 'both', lastTab: 'transcript' });
+    expect(await loadPanelPrefs()).toEqual({
+      displayMode: 'both',
+      lastTab: 'transcript',
+      fontScale: 1,
+    });
+    expect(DEFAULT_PANEL_PREFS).toEqual({
+      displayMode: 'both',
+      lastTab: 'transcript',
+      fontScale: 1,
+    });
   });
 
   it('returns stored values when both are valid', async () => {
     store.panelDisplayMode = 'ko';
     store.panelLastTab = 'summary';
-    expect(await loadPanelPrefs()).toEqual({ displayMode: 'ko', lastTab: 'summary' });
+    expect(await loadPanelPrefs()).toEqual({ displayMode: 'ko', lastTab: 'summary', fontScale: 1 });
   });
 
   it('falls back per field when one value is invalid', async () => {
     store.panelDisplayMode = 'BOTH'; // wrong casing — not an allowed literal
     store.panelLastTab = 'summary';
-    expect(await loadPanelPrefs()).toEqual({ displayMode: 'both', lastTab: 'summary' });
+    expect(await loadPanelPrefs()).toEqual({
+      displayMode: 'both',
+      lastTab: 'summary',
+      fontScale: 1,
+    });
   });
 
   it('falls back per field on non-string garbage', async () => {
     store.panelDisplayMode = 'ko';
     store.panelLastTab = 42;
-    expect(await loadPanelPrefs()).toEqual({ displayMode: 'ko', lastTab: 'transcript' });
+    expect(await loadPanelPrefs()).toEqual({
+      displayMode: 'ko',
+      lastTab: 'transcript',
+      fontScale: 1,
+    });
   });
 
   it("treats the removed legacy 'en' mode as invalid and falls back to 'both'", async () => {
     store.panelDisplayMode = 'en'; // persisted by a pre-2-option version
     store.panelLastTab = 'summary';
-    expect(await loadPanelPrefs()).toEqual({ displayMode: 'both', lastTab: 'summary' });
+    expect(await loadPanelPrefs()).toEqual({
+      displayMode: 'both',
+      lastTab: 'summary',
+      fontScale: 1,
+    });
   });
 
   it('accepts notes as a stored tab', async () => {
@@ -98,11 +123,40 @@ describe('save functions', () => {
   it('round-trips through loadPanelPrefs', async () => {
     await savePanelDisplayMode('ko');
     await savePanelLastTab('summary');
-    expect(await loadPanelPrefs()).toEqual({ displayMode: 'ko', lastTab: 'summary' });
+    expect(await loadPanelPrefs()).toEqual({ displayMode: 'ko', lastTab: 'summary', fontScale: 1 });
   });
 
   it('round-trips notes through storage', async () => {
     await savePanelLastTab('notes');
     expect((await loadPanelPrefs()).lastTab).toBe('notes');
+  });
+});
+
+describe('panel font scale', () => {
+  it('round-trips a stored scale', async () => {
+    await savePanelFontScale(1.3);
+    expect(store.panelFontScale).toBe(1.3);
+    expect((await loadPanelPrefs()).fontScale).toBe(1.3);
+  });
+
+  it('writes only its own key', async () => {
+    await savePanelFontScale(1.5);
+    expect(chrome.storage.local.set).toHaveBeenCalledWith({ panelFontScale: 1.5 });
+  });
+
+  it('never persists a value outside the ladder', async () => {
+    await savePanelFontScale(4);
+    expect(store.panelFontScale).toBe(1);
+  });
+
+  it('falls back per field when only the scale is corrupt', async () => {
+    store.panelDisplayMode = 'ko';
+    store.panelLastTab = 'summary';
+    store.panelFontScale = 'huge';
+    expect(await loadPanelPrefs()).toEqual({
+      displayMode: 'ko',
+      lastTab: 'summary',
+      fontScale: 1,
+    });
   });
 });
