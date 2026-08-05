@@ -71,7 +71,14 @@ export function StatusBadge({ tone, variant = 'text', children }: Props) {
   }
 
   return (
-    <span className="inline-flex items-center gap-2 text-sm text-[#3d4045] dark:text-[#c9c9c9]">
+    // Task 8 후속 — 패널 헤더(sidepanel App.tsx)에서 이 뱃지는 flex 행의
+    // 직계 자식이다. 헤더 네 트리거를 `shrink-0`로 고정하고 제목을
+    // `min-w-0 truncate`로 만든 뒤, 380px 폭에서 남는 압박이 여기로 몰려
+    // 한글 텍스트가 글자 단위로 줄바꿈되며(준/비/됨) 헤더 높이가 늘어나는
+    // 버그가 있었다. `whitespace-nowrap`으로 줄바꿈 자체를 막고
+    // `flex-none`으로 축소도 막는다 — 라벨이 전부 짧은 고정 문구라("확인 중"
+    // 등) 잘릴 걱정 없이 한 줄로 유지된다.
+    <span className="inline-flex flex-none items-center gap-2 whitespace-nowrap text-sm text-[#3d4045] dark:text-[#c9c9c9]">
       {dot}
       {children}
     </span>
