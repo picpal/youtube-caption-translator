@@ -80,7 +80,7 @@ export function visibleTexts(
  * `TranscriptSegment`, timestamp + English source + Korean translation.
  * Design source: docs/design/side-panel.dc.html (the "완료"/"오류 및 재시도"
  * blocks' row markup) — timestamp in a right-aligned fixed-width tabular-nums
- * column (`w-12` for `h:mm:ss`), then a stacked English (muted, smaller) /
+ * column (`w-[4.4em]` for `h:mm:ss`), then a stacked English (muted, smaller) /
  * Korean (primary, larger) pair. (Fix: 긴 `1:06:13` 표기가 `w-10`을 넘쳐 갭을 먹던 문제.)
  *
  * `displayMode` (Task R7, Fix 1) defaults to `'both'` — the original,
@@ -241,7 +241,7 @@ export function TranscriptList({
                 : {})}
               className={`flex min-w-0 flex-1 gap-3 px-4 py-3 ${interactive ? 'cursor-pointer' : ''}`}
             >
-              <span className="w-12 flex-none text-right font-mono text-[11px] tabular-nums text-neutral-500 dark:text-neutral-400">
+              <span className="body-sm w-[4.4em] flex-none text-right font-mono tabular-nums text-neutral-500 dark:text-neutral-400">
                 {formatTimestamp(segment.startSec)}
               </span>
               <div className="flex min-w-0 flex-col gap-1">
@@ -323,15 +323,16 @@ export function TranscriptList({
 /**
  * `visibleTexts`의 세 결과를 그리는 유일한 자리. Transcript 행과 Notes 행이 이
  * 컴포넌트를 공유하므로 두 화면의 타이포그래피는 구조적으로 갈라질 수 없다.
+ * 크기는 `.body-*`(globals.css)를 거치므로 헤더 `Aa`의 배율을 함께 따른다.
  */
 export function SegmentTexts({ texts }: { texts: VisibleTexts }) {
   if (texts.kind === 'dual') {
     return (
       <>
-        <span className="text-xs leading-relaxed text-neutral-500 dark:text-neutral-400">
+        <span className="body-md leading-relaxed text-neutral-500 dark:text-neutral-400">
           {texts.secondaryText}
         </span>
-        <span className="text-[13px] leading-relaxed text-neutral-900 dark:text-neutral-100">
+        <span className="body-xl leading-relaxed text-neutral-900 dark:text-neutral-100">
           {texts.primaryText}
         </span>
       </>
@@ -339,13 +340,13 @@ export function SegmentTexts({ texts }: { texts: VisibleTexts }) {
   }
   if (texts.kind === 'secondary-only') {
     return (
-      <span className="text-xs leading-relaxed text-neutral-500 dark:text-neutral-400">
+      <span className="body-md leading-relaxed text-neutral-500 dark:text-neutral-400">
         {texts.text}
       </span>
     );
   }
   return (
-    <span className="text-[13px] leading-relaxed text-neutral-900 dark:text-neutral-100">
+    <span className="body-xl leading-relaxed text-neutral-900 dark:text-neutral-100">
       {texts.text}
     </span>
   );

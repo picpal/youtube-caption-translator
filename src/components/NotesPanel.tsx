@@ -58,7 +58,7 @@ export function NotesPanel({
             onClick={() => onSeek(bookmark.startSec)}
             className="flex min-w-0 flex-1 gap-3 px-4 py-3 text-left hover:bg-neutral-50 dark:hover:bg-neutral-900"
           >
-            <span className="w-12 flex-none text-right font-mono text-[11px] tabular-nums text-neutral-500 dark:text-neutral-400">
+            <span className="body-sm w-[4.4em] flex-none text-right font-mono tabular-nums text-neutral-500 dark:text-neutral-400">
               {formatTimestamp(bookmark.startSec)}
             </span>
             <span className="flex min-w-0 flex-1 flex-col gap-1">
@@ -84,7 +84,7 @@ export function NotesPanel({
 function BookmarkTexts({ bookmark, displayMode }: { bookmark: Bookmark; displayMode: DisplayMode }) {
   if (bookmark.kind === 'excerpt') {
     return (
-      <span className="border-l-2 border-neutral-300 pl-2 text-[13px] leading-relaxed text-neutral-900 dark:border-neutral-700 dark:text-neutral-100">
+      <span className="body-xl border-l-2 border-neutral-300 pl-2 leading-relaxed text-neutral-900 dark:border-neutral-700 dark:text-neutral-100">
         {bookmark.excerpt}
       </span>
     );
