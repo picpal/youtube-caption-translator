@@ -228,7 +228,16 @@ export function App() {
     // height just follows this single `h-screen` child with no left-over
     // document-level overflow).
     <div className="flex h-screen flex-col">
-      <header className="flex items-center justify-between border-b border-neutral-200 px-4 py-3 dark:border-neutral-800">
+      {/* header에 자체 스택 컨텍스트를 만든다 — Aa/다운로드 팝오버는 각각
+          `absolute z-10`인데, 아래 트랜스크립트 탭바도 `sticky top-0 z-10`으로
+          같은 값을 쓴다. z-index가 동률이면 DOM 순서가 이기고, 탭바 쪽 div가
+          header보다 뒤에 오므로 팝오버를 덮어써 버렸다(버그 — 팝오버 아래쪽
+          "기본값으로"만 삐져나와 보임). header를 `relative z-30`으로 올리면
+          header 전체가 별도 스택 컨텍스트가 되어, 안쪽 팝오버의 z-10은 이제
+          header 컨텍스트 안에서만 비교되고 header 자체는 탭바(z-10)보다 위에서
+          그려진다 — 팝오버마다 z-index를 올리는 대신 이 한 곳만 고치면
+          앞으로 header에 추가되는 팝오버에도 그대로 적용된다. */}
+      <header className="relative z-30 flex items-center justify-between border-b border-neutral-200 px-4 py-3 dark:border-neutral-800">
         <div className="min-w-0">
           <h1 className="truncate text-sm font-semibold">YouTube Caption Translator</h1>
         </div>
